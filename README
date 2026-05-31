@@ -1,0 +1,37 @@
+# 食期管家 / Food Expiry Mini Program
+
+食期管家是一个微信小程序，用于记录食品生产日期、保质期、最终可食用日期、保存方式和备注，并支持按到期日期排序、提醒和拍照识别。
+
+## Features
+
+- 手动记录食品信息
+- 生产日期 + 保质期自动计算最终可食用日期
+- 支持直接输入最终可食用日期
+- 记录保存方式和备注
+- 按到期日期排序
+- 到期状态提醒
+- 拍照识别食品包装信息，确认后保存
+
+## Tech Stack
+
+- WeChat Mini Program
+- WXML / WXSS / JavaScript or TypeScript
+- WeChat Cloud Development / CloudBase
+- Cloud functions for OCR, parsing, and reminders
+
+## Docs
+
+- `docs/PRD.md`
+- `docs/ARCHITECTURE.md`
+- `docs/DATA_MODEL.md`
+- `docs/OCR_SPEC.md`
+- `docs/REMINDER_SPEC.md`
+- `docs/TEST_PLAN.md`
+- `docs/RELEASE_CHECKLIST.md`
+
+## Development Principles
+
+- Keep MVP small and reliable.
+- Never save OCR results before user confirmation.
+- Keep secrets out of Mini Program client code.
+- Treat final edible date as the source of truth for sorting and reminders.
