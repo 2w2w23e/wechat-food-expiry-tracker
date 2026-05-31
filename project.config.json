@@ -1,0 +1,18 @@
+{
+  "description": "食期管家微信小程序最小可运行骨架",
+  "packOptions": {
+    "ignore": []
+  },
+  "setting": {
+    "urlCheck": true,
+    "es6": true,
+    "postcss": true,
+    "minified": true,
+    "newFeature": true
+  },
+  "compileType": "miniprogram",
+  "libVersion": "latest",
+  "appid": "touristappid",
+  "projectname": "wechat-food-expiry-tracker",
+  "miniprogramRoot": "./"
+}

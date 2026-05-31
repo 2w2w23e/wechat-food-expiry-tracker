@@ -1,0 +1,58 @@
+.page {
+  min-height: 100vh;
+  padding: 96rpx 40rpx 48rpx;
+  background: #f6f7f2;
+}
+
+.panel {
+  width: 100%;
+  padding: 48rpx 40rpx;
+  border: 1rpx solid #e3e5dc;
+  border-radius: 8rpx;
+  background: #ffffff;
+}
+
+.eyebrow {
+  margin-bottom: 24rpx;
+  color: #62705d;
+  font-size: 24rpx;
+  line-height: 1.4;
+}
+
+.title {
+  color: #20231f;
+  font-size: 48rpx;
+  font-weight: 700;
+  line-height: 1.25;
+}
+
+.desc {
+  margin-top: 24rpx;
+  color: #4a5047;
+  font-size: 30rpx;
+  line-height: 1.6;
+}
+
+.notice {
+  margin-top: 32rpx;
+  padding: 24rpx;
+  border-radius: 8rpx;
+  background: #eef4ea;
+  color: #3f5941;
+  font-size: 28rpx;
+  line-height: 1.5;
+}
+
+.placeholder-button {
+  width: 100%;
+  margin-top: 40rpx;
+  border-radius: 8rpx;
+  background: #527255;
+  color: #ffffff;
+  font-size: 28rpx;
+  line-height: 88rpx;
+}
+
+.placeholder-button::after {
+  border: 0;
+}

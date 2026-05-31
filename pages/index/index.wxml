@@ -1,0 +1,9 @@
+<view class="page">
+  <view class="panel">
+    <view class="eyebrow">MVP 初始化</view>
+    <view class="title">食期管家</view>
+    <view class="desc">记录食品保质期，提醒你及时食用</view>
+    <view class="notice">当前版本仅完成小程序骨架初始化</view>
+    <button class="placeholder-button" bindtap="onPlaceholderTap">后续添加食品录入功能</button>
+  </view>
+</view>
