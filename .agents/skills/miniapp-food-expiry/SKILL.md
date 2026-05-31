@@ -1,4 +1,3 @@
-```md
 ---
 name: miniapp-food-expiry
 description: Use this skill when working on the 食期管家 WeChat Mini Program repository, especially tasks involving food expiry tracking, manual food entry, production date plus shelf life calculation, direct final edible date input, expiryDate sorting, storage methods, OCR confirmation flow, reminder logic, CloudBase cloud functions, cloud database permissions, documentation, tests, and Codex PR review. Do not use this skill for unrelated generic web apps or non-WeChat projects.
@@ -71,6 +70,7 @@ For any date calculation change, verify:
 - manual expiry date mode
 - user override behavior
 - opened date + after-open shelf life, if implemented
+- ensure strict timezone handling (defaulting to GMT+8/China Standard Time) to prevent off-by-one-day errors when calculations cross midnight
 
 Implementation guidance:
 
@@ -84,7 +84,7 @@ For OCR-related changes, verify:
 
 - image selection or photo capture does not require secrets in the frontend
 - OCR or AI extraction logic runs in cloud functions or server-side services
-- raw OCR text is preserved for confirmation/debugging when appropriate
+- raw OCR text is always preserved in the component state for debugging, but only displayed in the UI if the OCR confidence score is below 80%
 - date formats are normalized before display or saving
 - shelf life units are normalized
 - low-confidence fields are visibly editable
@@ -100,7 +100,7 @@ For reminder-related changes, verify:
 - reminders are not scheduled when disabled
 - expired items display correctly
 - today-expiring items display correctly
-- items without valid `expiryDate` are handled gracefully
+- items without valid `expiryDate` must be sorted at the bottom of the list and display "No expiry date" in the UI
 - subscription-message authorization is respected
 - in-app reminder fallback remains available
 
@@ -113,6 +113,7 @@ For cloud database or cloud function changes, verify:
 - secrets are stored only in cloud function environment variables or secure server-side config
 - frontend code does not include API keys, OCR keys, OpenAI keys, or other credentials
 - cloud functions validate inputs before writing to the database
+- If the provided code already contains hardcoded secrets or credentials in the frontend, refuse to proceed with feature work until you explain the vulnerability and provide a refactoring plan to move them to CloudBase secure configuration.
 
 ## Documentation checklist
 
@@ -158,4 +159,3 @@ When reviewing a PR or Codex change, check:
 3. Whether secrets stay out of frontend code
 4. Whether the change is small and reviewable
 5. Whether tests or manual verification steps are included
-```
