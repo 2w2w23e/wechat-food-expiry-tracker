@@ -1,4 +1,3 @@
-
 # AGENTS.md
 
 ## Project
@@ -141,3 +140,32 @@ Include:
 - Do not make medical or food safety guarantees.
 - Do not rewrite the whole project structure without approval.
 - Do not mix multiple large features in one task.
+
+## Codex task workflow
+
+For project-related Codex tasks, prefer the `/goal + require.txt` workflow.
+
+Recommended usage:
+
+```text
+/goal Complete a short objective. Details are in require.txt.
+```
+The require.txt file should include the full task details.
+
+For tasks related to this repository, the first line of require.txt should be:
+Use $miniapp-food-expiry.
+
+A valid require.txt should include:
+
+Goal
+Context
+Files
+Requirements
+Acceptance criteria
+Tests
+Out of scope
+PR summary format
+
+Keep /goal short. Put implementation details, file lists, test steps, and forbidden changes in require.txt.
+
+Do not start broad implementation work if require.txt does not clearly define the allowed files and out-of-scope items.
