@@ -1,8 +1,80 @@
 <view class="page">
   <view class="header">
-    <view class="eyebrow">只读食品列表</view>
+    <view class="eyebrow">食品到期列表</view>
     <view class="title">食期管家</view>
-    <view class="desc">按到期日查看本地 mock 食品数据</view>
+    <view class="desc">按到期日查看当前页面内存中的食品数据</view>
+  </view>
+
+  <button class="add-toggle" bindtap="toggleAddForm">
+    {{showAddForm ? '收起表单' : '新增食品'}}
+  </button>
+
+  <view class="add-form" wx:if="{{showAddForm}}">
+    <view class="form-title">新增食品</view>
+
+    <view class="form-error" wx:if="{{formError}}">{{formError}}</view>
+
+    <view class="field">
+      <view class="field-label">食品名称</view>
+      <input class="field-input" value="{{addForm.name}}" data-field="name" bindinput="updateAddForm" placeholder="例如：牛奶" />
+    </view>
+
+    <view class="field">
+      <view class="field-label">分类</view>
+      <input class="field-input" value="{{addForm.category}}" data-field="category" bindinput="updateAddForm" placeholder="例如：dairy 或 乳制品" />
+    </view>
+
+    <view class="field-row">
+      <view class="field half">
+        <view class="field-label">数量</view>
+        <input class="field-input" type="digit" value="{{addForm.quantity}}" data-field="quantity" bindinput="updateAddForm" placeholder="例如：2" />
+      </view>
+      <view class="field half">
+        <view class="field-label">剩余数量</view>
+        <input class="field-input" type="digit" value="{{addForm.remainingQuantity}}" data-field="remainingQuantity" bindinput="updateAddForm" placeholder="例如：1" />
+      </view>
+    </view>
+
+    <view class="field-row">
+      <view class="field half">
+        <view class="field-label">单位</view>
+        <input class="field-input" value="{{addForm.unit}}" data-field="unit" bindinput="updateAddForm" placeholder="例如：盒" />
+      </view>
+      <view class="field half">
+        <view class="field-label">保存方式</view>
+        <input class="field-input" value="{{addForm.storageMethod}}" data-field="storageMethod" bindinput="updateAddForm" placeholder="例如：冷藏" />
+      </view>
+    </view>
+
+    <view class="field">
+      <view class="field-label">生产日期</view>
+      <input class="field-input" value="{{addForm.productionDate}}" data-field="productionDate" bindinput="updateAddForm" placeholder="YYYY-MM-DD" />
+    </view>
+
+    <view class="field-row">
+      <view class="field half">
+        <view class="field-label">保质期</view>
+        <input class="field-input" type="number" value="{{addForm.shelfLifeValue}}" data-field="shelfLifeValue" bindinput="updateAddForm" placeholder="例如：30" />
+      </view>
+      <view class="field half">
+        <view class="field-label">保质期单位</view>
+        <picker mode="selector" range="{{shelfLifeUnitOptions}}" value="{{shelfLifeUnitIndex}}" data-field="shelfLifeUnit" bindchange="updateAddForm">
+          <view class="field-input picker-value">{{addForm.shelfLifeUnit}}</view>
+        </picker>
+      </view>
+    </view>
+
+    <view class="field">
+      <view class="field-label">最终可食用日期</view>
+      <input class="field-input" value="{{addForm.expiryDate}}" data-field="expiryDate" bindinput="updateAddForm" placeholder="YYYY-MM-DD，填写后优先使用" />
+    </view>
+
+    <view class="field">
+      <view class="field-label">备注</view>
+      <textarea class="field-textarea" value="{{addForm.notes}}" data-field="notes" bindinput="updateAddForm" placeholder="可填写存放位置或其他提醒" />
+    </view>
+
+    <button class="submit-button" bindtap="submitAddForm">保存食品</button>
   </view>
 
   <view class="food-list" wx:if="{{foods.length}}">
