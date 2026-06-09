@@ -1,4 +1,4 @@
-STATUS: UNREAD | TO: project-architect | FROM: main-brain | TYPE: phase-handoff | CREATED: 2026-06-09
+STATUS: READ | TO: project-architect | FROM: main-brain | READ_BY: project-architect | READ_AT: 2026-06-09
 
 # 阶段 0 结束交接：项目地基与 AI 协作体系阶段
 
