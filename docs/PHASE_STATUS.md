@@ -105,26 +105,44 @@ main-brain 在 V0 内部按以下顺序推进小阶段：
 - [x] code-reviewer 审核通过，建议合并。
 - [x] 未引入页面 UI、新增、编辑、删除、本地保存、云数据库、条形码、OCR、AI、提醒调度或新依赖。
 
+### V0-3b：只读食品列表页面展示
+
+状态：已完成。
+
+已完成：
+
+- [x] PR #3 `feat: show read-only mock food list` 已合并。
+- [x] 首页基于 `mockFoods` 展示只读食品列表。
+- [x] 页面复用 `sortFoodsByExpiryDate` 排序，没有在页面重复实现排序逻辑。
+- [x] 页面复用 `getFoodExpiryStatus` 获取状态，没有在页面重复实现状态判断逻辑。
+- [x] 页面展示食品名称、分类、数量 / 剩余数量、单位、保存方式、`expiryDate` 和状态文案。
+- [x] 无有效 `expiryDate` 的食品显示“未填写到期日”，并通过排序工具排在底部。
+- [x] UI 采用清楚文字、卡片区块和明显状态标签，符合当前 V0 老年友好要求。
+- [x] 微信开发者工具实际页面检查通过。
+- [x] 未实现新增、编辑、删除、本地保存、云数据库、条形码、OCR、AI 或提醒调度。
+
 ## 当前小阶段
 
-### V0-3b：只读食品列表页面展示
+### V0-4：手动新增食品
 
 状态：准备开始。
 
-目标：基于 `mockFoods`、`sortFoodsByExpiryDate` 和 `getFoodExpiryStatus`，做一个只读食品列表页面展示，让用户能在微信开发者工具中看到食品库存、到期日期和到期状态。
+目标：在当前只读列表基础上，增加最小可用的手动新增食品能力，让用户可以通过表单录入食品，并在当前页面列表中看到新增结果。
 
-本阶段只做：
+本阶段优先做最小闭环：
 
-- 读取 `mock/foods.js` 中的 mock 食品数据。
-- 调用 `sortFoodsByExpiryDate` 得到按 `expiryDate` 排序后的列表。
-- 调用 `getFoodExpiryStatus` 得到食品状态。
-- 在页面中展示食品名称、分类、数量 / 剩余数量、单位、保存方式、`expiryDate`、状态文案。
-- 使用清楚、直接、适合老年用户的文字。
-- 提供空状态或无有效到期日期的简单提示。
+- 在页面上提供“新增食品”入口。
+- 提供基础手动录入表单。
+- 表单字段优先包含：食品名称、分类、数量、剩余数量、单位、保存方式、生产日期、保质期数值、保质期单位、最终可食用日期、备注。
+- 支持两种日期方式：
+  - 通过 `productionDate + shelfLifeValue + shelfLifeUnit` 计算 `expiryDate`。
+  - 手动填写 `expiryDate`。
+- 新增后把食品加入当前页面列表。
+- 新增后继续使用 `sortFoodsByExpiryDate` 排序。
+- 新增后继续使用 `getFoodExpiryStatus` 显示状态。
 
 本阶段暂不做：
 
-- 新增食品。
 - 编辑食品。
 - 删除食品。
 - 本地保存。
@@ -132,21 +150,22 @@ main-brain 在 V0 内部按以下顺序推进小阶段：
 - 条形码、OCR、AI。
 - 提醒调度。
 - 新依赖引入。
+- 复杂表单校验。
 - 复杂筛选或统计。
 
 ## 当前剩余事项
 
-- [ ] codex-task-generator 为 V0-3b 生成 `/goal + require.txt`。
-- [ ] Codex 完成 V0-3b PR。
-- [ ] code-reviewer 审核 V0-3b PR。
-- [ ] main-brain 根据审核结果判断是否进入 V0-4。
+- [ ] codex-task-generator 为 V0-4 生成 `/goal + require.txt`。
+- [ ] Codex 完成 V0-4 PR。
+- [ ] code-reviewer 审核 V0-4 PR。
+- [ ] main-brain 根据审核结果判断是否进入 V0-5。
 
 ## 当前推荐下一步
 
-请让 codex-task-generator 生成 V0-3b 的第一个 Codex 任务：
+请让 codex-task-generator 生成 V0-4 的第一个 Codex 任务：
 
 ```text
-/goal 基于 mock 数据实现只读食品列表页面展示，具体细节见 require.txt
+/goal 实现最小可用的手动新增食品表单，具体细节见 require.txt
 ```
 
 `require.txt` 必须第一行写：
@@ -155,7 +174,7 @@ main-brain 在 V0 内部按以下顺序推进小阶段：
 Use $miniapp-food-expiry.
 ```
 
-任务应限制为：只基于 mock 数据、排序工具和状态工具实现只读列表页面展示，不实现新增、编辑、删除、本地保存、云数据库、条形码、OCR、AI 或提醒调度。
+任务应限制为：只实现手动新增食品并加入当前页面列表，不实现编辑、删除、本地保存、云数据库、条形码、OCR、AI 或提醒调度。
 
 ## 当前阻塞点
 
@@ -163,11 +182,12 @@ Use $miniapp-food-expiry.
 
 潜在风险：
 
-1. V0-3b 过早加入新增、编辑、删除或本地保存，导致任务过大。
-2. 页面绕过 `sortFoodsByExpiryDate` 或 `getFoodExpiryStatus` 自行实现排序和状态判断。
-3. 页面没有清楚展示 `expiryDate` 和状态文案，导致用户无法理解食品到期情况。
-4. getTodayString 使用设备本地日期，后续 UI 接入时需要确认是否继续使用本地日期，还是统一按中国时区计算。
-5. 过早引入新依赖、云开发、条形码、OCR、AI 或复杂提醒，导致 V0 失焦。
+1. V0-4 一次性加入编辑、删除、本地保存，导致任务过大。
+2. 表单绕过 `calculateExpiryDate` 自行计算 `expiryDate`。
+3. 新增后列表绕过 `sortFoodsByExpiryDate` 或 `getFoodExpiryStatus`。
+4. `expiryDate` 来源没有通过 `dateSource` 标记为 `calculated` 或 `manual`。
+5. getTodayString 使用设备本地日期，后续真实 UI 接入时需要确认是否继续使用本地日期，还是统一按中国时区计算。
+6. 过早引入新依赖、云开发、条形码、OCR、AI 或复杂提醒，导致 V0 失焦。
 
 ## 需要回到 project-architect 的情况
 
