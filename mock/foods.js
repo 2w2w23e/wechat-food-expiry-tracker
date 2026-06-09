@@ -17,7 +17,7 @@ const mockFoods = [
     remainingQuantity: 4,
     unit: 'box',
     storageMethod: 'refrigerated',
-    note: '正常未来到期示例',
+    notes: '正常未来到期示例',
     createdAt: '2026-06-01T09:00:00+08:00',
     updatedAt: '2026-06-01T09:00:00+08:00'
   }),
@@ -34,7 +34,7 @@ const mockFoods = [
     remainingQuantity: 1,
     unit: 'bag',
     storageMethod: 'room_temp',
-    note: '临期示例',
+    notes: '临期示例',
     createdAt: '2026-06-05T10:00:00+08:00',
     updatedAt: '2026-06-06T10:00:00+08:00'
   }),
@@ -51,7 +51,7 @@ const mockFoods = [
     remainingQuantity: 1,
     unit: 'bottle',
     storageMethod: 'refrigerated',
-    note: '今日到期示例',
+    notes: '今日到期示例',
     createdAt: '2026-05-25T08:30:00+08:00',
     updatedAt: '2026-06-08T20:00:00+08:00'
   }),
@@ -68,7 +68,7 @@ const mockFoods = [
     remainingQuantity: 250,
     unit: 'g',
     storageMethod: 'frozen',
-    note: '已过期示例',
+    notes: '已过期示例',
     createdAt: '2026-01-10T18:00:00+08:00',
     updatedAt: '2026-06-02T18:00:00+08:00'
   }),
@@ -85,7 +85,7 @@ const mockFoods = [
     remainingQuantity: 1,
     unit: 'L',
     storageMethod: 'avoid_light',
-    note: '手动填写最终可食用日期',
+    notes: '手动填写最终可食用日期',
     createdAt: '2026-06-07T14:00:00+08:00',
     updatedAt: '2026-06-07T14:00:00+08:00'
   }),
@@ -102,7 +102,7 @@ const mockFoods = [
     remainingQuantity: 300,
     unit: 'g',
     storageMethod: 'cool_dry',
-    note: '无可靠到期日期示例',
+    notes: '无可靠到期日期示例',
     createdAt: '2026-06-08T16:00:00+08:00',
     updatedAt: '2026-06-08T16:00:00+08:00'
   }),
@@ -119,7 +119,7 @@ const mockFoods = [
     remainingQuantity: 0.5,
     unit: 'bottle',
     storageMethod: 'cool_dry',
-    note: '年份保质期示例',
+    notes: '年份保质期示例',
     createdAt: '2026-05-01T12:00:00+08:00',
     updatedAt: '2026-06-01T12:00:00+08:00'
   })

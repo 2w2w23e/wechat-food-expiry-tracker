@@ -16,7 +16,7 @@ const DEFAULT_FOOD_ITEM = {
   remainingQuantity: 1,
   unit: 'piece',
   storageMethod: 'room_temp',
-  note: '',
+  notes: '',
   createdAt: '',
   updatedAt: ''
 }
@@ -77,7 +77,7 @@ function normalizeFoodItem(input) {
     : null
   const expiryDate = dateSource === 'unknown' ? null : (providedExpiryDate || calculatedExpiryDate)
   const quantity = normalizeQuantity(source.quantity, DEFAULT_FOOD_ITEM.quantity)
-  const remainingQuantity = normalizeQuantity(source.remainingQuantity, quantity)
+  const remainingQuantity = Math.min(normalizeQuantity(source.remainingQuantity, quantity), quantity)
 
   return {
     id: typeof source.id === 'string' ? source.id : DEFAULT_FOOD_ITEM.id,
@@ -94,7 +94,7 @@ function normalizeFoodItem(input) {
     storageMethod: typeof source.storageMethod === 'string' && source.storageMethod
       ? source.storageMethod
       : DEFAULT_FOOD_ITEM.storageMethod,
-    note: typeof source.note === 'string' ? source.note : DEFAULT_FOOD_ITEM.note,
+    notes: typeof source.notes === 'string' ? source.notes : DEFAULT_FOOD_ITEM.notes,
     createdAt: typeof source.createdAt === 'string' ? source.createdAt : DEFAULT_FOOD_ITEM.createdAt,
     updatedAt: typeof source.updatedAt === 'string' ? source.updatedAt : DEFAULT_FOOD_ITEM.updatedAt
   }
@@ -109,11 +109,16 @@ function isValidFoodItem(input) {
     return false
   }
 
+  const quantity = normalizeQuantity(input.quantity, null)
+  const remainingQuantity = normalizeQuantity(input.remainingQuantity, null)
   const item = normalizeFoodItem(input)
 
   return REQUIRED_FOOD_FIELDS.every((field) => Object.prototype.hasOwnProperty.call(input, field)) &&
     item.id !== '' &&
     item.name !== '' &&
+    quantity !== null &&
+    remainingQuantity !== null &&
+    remainingQuantity <= quantity &&
     VALID_DATE_SOURCES.includes(item.dateSource) &&
     (item.expiryDate === null || isValidDateString(item.expiryDate)) &&
     (item.dateSource !== 'unknown' || item.expiryDate === null)

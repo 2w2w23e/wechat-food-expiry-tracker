@@ -27,6 +27,19 @@ test('mock foods include every required V0 field', () => {
   })
 })
 
+test('mock foods use notes field and do not keep legacy note field', () => {
+  mockFoods.forEach((food) => {
+    assert.strictEqual(Object.prototype.hasOwnProperty.call(food, 'notes'), true, `${food.id} missing notes`)
+    assert.strictEqual(Object.prototype.hasOwnProperty.call(food, 'note'), false, `${food.id} has legacy note`)
+  })
+})
+
+test('mock foods do not have remaining quantity greater than quantity', () => {
+  mockFoods.forEach((food) => {
+    assert.strictEqual(food.remainingQuantity <= food.quantity, true, `${food.id} has invalid remainingQuantity`)
+  })
+})
+
 test('mock foods use expiryDate as the canonical date field', () => {
   const competingFields = ['finalDate', 'expireDate', 'endDate', 'bestBeforeDate']
 
@@ -68,4 +81,34 @@ test('normalizeFoodItem does not mutate input and preserves expiryDate/dateSourc
   assert.strictEqual(normalized.dateSource, 'manual')
   assert.strictEqual(normalized.category, 'other')
   assert.strictEqual(normalized.quantity, 1)
+})
+
+test('normalizeFoodItem clamps remainingQuantity down to quantity', () => {
+  const normalized = normalizeFoodItem({
+    id: 'food_quantity_normalize',
+    name: '测试数量',
+    expiryDate: '2026-06-20',
+    dateSource: 'manual',
+    quantity: 3,
+    remainingQuantity: 5
+  })
+
+  assert.strictEqual(normalized.quantity, 3)
+  assert.strictEqual(normalized.remainingQuantity, 3)
+})
+
+test('isValidFoodItem rejects remainingQuantity greater than quantity', () => {
+  const item = normalizeFoodItem({
+    id: 'food_quantity_invalid',
+    name: '测试数量',
+    expiryDate: '2026-06-20',
+    dateSource: 'manual',
+    quantity: 3,
+    remainingQuantity: 3
+  })
+
+  assert.strictEqual(isValidFoodItem({
+    ...item,
+    remainingQuantity: 5
+  }), false)
 })
