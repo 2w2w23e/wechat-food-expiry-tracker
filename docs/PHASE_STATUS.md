@@ -1,39 +1,61 @@
 # 阶段状态
 
-本文件记录“食期管家”项目当前阶段、阶段目标、完成情况、阻塞点和下一步任务。
+本文件记录“食期管家”项目当前版本、阶段目标、完成情况、阻塞点和下一步任务。
 
-本文件由 main-brain 主要维护；project-architect 可在阶段交接后更新大阶段判断。
+本文件由 main-brain 主要维护；project-architect 可在版本边界、工具引入、地基缺失、阻塞或 V0 完成后更新大阶段判断。
 
-## 当前阶段
+## 当前版本
 
-阶段编号：1
+版本编号：V0
 
-阶段名称：MVP 核心数据与日期计算基础
+版本名称：手动食品库存 MVP
 
-阶段状态：已完成，等待 project-architect 确认进入阶段 2
+版本状态：进行中
 
 最后更新角色：main-brain
 
 最后更新日期：2026-06-09
 
-## 阶段 1 结论
+## 当前 V0 任务边界
 
-阶段 1：MVP 核心数据与日期计算基础，已完成。
+V0 的目标是完成一个可实际试用的手动版“食期管家”。用户可以手动录入食品，查看库存，看到临期 / 过期状态，按最终可食用日期排序，并完成基础筛选、统计和保存。
 
-结束判断：可以结束。
+V0 必须坚持：
 
-判断依据：
+- 不做条形码扫描。
+- 不做商品信息查询。
+- 不做 OCR / AI 信息抽取。
+- 不做大模型对话。
+- 不做菜谱规划。
+- 不做复杂智能提醒。
+- 不做复杂数据看板。
+- 不做家庭成员权限系统。
+- 不做自动保存识别结果。
+- 不做前端密钥存储。
+- 不引入新依赖、云开发、工具或 Skill，除非用户或 project-architect 明确确认。
 
-1. 已实现食品日期计算工具函数。
-2. 已建立 `expiryDate` 相关代码基础。
-3. 已支持生产日期 + 保质期计算 `expiryDate`。
-4. 已支持 `day`、`month`、`year` 三种单位。
-5. 已处理无效日期、负数保质期、月底日期和闰年日期。
-6. 已提供基础测试文件覆盖关键边界。
-7. code-reviewer 已给出低风险、建议合并/保留、暂不需要必须修复的结论。
-8. 未发现页面 UI、食品录入页、食品列表页、云数据库、条形码、OCR、AI、提醒调度或新依赖。
+## V0 内部开发顺序
 
-## 阶段 1 已完成内容
+main-brain 在 V0 内部按以下顺序推进小阶段：
+
+1. 核心数据与日期计算基础。
+2. 食品基础数据结构与本地 mock 数据。
+3. 食品列表展示、`expiryDate` 排序和到期状态显示。
+4. 手动新增食品。
+5. 编辑和删除食品。
+6. 简单筛选与总览统计。
+7. 基础本地保存能力。
+8. V0 手动测试清单、文档同步和收尾。
+
+说明：此顺序服务于 V0 手动闭环，不展开 V1/V2/V3。
+
+## 已完成内容
+
+### V0-1：核心数据与日期计算基础
+
+状态：已完成。
+
+已完成：
 
 - [x] `utils/date.js`：日期计算工具函数。
 - [x] `tests/date.test.js`：日期计算基础测试。
@@ -45,67 +67,58 @@
 - [x] 处理闰年日期，例如 2024-02-29 + 1 年。
 - [x] 对无效日期和无效保质期返回空 `expiryDate`。
 - [x] 使用 UTC 进行天数偏移，降低本地时区跨日风险。
+- [x] code-reviewer 已给出低风险、建议合并/保留、暂不需要必须修复的结论。
 
-## 当前产品定位
+## 当前小阶段
 
-食期管家是一个面向家庭 / 老年友好的食品库存与保质期管理微信小程序。
+### V0-2：食品基础数据结构与本地 mock 数据
 
-当前 MVP v0.1 重点是先完成稳定、简单、适合老年人使用的基础版本：
+状态：准备开始。
 
-- 手动录入食品。
-- 记录分类、数量、剩余数量、单位、保存方式和备注。
-- 支持生产日期 + 保质期计算 `expiryDate`。
-- 支持手动输入 `expiryDate`。
-- 按 `expiryDate` 排序。
-- 支持简单筛选和总览统计。
+目标：根据 `docs/DATA_MODEL.md` 建立前端可复用的食品数据结构和本地 mock 数据，为后续列表展示、排序、筛选、录入和本地保存打基础。
 
-条形码扫描、规则化智能提醒、OCR / AI 信息抽取、大模型对话和食谱规划属于后续阶段。
+本阶段只做：
 
-## 阶段 0 已完成地基项目
+- 定义前端食品记录数据结构。
+- 准备少量 mock 食品数据。
+- 确保 mock 数据包含 `expiryDate`、`dateSource`、`category`、`quantity`、`remainingQuantity`、`unit`、`storageMethod` 等 V0 必需字段。
+- 确保 mock 数据覆盖正常、即将过期、今日到期、已过期、无有效 `expiryDate` 等后续列表状态需要的场景。
+- 复用或兼容已有 `utils/date.js` 日期计算工具。
 
-- [x] `README.md`：项目入口说明。
-- [x] `AGENTS.md`：Codex / AI 编码助手仓库规则。
-- [x] `.agents/skills/miniapp-food-expiry/SKILL.md`：项目专属 Codex Skill。
-- [x] `docs/FEATURE_SCOPE.md`：新版功能范围和阶段边界。
-- [x] `docs/DATA_MODEL.md`：食品数据模型说明。
-- [x] `docs/CODEX_WORKFLOW.md`：Codex 工作流说明。
-- [x] `docs/AI_COLLABORATION.md`：AI 协作体系。
-- [x] `docs/DOCUMENT_OWNERSHIP.md`：文档与代码修改权限。
-- [x] `docs/TOOL_AND_SKILL_POLICY.md`：工具与 Skill 引入策略。
-- [x] `docs/TOOL_RESEARCH.md`：工具与开源项目调研。
-- [x] `docs/PHASE_STATUS.md`：阶段状态。
-- [x] `docs/ROLE_PROMPTS.md`：AI 角色提示词。
-- [x] `docs/ai-handoffs/README.md`：AI 交接协议。
+本阶段不做：
+
+- 页面 UI。
+- 食品新增表单。
+- 编辑和删除。
+- 列表页面展示。
+- 本地保存。
+- 云数据库。
+- 条形码、OCR、AI。
+- 提醒调度。
+- 新依赖引入。
 
 ## 当前剩余事项
 
-- [x] codex-task-generator 为阶段 1 第一个任务生成 `/goal + require.txt`。
-- [x] Codex 完成阶段 1 日期计算实现。
-- [x] code-reviewer 审核阶段 1 日期计算实现。
-- [x] main-brain 判断阶段 1 是否结束。
-- [x] main-brain 更新 `docs/PHASE_STATUS.md`。
-- [x] main-brain 创建阶段 1 结束交接文档给 project-architect。
-- [ ] project-architect 读取阶段 1 交接文档，并确认是否进入阶段 2。
+- [ ] codex-task-generator 为 V0-2 生成 `/goal + require.txt`。
+- [ ] Codex 完成 V0-2 PR。
+- [ ] code-reviewer 审核 V0-2 PR。
+- [ ] main-brain 根据审核结果判断是否进入 V0-3。
 
 ## 当前推荐下一步
 
-请 project-architect 读取阶段 1 交接文档：
-
-```text
-`docs/ai-handoffs/2026-06-09-main-brain-to-project-architect-phase-1-complete.md`
-```
-
-如 project-architect 确认进入阶段 2，建议阶段 2 按 `docs/VERSION_ROADMAP.md` 执行：
-
-阶段 2：食品基础数据结构与本地 mock 数据。
-
-阶段 2 的第一个最小任务建议是：
+请让 codex-task-generator 生成 V0-2 的第一个 Codex 任务：
 
 ```text
 /goal 建立食品基础数据结构与本地 mock 数据，具体细节见 require.txt
 ```
 
-但在 project-architect 确认前，main-brain 不直接展开阶段 2 详细规划。
+`require.txt` 必须第一行写：
+
+```text
+Use $miniapp-food-expiry.
+```
+
+任务应限制为：只建立食品数据结构和 mock 数据，不修改页面 UI，不实现新增、编辑、删除、列表展示、本地保存、云数据库、条形码、OCR、AI 或提醒调度。
 
 ## 当前阻塞点
 
@@ -113,20 +126,18 @@
 
 潜在风险：
 
-1. 阶段 2 过早进入页面 UI 或手动录入页，导致跳过数据结构基础。
-2. 日期工具函数后续被页面直接耦合，降低复用性。
-3. 调用方未把 `calculateExpiryDate` 返回结果正确写入食品记录的 `expiryDate` 字段。
-4. 后续排序、提醒、状态判断没有统一读取 `expiryDate`。
-5. 过早实现条形码、AI 对话或智能提醒，导致 MVP v0.1 失焦。
+1. V0-2 过早进入页面 UI 或手动录入页，导致数据基础不稳。
+2. mock 数据字段与 `docs/DATA_MODEL.md` 不一致。
+3. 后续排序、提醒、状态判断没有统一读取 `expiryDate`。
+4. 调用方未把 `calculateExpiryDate` 返回结果正确写入食品记录的 `expiryDate` 字段。
+5. 过早引入新依赖、云开发、条形码、OCR、AI 或复杂提醒，导致 V0 失焦。
 
-## 阶段结束交接要求
+## 需要回到 project-architect 的情况
 
-当 main-brain 判断当前小阶段结束时，应在 `docs/ai-handoffs/` 创建交接文件。
+V0 进行中，main-brain 只在以下情况回到 project-architect：
 
-交接文件应包含：
-
-1. 当前阶段完成了什么。
-2. 哪些文档或代码发生变化。
-3. 当前关键决策。
-4. 未完成事项。
-5. 建议 project-architect 下一步处理什么。
+1. V0 需要改变边界。
+2. V0 需要引入新依赖、云开发、工具或 Skill。
+3. V0 发现数据模型或安全原则需要调整。
+4. V0 被阻塞，需要项目级决策。
+5. V0 完成，需要规划 V1。
