@@ -86,48 +86,67 @@ main-brain 在 V0 内部按以下顺序推进小阶段：
 - [x] code-reviewer 复审通过，建议合并。
 - [x] 未引入页面 UI、新增、编辑、删除、列表展示、本地保存、云数据库、条形码、OCR、AI、提醒调度或新依赖。
 
+### V0-3a：食品排序与到期状态工具函数
+
+状态：已完成。
+
+已完成：
+
+- [x] PR #2 `feat: add food expiry status and sorting utils` 已合并。
+- [x] `utils/foodStatus.js`：食品到期状态判断工具函数。
+- [x] `utils/foodList.js`：基于 `expiryDate` 的食品排序工具函数。
+- [x] `tests/foodStatus.test.js`：到期状态与排序测试。
+- [x] 支持 `expired`、`today`、`soon`、`normal`、`unknown` 状态。
+- [x] `soon` 默认阈值为 7 天，并标记为 V0 临时策略。
+- [x] 排序以 `expiryDate` 为唯一核心字段。
+- [x] 无有效 `expiryDate` 的食品稳定排在底部。
+- [x] 排序不修改原数组。
+- [x] 使用固定参考日期进行测试，避免测试受真实当前日期影响。
+- [x] code-reviewer 审核通过，建议合并。
+- [x] 未引入页面 UI、新增、编辑、删除、本地保存、云数据库、条形码、OCR、AI、提醒调度或新依赖。
+
 ## 当前小阶段
 
-### V0-3：食品列表展示、`expiryDate` 排序和到期状态显示
+### V0-3b：只读食品列表页面展示
 
 状态：准备开始。
 
-目标：基于当前 mock 数据，建立食品列表展示所需的排序与状态判断基础，让后续页面能围绕 `expiryDate` 展示食品状态。
+目标：基于 `mockFoods`、`sortFoodsByExpiryDate` 和 `getFoodExpiryStatus`，做一个只读食品列表页面展示，让用户能在微信开发者工具中看到食品库存、到期日期和到期状态。
 
 本阶段只做：
 
-- 基于 `expiryDate` 的食品排序工具函数。
-- 无有效 `expiryDate` 的食品排在底部。
-- 食品到期状态判断工具函数。
-- 支持状态：`expired`、`today`、`soon`、`normal`、`unknown`。
-- 使用固定参考日期进行基础测试，避免测试受真实当前日期影响。
-- 基于 `mock/foods.js` 验证排序和状态覆盖。
+- 读取 `mock/foods.js` 中的 mock 食品数据。
+- 调用 `sortFoodsByExpiryDate` 得到按 `expiryDate` 排序后的列表。
+- 调用 `getFoodExpiryStatus` 得到食品状态。
+- 在页面中展示食品名称、分类、数量 / 剩余数量、单位、保存方式、`expiryDate`、状态文案。
+- 使用清楚、直接、适合老年用户的文字。
+- 提供空状态或无有效到期日期的简单提示。
 
 本阶段暂不做：
 
-- 页面 UI。
-- WXML / WXSS 展示。
-- 食品新增表单。
-- 编辑和删除。
+- 新增食品。
+- 编辑食品。
+- 删除食品。
 - 本地保存。
 - 云数据库。
 - 条形码、OCR、AI。
 - 提醒调度。
 - 新依赖引入。
+- 复杂筛选或统计。
 
 ## 当前剩余事项
 
-- [ ] codex-task-generator 为 V0-3 生成 `/goal + require.txt`。
-- [ ] Codex 完成 V0-3 PR。
-- [ ] code-reviewer 审核 V0-3 PR。
+- [ ] codex-task-generator 为 V0-3b 生成 `/goal + require.txt`。
+- [ ] Codex 完成 V0-3b PR。
+- [ ] code-reviewer 审核 V0-3b PR。
 - [ ] main-brain 根据审核结果判断是否进入 V0-4。
 
 ## 当前推荐下一步
 
-请让 codex-task-generator 生成 V0-3 的第一个 Codex 任务：
+请让 codex-task-generator 生成 V0-3b 的第一个 Codex 任务：
 
 ```text
-/goal 实现食品列表排序与到期状态工具函数，具体细节见 require.txt
+/goal 基于 mock 数据实现只读食品列表页面展示，具体细节见 require.txt
 ```
 
 `require.txt` 必须第一行写：
@@ -136,7 +155,7 @@ main-brain 在 V0 内部按以下顺序推进小阶段：
 Use $miniapp-food-expiry.
 ```
 
-任务应限制为：只实现排序和到期状态判断工具函数及测试，不修改页面 UI，不实现新增、编辑、删除、列表展示、本地保存、云数据库、条形码、OCR、AI 或提醒调度。
+任务应限制为：只基于 mock 数据、排序工具和状态工具实现只读列表页面展示，不实现新增、编辑、删除、本地保存、云数据库、条形码、OCR、AI 或提醒调度。
 
 ## 当前阻塞点
 
@@ -144,10 +163,10 @@ Use $miniapp-food-expiry.
 
 潜在风险：
 
-1. V0-3 过早进入 WXML / WXSS 页面展示，导致排序和状态逻辑难以复用。
-2. 到期状态判断没有统一读取 `expiryDate`。
-3. 无有效 `expiryDate` 的食品没有稳定排到底部。
-4. 测试使用真实当前日期，导致不同日期运行测试结果不稳定。
+1. V0-3b 过早加入新增、编辑、删除或本地保存，导致任务过大。
+2. 页面绕过 `sortFoodsByExpiryDate` 或 `getFoodExpiryStatus` 自行实现排序和状态判断。
+3. 页面没有清楚展示 `expiryDate` 和状态文案，导致用户无法理解食品到期情况。
+4. getTodayString 使用设备本地日期，后续 UI 接入时需要确认是否继续使用本地日期，还是统一按中国时区计算。
 5. 过早引入新依赖、云开发、条形码、OCR、AI 或复杂提醒，导致 V0 失焦。
 
 ## 需要回到 project-architect 的情况
