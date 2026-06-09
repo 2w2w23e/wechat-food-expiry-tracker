@@ -94,6 +94,7 @@
 - `docs/DOCUMENT_OWNERSHIP.md`：文档与代码修改权限
 - `docs/TOOL_AND_SKILL_POLICY.md`：工具和 Skill 引入策略
 - `docs/TOOL_RESEARCH.md`：工具与开源项目调研
+- `docs/SUPERPOWERS_REFERENCE.md`：Superpowers 方法论参考
 - `docs/PHASE_STATUS.md`：当前阶段状态
 - `docs/ROLE_PROMPTS.md`：各 AI 角色提示词
 - `docs/ai-handoffs/README.md`：AI 角色交接协议
@@ -112,6 +113,7 @@
 - 文档与代码修改权限说明
 - 工具与 Skill 引入策略
 - 工具与开源项目调研
+- Superpowers 方法论参考
 - 阶段状态文档
 - AI 角色提示词文档
 - AI 角色交接协议
