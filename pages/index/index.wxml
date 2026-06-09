@@ -1,9 +1,39 @@
 <view class="page">
-  <view class="panel">
-    <view class="eyebrow">MVP 初始化</view>
+  <view class="header">
+    <view class="eyebrow">只读食品列表</view>
     <view class="title">食期管家</view>
-    <view class="desc">记录食品保质期，提醒你及时食用</view>
-    <view class="notice">当前版本仅完成小程序骨架初始化</view>
-    <button class="placeholder-button" bindtap="onPlaceholderTap">后续添加食品录入功能</button>
+    <view class="desc">按到期日查看本地 mock 食品数据</view>
   </view>
+
+  <view class="food-list" wx:if="{{foods.length}}">
+    <view class="food-card" wx:for="{{foods}}" wx:key="id">
+      <view class="card-header">
+        <view class="food-name">{{item.name}}</view>
+        <view class="status-pill {{item.statusClass}}">{{item.statusText}}</view>
+      </view>
+
+      <view class="info-row">
+        <text class="label">分类：</text>
+        <text class="value">{{item.categoryText}}</text>
+      </view>
+      <view class="info-row">
+        <text class="label">数量：</text>
+        <text class="value">{{item.quantity}} {{item.unit}} / 剩余 {{item.remainingQuantity}} {{item.unit}}</text>
+      </view>
+      <view class="info-row">
+        <text class="label">保存方式：</text>
+        <text class="value">{{item.storageMethodText}}</text>
+      </view>
+      <view class="info-row">
+        <text class="label">到期日：</text>
+        <text class="value">{{item.expiryDateText}}</text>
+      </view>
+      <view class="info-row">
+        <text class="label">状态：</text>
+        <text class="value">{{item.statusText}}</text>
+      </view>
+    </view>
+  </view>
+
+  <view class="empty" wx:else>暂无食品数据</view>
 </view>
