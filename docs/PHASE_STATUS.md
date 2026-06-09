@@ -69,28 +69,46 @@ main-brain 在 V0 内部按以下顺序推进小阶段：
 - [x] 使用 UTC 进行天数偏移，降低本地时区跨日风险。
 - [x] code-reviewer 已给出低风险、建议合并/保留、暂不需要必须修复的结论。
 
+### V0-2：食品基础数据结构与本地 mock 数据
+
+状态：已完成。
+
+已完成：
+
+- [x] PR #1 `feat: add food mock data foundation` 已合并。
+- [x] `utils/food.js`：食品数据结构和基础规范化工具。
+- [x] `mock/foods.js`：本地 mock 食品数据。
+- [x] `tests/food.test.js`：食品数据结构和 mock 数据测试。
+- [x] mock 数据包含 `expiryDate`、`dateSource`、`category`、`quantity`、`remainingQuantity`、`unit`、`storageMethod`、`notes` 等 V0 必需字段。
+- [x] mock 数据覆盖正常、即将过期、今日到期、已过期、手动 `expiryDate`、无有效 `expiryDate` 等场景。
+- [x] 字段名已统一使用 `notes`，与 `docs/DATA_MODEL.md` 保持一致。
+- [x] 已补充 `remainingQuantity <= quantity` 的校验和测试。
+- [x] code-reviewer 复审通过，建议合并。
+- [x] 未引入页面 UI、新增、编辑、删除、列表展示、本地保存、云数据库、条形码、OCR、AI、提醒调度或新依赖。
+
 ## 当前小阶段
 
-### V0-2：食品基础数据结构与本地 mock 数据
+### V0-3：食品列表展示、`expiryDate` 排序和到期状态显示
 
 状态：准备开始。
 
-目标：根据 `docs/DATA_MODEL.md` 建立前端可复用的食品数据结构和本地 mock 数据，为后续列表展示、排序、筛选、录入和本地保存打基础。
+目标：基于当前 mock 数据，建立食品列表展示所需的排序与状态判断基础，让后续页面能围绕 `expiryDate` 展示食品状态。
 
 本阶段只做：
 
-- 定义前端食品记录数据结构。
-- 准备少量 mock 食品数据。
-- 确保 mock 数据包含 `expiryDate`、`dateSource`、`category`、`quantity`、`remainingQuantity`、`unit`、`storageMethod` 等 V0 必需字段。
-- 确保 mock 数据覆盖正常、即将过期、今日到期、已过期、无有效 `expiryDate` 等后续列表状态需要的场景。
-- 复用或兼容已有 `utils/date.js` 日期计算工具。
+- 基于 `expiryDate` 的食品排序工具函数。
+- 无有效 `expiryDate` 的食品排在底部。
+- 食品到期状态判断工具函数。
+- 支持状态：`expired`、`today`、`soon`、`normal`、`unknown`。
+- 使用固定参考日期进行基础测试，避免测试受真实当前日期影响。
+- 基于 `mock/foods.js` 验证排序和状态覆盖。
 
-本阶段不做：
+本阶段暂不做：
 
 - 页面 UI。
+- WXML / WXSS 展示。
 - 食品新增表单。
 - 编辑和删除。
-- 列表页面展示。
 - 本地保存。
 - 云数据库。
 - 条形码、OCR、AI。
@@ -99,17 +117,17 @@ main-brain 在 V0 内部按以下顺序推进小阶段：
 
 ## 当前剩余事项
 
-- [ ] codex-task-generator 为 V0-2 生成 `/goal + require.txt`。
-- [ ] Codex 完成 V0-2 PR。
-- [ ] code-reviewer 审核 V0-2 PR。
-- [ ] main-brain 根据审核结果判断是否进入 V0-3。
+- [ ] codex-task-generator 为 V0-3 生成 `/goal + require.txt`。
+- [ ] Codex 完成 V0-3 PR。
+- [ ] code-reviewer 审核 V0-3 PR。
+- [ ] main-brain 根据审核结果判断是否进入 V0-4。
 
 ## 当前推荐下一步
 
-请让 codex-task-generator 生成 V0-2 的第一个 Codex 任务：
+请让 codex-task-generator 生成 V0-3 的第一个 Codex 任务：
 
 ```text
-/goal 建立食品基础数据结构与本地 mock 数据，具体细节见 require.txt
+/goal 实现食品列表排序与到期状态工具函数，具体细节见 require.txt
 ```
 
 `require.txt` 必须第一行写：
@@ -118,7 +136,7 @@ main-brain 在 V0 内部按以下顺序推进小阶段：
 Use $miniapp-food-expiry.
 ```
 
-任务应限制为：只建立食品数据结构和 mock 数据，不修改页面 UI，不实现新增、编辑、删除、列表展示、本地保存、云数据库、条形码、OCR、AI 或提醒调度。
+任务应限制为：只实现排序和到期状态判断工具函数及测试，不修改页面 UI，不实现新增、编辑、删除、列表展示、本地保存、云数据库、条形码、OCR、AI 或提醒调度。
 
 ## 当前阻塞点
 
@@ -126,10 +144,10 @@ Use $miniapp-food-expiry.
 
 潜在风险：
 
-1. V0-2 过早进入页面 UI 或手动录入页，导致数据基础不稳。
-2. mock 数据字段与 `docs/DATA_MODEL.md` 不一致。
-3. 后续排序、提醒、状态判断没有统一读取 `expiryDate`。
-4. 调用方未把 `calculateExpiryDate` 返回结果正确写入食品记录的 `expiryDate` 字段。
+1. V0-3 过早进入 WXML / WXSS 页面展示，导致排序和状态逻辑难以复用。
+2. 到期状态判断没有统一读取 `expiryDate`。
+3. 无有效 `expiryDate` 的食品没有稳定排到底部。
+4. 测试使用真实当前日期，导致不同日期运行测试结果不稳定。
 5. 过早引入新依赖、云开发、条形码、OCR、AI 或复杂提醒，导致 V0 失焦。
 
 ## 需要回到 project-architect 的情况
