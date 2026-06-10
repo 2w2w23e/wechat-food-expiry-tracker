@@ -86,6 +86,35 @@ function buildDisplayFoods(foods) {
   return sortFoodsByExpiryDate(foods).map(formatFoodForDisplay)
 }
 
+function toFormText(value) {
+  if (value === null || typeof value === 'undefined') {
+    return ''
+  }
+
+  return String(value)
+}
+
+function getShelfLifeUnitIndex(value) {
+  const index = SHELF_LIFE_UNIT_OPTIONS.findIndex((option) => option.value === value)
+  return index >= 0 ? index : 0
+}
+
+function buildFoodForm(food) {
+  return {
+    name: toFormText(food.name),
+    category: toFormText(food.category),
+    quantity: toFormText(food.quantity),
+    remainingQuantity: toFormText(food.remainingQuantity),
+    unit: toFormText(food.unit),
+    storageMethod: toFormText(food.storageMethod),
+    productionDate: toFormText(food.productionDate),
+    shelfLifeValue: toFormText(food.shelfLifeValue),
+    shelfLifeUnit: food.shelfLifeUnit || DEFAULT_FORM.shelfLifeUnit,
+    expiryDate: toFormText(food.expiryDate),
+    notes: toFormText(food.notes)
+  }
+}
+
 function formatDetailValue(value) {
   if (typeof value === 'number') {
     return Number.isFinite(value) ? String(value) : EMPTY_TEXT
@@ -157,6 +186,12 @@ Page({
     shelfLifeUnitLabel: SHELF_LIFE_UNIT_OPTIONS[0].label,
     selectedFood: null,
     selectedFoodDetails: [],
+    isEditing: false,
+    editingFoodId: '',
+    editForm: { ...DEFAULT_FORM },
+    editShelfLifeUnitIndex: 0,
+    editShelfLifeUnitLabel: SHELF_LIFE_UNIT_OPTIONS[0].label,
+    editFormError: '',
     formError: ''
   },
 
@@ -170,6 +205,12 @@ Page({
   toggleAddForm() {
     this.setData({
       showAddForm: !this.data.showAddForm,
+      isEditing: false,
+      editingFoodId: '',
+      editForm: { ...DEFAULT_FORM },
+      editShelfLifeUnitIndex: 0,
+      editShelfLifeUnitLabel: SHELF_LIFE_UNIT_OPTIONS[0].label,
+      editFormError: '',
       formError: ''
     })
   },
@@ -209,21 +250,96 @@ Page({
 
     this.setData({
       selectedFood,
-      selectedFoodDetails: buildFoodDetailRows(selectedFood)
+      selectedFoodDetails: buildFoodDetailRows(selectedFood),
+      isEditing: false,
+      editingFoodId: '',
+      editForm: { ...DEFAULT_FORM },
+      editShelfLifeUnitIndex: 0,
+      editShelfLifeUnitLabel: SHELF_LIFE_UNIT_OPTIONS[0].label,
+      editFormError: ''
     })
   },
 
   closeFoodDetail() {
     this.setData({
       selectedFood: null,
-      selectedFoodDetails: []
+      selectedFoodDetails: [],
+      isEditing: false,
+      editingFoodId: '',
+      editForm: { ...DEFAULT_FORM },
+      editShelfLifeUnitIndex: 0,
+      editShelfLifeUnitLabel: SHELF_LIFE_UNIT_OPTIONS[0].label,
+      editFormError: ''
     })
   },
 
-  resolveExpiryDate(form) {
-    const manualExpiryDateText = trimFormValue(form.expiryDate)
+  updateEditForm(event) {
+    const field = event.currentTarget.dataset.field
 
-    if (manualExpiryDateText !== '') {
+    if (!field) {
+      return
+    }
+
+    const optionIndex = Number(event.detail.value) || 0
+    const shelfLifeUnitOption = SHELF_LIFE_UNIT_OPTIONS[optionIndex] || SHELF_LIFE_UNIT_OPTIONS[0]
+    const value = field === 'shelfLifeUnit'
+      ? shelfLifeUnitOption.value
+      : event.detail.value
+    const nextData = {
+      [`editForm.${field}`]: value,
+      editFormError: ''
+    }
+
+    if (field === 'shelfLifeUnit') {
+      nextData.editShelfLifeUnitIndex = SHELF_LIFE_UNIT_OPTIONS[optionIndex] ? optionIndex : 0
+      nextData.editShelfLifeUnitLabel = shelfLifeUnitOption.label
+    }
+
+    this.setData(nextData)
+  },
+
+  startEditSelectedFood() {
+    const selectedFood = this.data.selectedFood
+
+    if (!selectedFood) {
+      return
+    }
+
+    const editForm = buildFoodForm(selectedFood)
+    const editShelfLifeUnitIndex = getShelfLifeUnitIndex(editForm.shelfLifeUnit)
+    const editShelfLifeUnitOption = SHELF_LIFE_UNIT_OPTIONS[editShelfLifeUnitIndex]
+
+    this.setData({
+      showAddForm: false,
+      formError: '',
+      isEditing: true,
+      editingFoodId: selectedFood.id,
+      editForm,
+      editShelfLifeUnitIndex,
+      editShelfLifeUnitLabel: editShelfLifeUnitOption.label,
+      editFormError: ''
+    })
+  },
+
+  cancelEditFood() {
+    this.setData({
+      isEditing: false,
+      editingFoodId: '',
+      editForm: { ...DEFAULT_FORM },
+      editShelfLifeUnitIndex: 0,
+      editShelfLifeUnitLabel: SHELF_LIFE_UNIT_OPTIONS[0].label,
+      editFormError: ''
+    })
+  },
+
+  resolveExpiryDate(form, originalFood) {
+    const manualExpiryDateText = trimFormValue(form.expiryDate)
+    const shouldUseCalculatedDate = originalFood &&
+      originalFood.dateSource === 'calculated' &&
+      manualExpiryDateText !== '' &&
+      manualExpiryDateText === originalFood.expiryDate
+
+    if (manualExpiryDateText !== '' && !shouldUseCalculatedDate) {
       const manualExpiryDate = calculateExpiryDate({
         mode: 'manual',
         expiryDate: manualExpiryDateText
@@ -255,7 +371,7 @@ Page({
     }
   },
 
-  validateAddForm(form, expiryDate) {
+  validateFoodForm(form, expiryDate) {
     const name = trimFormValue(form.name)
     const quantity = parseFormQuantity(form.quantity, 1)
     const remainingQuantity = parseFormQuantity(form.remainingQuantity, quantity)
@@ -300,7 +416,7 @@ Page({
       return
     }
 
-    const validation = this.validateAddForm(form, resolvedDate.expiryDate)
+    const validation = this.validateFoodForm(form, resolvedDate.expiryDate)
 
     if (validation.message) {
       this.setData({
@@ -341,5 +457,123 @@ Page({
       showAddForm: false,
       formError: ''
     })
+  },
+
+  submitEditForm() {
+    const foodId = this.data.editingFoodId
+    const form = this.data.editForm
+    const originalFood = this.data.rawFoods.find((food) => food.id === foodId)
+
+    if (!originalFood) {
+      const message = '未找到要编辑的食品'
+      this.setData({ editFormError: message })
+      showError(message)
+      return
+    }
+
+    const resolvedDate = this.resolveExpiryDate(form, originalFood)
+
+    if (resolvedDate.message) {
+      this.setData({
+        editFormError: resolvedDate.message,
+        isEditing: true
+      })
+      showError(resolvedDate.message)
+      return
+    }
+
+    const validation = this.validateFoodForm(form, resolvedDate.expiryDate)
+
+    if (validation.message) {
+      this.setData({
+        editFormError: validation.message,
+        isEditing: true
+      })
+      showError(validation.message)
+      return
+    }
+
+    const updatedFood = createMockFoodItem({
+      ...originalFood,
+      name: validation.name,
+      category: trimFormValue(form.category) || 'other',
+      quantity: validation.quantity,
+      remainingQuantity: validation.remainingQuantity,
+      unit: trimFormValue(form.unit) || 'piece',
+      storageMethod: trimFormValue(form.storageMethod) || 'room_temp',
+      productionDate: trimFormValue(form.productionDate) || null,
+      shelfLifeValue: trimFormValue(form.shelfLifeValue) || null,
+      shelfLifeUnit: form.shelfLifeUnit || null,
+      expiryDate: resolvedDate.expiryDate,
+      dateSource: resolvedDate.dateSource,
+      notes: trimFormValue(form.notes),
+      updatedAt: new Date().toISOString()
+    })
+
+    const rawFoods = this.data.rawFoods.map((food) => (
+      food.id === foodId ? updatedFood : food
+    ))
+    const foods = buildDisplayFoods(rawFoods)
+    const selectedFood = foods.find((food) => food.id === foodId) || null
+
+    this.setData({
+      rawFoods,
+      foods,
+      selectedFood,
+      selectedFoodDetails: selectedFood ? buildFoodDetailRows(selectedFood) : [],
+      isEditing: false,
+      editingFoodId: '',
+      editForm: { ...DEFAULT_FORM },
+      editShelfLifeUnitIndex: 0,
+      editShelfLifeUnitLabel: SHELF_LIFE_UNIT_OPTIONS[0].label,
+      editFormError: ''
+    })
+  },
+
+  deleteSelectedFood() {
+    const selectedFood = this.data.selectedFood
+
+    if (!selectedFood) {
+      return
+    }
+
+    const rawFoods = this.data.rawFoods.filter((food) => food.id !== selectedFood.id)
+
+    this.setData({
+      rawFoods,
+      foods: buildDisplayFoods(rawFoods),
+      selectedFood: null,
+      selectedFoodDetails: [],
+      isEditing: false,
+      editingFoodId: '',
+      editForm: { ...DEFAULT_FORM },
+      editShelfLifeUnitIndex: 0,
+      editShelfLifeUnitLabel: SHELF_LIFE_UNIT_OPTIONS[0].label,
+      editFormError: ''
+    })
+  },
+
+  confirmDeleteSelectedFood() {
+    if (!this.data.selectedFood) {
+      return
+    }
+
+    if (typeof wx !== 'undefined' && wx.showModal) {
+      wx.showModal({
+        title: '删除食品',
+        content: '确定删除这个食品吗？',
+        cancelText: '取消',
+        confirmText: '删除',
+        confirmColor: '#9f352e',
+        success: (result) => {
+          if (result.confirm) {
+            this.deleteSelectedFood()
+          }
+        }
+      })
+      return
+    }
+
+    this.deleteSelectedFood()
   }
 })
