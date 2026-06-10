@@ -21,7 +21,7 @@
 
     <view class="field">
       <view class="field-label">分类</view>
-      <input class="field-input" value="{{addForm.category}}" data-field="category" bindinput="updateAddForm" placeholder="例如：dairy 或 乳制品" />
+      <input class="field-input" value="{{addForm.category}}" data-field="category" bindinput="updateAddForm" placeholder="例如：乳制品" />
     </view>
 
     <view class="field-row">

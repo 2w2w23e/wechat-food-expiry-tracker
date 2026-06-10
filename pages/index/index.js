@@ -72,11 +72,11 @@ function trimFormValue(value) {
   return typeof value === 'string' ? value.trim() : ''
 }
 
-function parseFormQuantity(value) {
+function parseFormQuantity(value, emptyFallback) {
   const text = trimFormValue(value)
 
   if (text === '') {
-    return 0
+    return emptyFallback
   }
 
   const parsed = Number(text)
@@ -140,12 +140,22 @@ Page({
   },
 
   resolveExpiryDate(form) {
-    const manualExpiryDate = calculateExpiryDate({
-      mode: 'manual',
-      expiryDate: trimFormValue(form.expiryDate)
-    })
+    const manualExpiryDateText = trimFormValue(form.expiryDate)
 
-    if (manualExpiryDate) {
+    if (manualExpiryDateText !== '') {
+      const manualExpiryDate = calculateExpiryDate({
+        mode: 'manual',
+        expiryDate: manualExpiryDateText
+      })
+
+      if (!manualExpiryDate) {
+        return {
+          message: '最终可食用日期格式不正确，请使用 YYYY-MM-DD',
+          expiryDate: null,
+          dateSource: 'unknown'
+        }
+      }
+
       return {
         expiryDate: manualExpiryDate,
         dateSource: 'manual'
@@ -166,8 +176,8 @@ Page({
 
   validateAddForm(form, expiryDate) {
     const name = trimFormValue(form.name)
-    const quantity = parseFormQuantity(form.quantity)
-    const remainingQuantity = parseFormQuantity(form.remainingQuantity)
+    const quantity = parseFormQuantity(form.quantity, 1)
+    const remainingQuantity = parseFormQuantity(form.remainingQuantity, quantity)
 
     if (!name) {
       return { message: '请填写食品名称' }
@@ -182,7 +192,7 @@ Page({
     }
 
     if (remainingQuantity > quantity) {
-      return { message: '剩余数量不能大于数量' }
+      return { message: '剩余数量不能大于总数量' }
     }
 
     if (!expiryDate) {
@@ -199,6 +209,16 @@ Page({
   submitAddForm() {
     const form = this.data.addForm
     const resolvedDate = this.resolveExpiryDate(form)
+
+    if (resolvedDate.message) {
+      this.setData({
+        formError: resolvedDate.message,
+        showAddForm: true
+      })
+      showError(resolvedDate.message)
+      return
+    }
+
     const validation = this.validateAddForm(form, resolvedDate.expiryDate)
 
     if (validation.message) {
