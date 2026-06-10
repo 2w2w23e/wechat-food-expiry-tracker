@@ -30,6 +30,20 @@ const STORAGE_TEXT = {
   cool_dry: '阴凉干燥'
 }
 
+const DATE_SOURCE_TEXT = {
+  calculated: '自动计算',
+  manual: '手动填写',
+  unknown: '未填写'
+}
+
+const SHELF_LIFE_UNIT_TEXT = {
+  day: '日',
+  month: '月',
+  year: '年'
+}
+
+const EMPTY_TEXT = '未填写'
+
 const DEFAULT_FORM = {
   name: '',
   category: '',
@@ -51,7 +65,7 @@ const SHELF_LIFE_UNIT_OPTIONS = [
 ]
 
 function getDisplayText(map, value) {
-  return map[value] || value || '未填写'
+  return map[value] || value || EMPTY_TEXT
 }
 
 function formatFoodForDisplay(food) {
@@ -70,6 +84,42 @@ function formatFoodForDisplay(food) {
 
 function buildDisplayFoods(foods) {
   return sortFoodsByExpiryDate(foods).map(formatFoodForDisplay)
+}
+
+function formatDetailValue(value) {
+  if (typeof value === 'number') {
+    return Number.isFinite(value) ? String(value) : EMPTY_TEXT
+  }
+
+  const text = trimFormValue(value)
+  return text || EMPTY_TEXT
+}
+
+function formatShelfLifeText(food) {
+  const value = formatDetailValue(food.shelfLifeValue)
+
+  if (value === EMPTY_TEXT) {
+    return EMPTY_TEXT
+  }
+
+  return `${value} ${getDisplayText(SHELF_LIFE_UNIT_TEXT, food.shelfLifeUnit)}`
+}
+
+function buildFoodDetailRows(food) {
+  return [
+    { label: '食品名称', value: formatDetailValue(food.name) },
+    { label: '分类', value: getDisplayText(CATEGORY_TEXT, food.category) },
+    { label: '数量', value: formatDetailValue(food.quantity) },
+    { label: '剩余数量', value: formatDetailValue(food.remainingQuantity) },
+    { label: '单位', value: formatDetailValue(food.unit) },
+    { label: '保存方式', value: getDisplayText(STORAGE_TEXT, food.storageMethod) },
+    { label: '生产日期', value: formatDetailValue(food.productionDate) },
+    { label: '保质期', value: formatShelfLifeText(food) },
+    { label: '最终可食用日期', value: formatDetailValue(food.expiryDate) },
+    { label: '日期来源', value: getDisplayText(DATE_SOURCE_TEXT, food.dateSource) },
+    { label: '到期状态', value: formatDetailValue(food.statusText) },
+    { label: '备注', value: formatDetailValue(food.notes) }
+  ]
 }
 
 function trimFormValue(value) {
@@ -105,6 +155,8 @@ Page({
     shelfLifeUnitOptions: SHELF_LIFE_UNIT_OPTIONS,
     shelfLifeUnitIndex: 0,
     shelfLifeUnitLabel: SHELF_LIFE_UNIT_OPTIONS[0].label,
+    selectedFood: null,
+    selectedFoodDetails: [],
     formError: ''
   },
 
@@ -145,6 +197,27 @@ Page({
     }
 
     this.setData(nextData)
+  },
+
+  showFoodDetail(event) {
+    const foodId = event.currentTarget.dataset.id
+    const selectedFood = this.data.foods.find((food) => food.id === foodId)
+
+    if (!selectedFood) {
+      return
+    }
+
+    this.setData({
+      selectedFood,
+      selectedFoodDetails: buildFoodDetailRows(selectedFood)
+    })
+  },
+
+  closeFoodDetail() {
+    this.setData({
+      selectedFood: null,
+      selectedFoodDetails: []
+    })
   },
 
   resolveExpiryDate(form) {

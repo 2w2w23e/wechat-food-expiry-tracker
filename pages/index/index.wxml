@@ -86,6 +86,25 @@
     <button class="submit-button" bindtap="submitAddForm">保存食品</button>
   </view>
 
+  <view class="detail-panel" wx:if="{{selectedFood}}">
+    <view class="detail-header">
+      <view class="detail-title-group">
+        <view class="detail-eyebrow">食品详情</view>
+        <view class="detail-title">{{selectedFood.name || '未填写'}}</view>
+      </view>
+      <view class="status-pill {{selectedFood.statusClass}}">{{selectedFood.statusText || '未填写到期日'}}</view>
+    </view>
+
+    <view class="detail-list">
+      <view class="detail-row" wx:for="{{selectedFoodDetails}}" wx:key="label">
+        <text class="detail-label">{{item.label}}</text>
+        <text class="detail-value">{{item.value}}</text>
+      </view>
+    </view>
+
+    <button class="close-detail-button" bindtap="closeFoodDetail">关闭</button>
+  </view>
+
   <view class="food-list" wx:if="{{foods.length}}">
     <view class="food-card" wx:for="{{foods}}" wx:key="id">
       <view class="card-header">
@@ -113,6 +132,8 @@
         <text class="label">状态：</text>
         <text class="value">{{item.statusText}}</text>
       </view>
+
+      <button class="detail-button" data-id="{{item.id}}" bindtap="showFoodDetail">查看详情</button>
     </view>
   </view>
 
