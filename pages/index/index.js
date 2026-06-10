@@ -44,7 +44,11 @@ const DEFAULT_FORM = {
   notes: ''
 }
 
-const SHELF_LIFE_UNITS = ['day', 'month', 'year']
+const SHELF_LIFE_UNIT_OPTIONS = [
+  { label: '日', value: 'day' },
+  { label: '月', value: 'month' },
+  { label: '年', value: 'year' }
+]
 
 function getDisplayText(map, value) {
   return map[value] || value || '未填写'
@@ -98,8 +102,9 @@ Page({
     rawFoods: [],
     showAddForm: false,
     addForm: { ...DEFAULT_FORM },
-    shelfLifeUnitOptions: SHELF_LIFE_UNITS,
+    shelfLifeUnitOptions: SHELF_LIFE_UNIT_OPTIONS,
     shelfLifeUnitIndex: 0,
+    shelfLifeUnitLabel: SHELF_LIFE_UNIT_OPTIONS[0].label,
     formError: ''
   },
 
@@ -124,8 +129,10 @@ Page({
       return
     }
 
+    const optionIndex = Number(event.detail.value) || 0
+    const shelfLifeUnitOption = SHELF_LIFE_UNIT_OPTIONS[optionIndex] || SHELF_LIFE_UNIT_OPTIONS[0]
     const value = field === 'shelfLifeUnit'
-      ? SHELF_LIFE_UNITS[Number(event.detail.value)] || DEFAULT_FORM.shelfLifeUnit
+      ? shelfLifeUnitOption.value
       : event.detail.value
     const nextData = {
       [`addForm.${field}`]: value,
@@ -133,7 +140,8 @@ Page({
     }
 
     if (field === 'shelfLifeUnit') {
-      nextData.shelfLifeUnitIndex = Number(event.detail.value) || 0
+      nextData.shelfLifeUnitIndex = SHELF_LIFE_UNIT_OPTIONS[optionIndex] ? optionIndex : 0
+      nextData.shelfLifeUnitLabel = shelfLifeUnitOption.label
     }
 
     this.setData(nextData)
@@ -256,6 +264,7 @@ Page({
       foods: buildDisplayFoods(rawFoods),
       addForm: { ...DEFAULT_FORM },
       shelfLifeUnitIndex: 0,
+      shelfLifeUnitLabel: SHELF_LIFE_UNIT_OPTIONS[0].label,
       showAddForm: false,
       formError: ''
     })

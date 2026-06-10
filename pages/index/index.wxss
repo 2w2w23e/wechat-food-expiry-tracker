@@ -115,6 +115,17 @@
   color: #20231f;
 }
 
+.picker-placeholder {
+  color: #7a8175;
+}
+
+.field-hint {
+  margin-top: 10rpx;
+  color: #58624f;
+  font-size: 26rpx;
+  line-height: 1.45;
+}
+
 .submit-button {
   margin: 8rpx 0 0;
   background: #215c3a;

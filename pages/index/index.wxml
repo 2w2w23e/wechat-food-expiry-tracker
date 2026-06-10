@@ -48,7 +48,11 @@
 
     <view class="field">
       <view class="field-label">生产日期</view>
-      <input class="field-input" value="{{addForm.productionDate}}" data-field="productionDate" bindinput="updateAddForm" placeholder="YYYY-MM-DD" />
+      <picker mode="date" value="{{addForm.productionDate}}" data-field="productionDate" bindchange="updateAddForm">
+        <view class="field-input picker-value {{addForm.productionDate ? '' : 'picker-placeholder'}}">
+          {{addForm.productionDate || '请选择生产日期'}}
+        </view>
+      </picker>
     </view>
 
     <view class="field-row">
@@ -58,15 +62,20 @@
       </view>
       <view class="field half">
         <view class="field-label">保质期单位</view>
-        <picker mode="selector" range="{{shelfLifeUnitOptions}}" value="{{shelfLifeUnitIndex}}" data-field="shelfLifeUnit" bindchange="updateAddForm">
-          <view class="field-input picker-value">{{addForm.shelfLifeUnit}}</view>
+        <picker mode="selector" range="{{shelfLifeUnitOptions}}" range-key="label" value="{{shelfLifeUnitIndex}}" data-field="shelfLifeUnit" bindchange="updateAddForm">
+          <view class="field-input picker-value">{{shelfLifeUnitLabel}}</view>
         </picker>
       </view>
     </view>
 
     <view class="field">
       <view class="field-label">最终可食用日期</view>
-      <input class="field-input" value="{{addForm.expiryDate}}" data-field="expiryDate" bindinput="updateAddForm" placeholder="YYYY-MM-DD，填写后优先使用" />
+      <picker mode="date" value="{{addForm.expiryDate}}" data-field="expiryDate" bindchange="updateAddForm">
+        <view class="field-input picker-value {{addForm.expiryDate ? '' : 'picker-placeholder'}}">
+          {{addForm.expiryDate || '请选择最终可食用日期'}}
+        </view>
+      </picker>
+      <view class="field-hint">不知道生产日期也可以，只填写最终可食用日期即可。</view>
     </view>
 
     <view class="field">
