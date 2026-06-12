@@ -32,38 +32,44 @@ const STORAGE_TEXT = {
   cool_dry: '阴凉干燥'
 }
 
-const DATE_SOURCE_TEXT = {
-  calculated: '自动计算',
-  manual: '手动填写',
-  unknown: '未填写'
+const STATUS_FILTERS = {
+  ALL: 'all',
+  SOON: 'soon',
+  EXPIRED: 'expired'
 }
 
-const SHELF_LIFE_UNIT_TEXT = {
-  day: '日',
-  month: '月',
-  year: '年'
+const STATUS_FILTER_VALUES = [
+  STATUS_FILTERS.ALL,
+  STATUS_FILTERS.SOON,
+  STATUS_FILTERS.EXPIRED
+]
+
+const STATUS_FILTER_TEXT = {
+  all: '全部状态',
+  soon: '即将过期',
+  expired: '已过期'
+}
+
+const CATEGORY_FILTERS = {
+  ALL: 'all'
 }
 
 const EMPTY_TEXT = '未填写'
 
-const FILTER_TYPES = {
-  ALL: 'all',
-  SOON: 'soon',
-  EXPIRED: 'expired',
-  CATEGORY: 'category'
-}
+const STATUS_FILTER_OPTIONS = [
+  { label: '全部状态', value: STATUS_FILTERS.ALL },
+  { label: '即将过期', value: STATUS_FILTERS.SOON },
+  { label: '已过期', value: STATUS_FILTERS.EXPIRED }
+]
 
-const FILTER_TEXT = {
-  all: '全部',
-  soon: '即将过期',
-  expired: '已过期',
-  category: '分类'
-}
-
-const FILTER_OPTIONS = [
-  { label: '全部', type: FILTER_TYPES.ALL },
-  { label: '即将过期', type: FILTER_TYPES.SOON },
-  { label: '已过期', type: FILTER_TYPES.EXPIRED }
+const BASE_CATEGORY_FILTER_OPTIONS = [
+  { label: '乳制品', value: 'dairy' },
+  { label: '主食', value: 'staple' },
+  { label: '冷冻食品', value: 'frozen' },
+  { label: '饮品', value: 'beverage' },
+  { label: '零食', value: 'snack' },
+  { label: '调味品', value: 'condiment' },
+  { label: '其他', value: 'other' }
 ]
 
 const DEFAULT_STATISTICS = {
@@ -188,8 +194,17 @@ function buildDisplayFoods(foods) {
 }
 
 function buildCategoryFilterOptions(rawFoods) {
-  const seen = {}
-  const options = []
+  const seen = {
+    [CATEGORY_FILTERS.ALL]: true
+  }
+  const options = [
+    { label: '全部分类', value: CATEGORY_FILTERS.ALL },
+    ...BASE_CATEGORY_FILTER_OPTIONS
+  ]
+
+  BASE_CATEGORY_FILTER_OPTIONS.forEach((option) => {
+    seen[option.value] = true
+  })
 
   rawFoods.forEach((food) => {
     const category = typeof food.category === 'string' ? food.category.trim() : ''
@@ -208,32 +223,41 @@ function buildCategoryFilterOptions(rawFoods) {
   return options
 }
 
-function getCategoryFilterIndex(categoryFilterOptions, activeCategory) {
-  const index = categoryFilterOptions.findIndex((option) => option.value === activeCategory)
-  return index >= 0 ? index : 0
+function normalizeStatusFilter(statusFilter) {
+  return STATUS_FILTER_VALUES.includes(statusFilter)
+    ? statusFilter
+    : STATUS_FILTERS.ALL
 }
 
-function filterRawFoods(rawFoods, filterType, activeCategory) {
-  if (filterType === FILTER_TYPES.SOON || filterType === FILTER_TYPES.EXPIRED) {
-    return rawFoods.filter((food) => getFoodExpiryStatus(food) === filterType)
+function normalizeCategoryFilter(categoryFilter, categoryFilterOptions) {
+  if (typeof categoryFilter !== 'string' || categoryFilter === '') {
+    return CATEGORY_FILTERS.ALL
   }
 
-  if (filterType === FILTER_TYPES.CATEGORY) {
-    return rawFoods.filter((food) => food.category === activeCategory)
-  }
+  const hasCategory = categoryFilterOptions.some((option) => option.value === categoryFilter)
+  return hasCategory ? categoryFilter : CATEGORY_FILTERS.ALL
+}
 
-  return rawFoods
+function filterRawFoods(rawFoods, statusFilter, categoryFilter) {
+  return rawFoods.filter((food) => {
+    const matchesStatus = statusFilter === STATUS_FILTERS.ALL ||
+      getFoodExpiryStatus(food) === statusFilter
+    const matchesCategory = categoryFilter === CATEGORY_FILTERS.ALL ||
+      food.category === categoryFilter
+
+    return matchesStatus && matchesCategory
+  })
 }
 
 function buildFoodStatistics(rawFoods) {
   return rawFoods.reduce((statistics, food) => {
     const status = getFoodExpiryStatus(food)
 
-    if (status === FILTER_TYPES.SOON) {
+    if (status === STATUS_FILTERS.SOON) {
       statistics.soonCount += 1
     }
 
-    if (status === FILTER_TYPES.EXPIRED) {
+    if (status === STATUS_FILTERS.EXPIRED) {
       statistics.expiredCount += 1
     }
 
@@ -245,108 +269,30 @@ function buildFoodStatistics(rawFoods) {
   })
 }
 
-function buildCurrentFilterText(filterType, activeCategory) {
-  if (filterType === FILTER_TYPES.CATEGORY) {
-    return `当前筛选：分类：${getDisplayText(CATEGORY_TEXT, activeCategory)}`
-  }
+function buildCurrentFilterText(statusFilter, categoryFilter) {
+  const statusText = STATUS_FILTER_TEXT[statusFilter] || STATUS_FILTER_TEXT.all
+  const categoryText = categoryFilter === CATEGORY_FILTERS.ALL
+    ? '全部分类'
+    : getDisplayText(CATEGORY_TEXT, categoryFilter)
 
-  return `当前筛选：${FILTER_TEXT[filterType] || FILTER_TEXT.all}`
+  return `当前筛选：${statusText}；${categoryText}`
 }
 
-function buildFoodPageData(rawFoods, filterType, activeCategory) {
+function buildFoodPageData(rawFoods, statusFilter, categoryFilter) {
   const categoryFilterOptions = buildCategoryFilterOptions(rawFoods)
-  let nextFilterType = FILTER_TEXT[filterType] ? filterType : FILTER_TYPES.ALL
-  let nextActiveCategory = typeof activeCategory === 'string' ? activeCategory : ''
-
-  if (nextFilterType === FILTER_TYPES.CATEGORY) {
-    const hasCategory = categoryFilterOptions.some((option) => option.value === nextActiveCategory)
-
-    if (!hasCategory) {
-      nextFilterType = FILTER_TYPES.ALL
-      nextActiveCategory = ''
-    }
-  } else {
-    nextActiveCategory = ''
-  }
-
-  const filteredFoods = filterRawFoods(rawFoods, nextFilterType, nextActiveCategory)
+  const nextStatusFilter = normalizeStatusFilter(statusFilter)
+  const nextCategoryFilter = normalizeCategoryFilter(categoryFilter, categoryFilterOptions)
+  const filteredFoods = filterRawFoods(rawFoods, nextStatusFilter, nextCategoryFilter)
 
   return {
     rawFoods,
     foods: buildDisplayFoods(filteredFoods),
     statistics: buildFoodStatistics(rawFoods),
     categoryFilterOptions,
-    categoryFilterIndex: getCategoryFilterIndex(categoryFilterOptions, nextActiveCategory),
-    activeFilterType: nextFilterType,
-    activeCategory: nextActiveCategory,
-    activeCategoryLabel: nextActiveCategory ? getDisplayText(CATEGORY_TEXT, nextActiveCategory) : '',
-    currentFilterText: buildCurrentFilterText(nextFilterType, nextActiveCategory)
+    statusFilter: nextStatusFilter,
+    categoryFilter: nextCategoryFilter,
+    currentFilterText: buildCurrentFilterText(nextStatusFilter, nextCategoryFilter)
   }
-}
-
-function toFormText(value) {
-  if (value === null || typeof value === 'undefined') {
-    return ''
-  }
-
-  return String(value)
-}
-
-function getShelfLifeUnitIndex(value) {
-  const index = SHELF_LIFE_UNIT_OPTIONS.findIndex((option) => option.value === value)
-  return index >= 0 ? index : 0
-}
-
-function buildFoodForm(food) {
-  return {
-    name: toFormText(food.name),
-    category: toFormText(food.category),
-    quantity: toFormText(food.quantity),
-    remainingQuantity: toFormText(food.remainingQuantity),
-    unit: toFormText(food.unit),
-    storageMethod: toFormText(food.storageMethod),
-    productionDate: toFormText(food.productionDate),
-    shelfLifeValue: toFormText(food.shelfLifeValue),
-    shelfLifeUnit: food.shelfLifeUnit || DEFAULT_FORM.shelfLifeUnit,
-    expiryDate: toFormText(food.expiryDate),
-    notes: toFormText(food.notes)
-  }
-}
-
-function formatDetailValue(value) {
-  if (typeof value === 'number') {
-    return Number.isFinite(value) ? String(value) : EMPTY_TEXT
-  }
-
-  const text = trimFormValue(value)
-  return text || EMPTY_TEXT
-}
-
-function formatShelfLifeText(food) {
-  const value = formatDetailValue(food.shelfLifeValue)
-
-  if (value === EMPTY_TEXT) {
-    return EMPTY_TEXT
-  }
-
-  return `${value} ${getDisplayText(SHELF_LIFE_UNIT_TEXT, food.shelfLifeUnit)}`
-}
-
-function buildFoodDetailRows(food) {
-  return [
-    { label: '食品名称', value: formatDetailValue(food.name) },
-    { label: '分类', value: getDisplayText(CATEGORY_TEXT, food.category) },
-    { label: '数量', value: formatDetailValue(food.quantity) },
-    { label: '剩余数量', value: formatDetailValue(food.remainingQuantity) },
-    { label: '单位', value: formatDetailValue(food.unit) },
-    { label: '保存方式', value: getDisplayText(STORAGE_TEXT, food.storageMethod) },
-    { label: '生产日期', value: formatDetailValue(food.productionDate) },
-    { label: '保质期', value: formatShelfLifeText(food) },
-    { label: '最终可食用日期', value: formatDetailValue(food.expiryDate) },
-    { label: '日期来源', value: getDisplayText(DATE_SOURCE_TEXT, food.dateSource) },
-    { label: '到期状态', value: formatDetailValue(food.statusText) },
-    { label: '备注', value: formatDetailValue(food.notes) }
-  ]
 }
 
 function trimFormValue(value) {
@@ -378,79 +324,54 @@ Page({
     foods: [],
     rawFoods: [],
     statistics: { ...DEFAULT_STATISTICS },
-    filterOptions: FILTER_OPTIONS,
+    statusFilterOptions: STATUS_FILTER_OPTIONS,
     categoryFilterOptions: [],
-    categoryFilterIndex: 0,
-    activeFilterType: FILTER_TYPES.ALL,
-    activeCategory: '',
-    activeCategoryLabel: '',
-    currentFilterText: '当前筛选：全部',
+    statusFilter: STATUS_FILTERS.ALL,
+    categoryFilter: CATEGORY_FILTERS.ALL,
+    currentFilterText: '当前筛选：全部状态；全部分类',
     showAddForm: false,
     addForm: { ...DEFAULT_FORM },
     shelfLifeUnitOptions: SHELF_LIFE_UNIT_OPTIONS,
     shelfLifeUnitIndex: 0,
     shelfLifeUnitLabel: SHELF_LIFE_UNIT_OPTIONS[0].label,
-    selectedFood: null,
-    selectedFoodDetails: [],
-    isEditing: false,
-    editingFoodId: '',
-    editForm: { ...DEFAULT_FORM },
-    editShelfLifeUnitIndex: 0,
-    editShelfLifeUnitLabel: SHELF_LIFE_UNIT_OPTIONS[0].label,
-    editFormError: '',
     formError: ''
   },
 
   onLoad() {
-    this.setData(buildFoodPageData(getInitialRawFoods(), FILTER_TYPES.ALL, ''))
+    this.setData(buildFoodPageData(getInitialRawFoods(), STATUS_FILTERS.ALL, CATEGORY_FILTERS.ALL))
+  },
+
+  onShow() {
+    this.setData(buildFoodPageData(
+      getInitialRawFoods(),
+      this.data.statusFilter,
+      this.data.categoryFilter
+    ))
   },
 
   changeStatusFilter(event) {
-    const filterType = event.currentTarget.dataset.filter
+    const statusFilter = event.currentTarget.dataset.filter || STATUS_FILTERS.ALL
 
-    this.setData({
-      ...buildFoodPageData(this.data.rawFoods, filterType, ''),
-      selectedFood: null,
-      selectedFoodDetails: [],
-      isEditing: false,
-      editingFoodId: '',
-      editForm: { ...DEFAULT_FORM },
-      editShelfLifeUnitIndex: 0,
-      editShelfLifeUnitLabel: SHELF_LIFE_UNIT_OPTIONS[0].label,
-      editFormError: ''
-    })
+    this.setData(buildFoodPageData(
+      this.data.rawFoods,
+      statusFilter,
+      this.data.categoryFilter
+    ))
   },
 
   changeCategoryFilter(event) {
-    const optionIndex = Number(event.detail.value) || 0
-    const categoryOption = this.data.categoryFilterOptions[optionIndex]
+    const categoryFilter = event.currentTarget.dataset.category || CATEGORY_FILTERS.ALL
 
-    if (!categoryOption) {
-      return
-    }
-
-    this.setData({
-      ...buildFoodPageData(this.data.rawFoods, FILTER_TYPES.CATEGORY, categoryOption.value),
-      selectedFood: null,
-      selectedFoodDetails: [],
-      isEditing: false,
-      editingFoodId: '',
-      editForm: { ...DEFAULT_FORM },
-      editShelfLifeUnitIndex: 0,
-      editShelfLifeUnitLabel: SHELF_LIFE_UNIT_OPTIONS[0].label,
-      editFormError: ''
-    })
+    this.setData(buildFoodPageData(
+      this.data.rawFoods,
+      this.data.statusFilter,
+      categoryFilter
+    ))
   },
 
   toggleAddForm() {
     this.setData({
       showAddForm: !this.data.showAddForm,
-      isEditing: false,
-      editingFoodId: '',
-      editForm: { ...DEFAULT_FORM },
-      editShelfLifeUnitIndex: 0,
-      editShelfLifeUnitLabel: SHELF_LIFE_UNIT_OPTIONS[0].label,
-      editFormError: '',
       formError: ''
     })
   },
@@ -480,106 +401,10 @@ Page({
     this.setData(nextData)
   },
 
-  showFoodDetail(event) {
-    const foodId = event.currentTarget.dataset.id
-    const selectedFood = this.data.foods.find((food) => food.id === foodId)
-
-    if (!selectedFood) {
-      return
-    }
-
-    this.setData({
-      selectedFood,
-      selectedFoodDetails: buildFoodDetailRows(selectedFood),
-      isEditing: false,
-      editingFoodId: '',
-      editForm: { ...DEFAULT_FORM },
-      editShelfLifeUnitIndex: 0,
-      editShelfLifeUnitLabel: SHELF_LIFE_UNIT_OPTIONS[0].label,
-      editFormError: ''
-    })
-  },
-
-  closeFoodDetail() {
-    this.setData({
-      selectedFood: null,
-      selectedFoodDetails: [],
-      isEditing: false,
-      editingFoodId: '',
-      editForm: { ...DEFAULT_FORM },
-      editShelfLifeUnitIndex: 0,
-      editShelfLifeUnitLabel: SHELF_LIFE_UNIT_OPTIONS[0].label,
-      editFormError: ''
-    })
-  },
-
-  updateEditForm(event) {
-    const field = event.currentTarget.dataset.field
-
-    if (!field) {
-      return
-    }
-
-    const optionIndex = Number(event.detail.value) || 0
-    const shelfLifeUnitOption = SHELF_LIFE_UNIT_OPTIONS[optionIndex] || SHELF_LIFE_UNIT_OPTIONS[0]
-    const value = field === 'shelfLifeUnit'
-      ? shelfLifeUnitOption.value
-      : event.detail.value
-    const nextData = {
-      [`editForm.${field}`]: value,
-      editFormError: ''
-    }
-
-    if (field === 'shelfLifeUnit') {
-      nextData.editShelfLifeUnitIndex = SHELF_LIFE_UNIT_OPTIONS[optionIndex] ? optionIndex : 0
-      nextData.editShelfLifeUnitLabel = shelfLifeUnitOption.label
-    }
-
-    this.setData(nextData)
-  },
-
-  startEditSelectedFood() {
-    const selectedFood = this.data.selectedFood
-
-    if (!selectedFood) {
-      return
-    }
-
-    const editForm = buildFoodForm(selectedFood)
-    const editShelfLifeUnitIndex = getShelfLifeUnitIndex(editForm.shelfLifeUnit)
-    const editShelfLifeUnitOption = SHELF_LIFE_UNIT_OPTIONS[editShelfLifeUnitIndex]
-
-    this.setData({
-      showAddForm: false,
-      formError: '',
-      isEditing: true,
-      editingFoodId: selectedFood.id,
-      editForm,
-      editShelfLifeUnitIndex,
-      editShelfLifeUnitLabel: editShelfLifeUnitOption.label,
-      editFormError: ''
-    })
-  },
-
-  cancelEditFood() {
-    this.setData({
-      isEditing: false,
-      editingFoodId: '',
-      editForm: { ...DEFAULT_FORM },
-      editShelfLifeUnitIndex: 0,
-      editShelfLifeUnitLabel: SHELF_LIFE_UNIT_OPTIONS[0].label,
-      editFormError: ''
-    })
-  },
-
-  resolveExpiryDate(form, originalFood) {
+  resolveExpiryDate(form) {
     const manualExpiryDateText = trimFormValue(form.expiryDate)
-    const shouldUseCalculatedDate = originalFood &&
-      originalFood.dateSource === 'calculated' &&
-      manualExpiryDateText !== '' &&
-      manualExpiryDateText === originalFood.expiryDate
 
-    if (manualExpiryDateText !== '' && !shouldUseCalculatedDate) {
+    if (manualExpiryDateText !== '') {
       const manualExpiryDate = calculateExpiryDate({
         mode: 'manual',
         expiryDate: manualExpiryDateText
@@ -694,7 +519,7 @@ Page({
     }
 
     this.setData({
-      ...buildFoodPageData(rawFoods, this.data.activeFilterType, this.data.activeCategory),
+      ...buildFoodPageData(rawFoods, this.data.statusFilter, this.data.categoryFilter),
       addForm: { ...DEFAULT_FORM },
       shelfLifeUnitIndex: 0,
       shelfLifeUnitLabel: SHELF_LIFE_UNIT_OPTIONS[0].label,
@@ -703,128 +528,15 @@ Page({
     })
   },
 
-  submitEditForm() {
-    const foodId = this.data.editingFoodId
-    const form = this.data.editForm
-    const originalFood = this.data.rawFoods.find((food) => food.id === foodId)
+  viewFoodDetail(event) {
+    const foodId = event.currentTarget.dataset.id
 
-    if (!originalFood) {
-      const message = '未找到要编辑的食品'
-      this.setData({ editFormError: message })
-      showError(message)
+    if (!foodId || typeof wx === 'undefined' || typeof wx.navigateTo !== 'function') {
       return
     }
 
-    const resolvedDate = this.resolveExpiryDate(form, originalFood)
-
-    if (resolvedDate.message) {
-      this.setData({
-        editFormError: resolvedDate.message,
-        isEditing: true
-      })
-      showError(resolvedDate.message)
-      return
-    }
-
-    const validation = this.validateFoodForm(form, resolvedDate.expiryDate)
-
-    if (validation.message) {
-      this.setData({
-        editFormError: validation.message,
-        isEditing: true
-      })
-      showError(validation.message)
-      return
-    }
-
-    const updatedFood = createMockFoodItem({
-      ...originalFood,
-      name: validation.name,
-      category: trimFormValue(form.category) || 'other',
-      quantity: validation.quantity,
-      remainingQuantity: validation.remainingQuantity,
-      unit: trimFormValue(form.unit) || 'piece',
-      storageMethod: trimFormValue(form.storageMethod) || 'room_temp',
-      productionDate: trimFormValue(form.productionDate) || null,
-      shelfLifeValue: trimFormValue(form.shelfLifeValue) || null,
-      shelfLifeUnit: form.shelfLifeUnit || null,
-      expiryDate: resolvedDate.expiryDate,
-      dateSource: resolvedDate.dateSource,
-      notes: trimFormValue(form.notes),
-      updatedAt: new Date().toISOString()
+    wx.navigateTo({
+      url: `/pages/food-detail/food-detail?id=${encodeURIComponent(foodId)}`
     })
-
-    const rawFoods = this.data.rawFoods.map((food) => (
-      food.id === foodId ? updatedFood : food
-    ))
-    const saved = writeStoredFoods(rawFoods)
-    const selectedFood = formatFoodForDisplay(updatedFood)
-
-    if (!saved) {
-      showError('本地保存失败，数据可能只在当前页面保留')
-    }
-
-    this.setData({
-      ...buildFoodPageData(rawFoods, this.data.activeFilterType, this.data.activeCategory),
-      selectedFood,
-      selectedFoodDetails: selectedFood ? buildFoodDetailRows(selectedFood) : [],
-      isEditing: false,
-      editingFoodId: '',
-      editForm: { ...DEFAULT_FORM },
-      editShelfLifeUnitIndex: 0,
-      editShelfLifeUnitLabel: SHELF_LIFE_UNIT_OPTIONS[0].label,
-      editFormError: ''
-    })
-  },
-
-  deleteSelectedFood() {
-    const selectedFood = this.data.selectedFood
-
-    if (!selectedFood) {
-      return
-    }
-
-    const rawFoods = this.data.rawFoods.filter((food) => food.id !== selectedFood.id)
-    const saved = writeStoredFoods(rawFoods)
-
-    if (!saved) {
-      showError('本地保存失败，数据可能只在当前页面保留')
-    }
-
-    this.setData({
-      ...buildFoodPageData(rawFoods, this.data.activeFilterType, this.data.activeCategory),
-      selectedFood: null,
-      selectedFoodDetails: [],
-      isEditing: false,
-      editingFoodId: '',
-      editForm: { ...DEFAULT_FORM },
-      editShelfLifeUnitIndex: 0,
-      editShelfLifeUnitLabel: SHELF_LIFE_UNIT_OPTIONS[0].label,
-      editFormError: ''
-    })
-  },
-
-  confirmDeleteSelectedFood() {
-    if (!this.data.selectedFood) {
-      return
-    }
-
-    if (typeof wx !== 'undefined' && wx.showModal) {
-      wx.showModal({
-        title: '删除食品',
-        content: '确定删除这个食品吗？',
-        cancelText: '取消',
-        confirmText: '删除',
-        confirmColor: '#9f352e',
-        success: (result) => {
-          if (result.confirm) {
-            this.deleteSelectedFood()
-          }
-        }
-      })
-      return
-    }
-
-    this.deleteSelectedFood()
   }
 })
