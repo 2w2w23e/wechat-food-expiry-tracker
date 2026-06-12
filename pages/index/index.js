@@ -4,6 +4,8 @@ const { createMockFoodItem } = require('../../utils/food')
 const { sortFoodsByExpiryDate } = require('../../utils/foodList')
 const { getFoodExpiryStatus } = require('../../utils/foodStatus')
 
+const STORAGE_KEY = 'food_expiry_tracker_foods_v0'
+
 const STATUS_TEXT = {
   expired: '已过期',
   today: '今日到期',
@@ -44,6 +46,32 @@ const SHELF_LIFE_UNIT_TEXT = {
 
 const EMPTY_TEXT = '未填写'
 
+const FILTER_TYPES = {
+  ALL: 'all',
+  SOON: 'soon',
+  EXPIRED: 'expired',
+  CATEGORY: 'category'
+}
+
+const FILTER_TEXT = {
+  all: '全部',
+  soon: '即将过期',
+  expired: '已过期',
+  category: '分类'
+}
+
+const FILTER_OPTIONS = [
+  { label: '全部', type: FILTER_TYPES.ALL },
+  { label: '即将过期', type: FILTER_TYPES.SOON },
+  { label: '已过期', type: FILTER_TYPES.EXPIRED }
+]
+
+const DEFAULT_STATISTICS = {
+  totalCount: 0,
+  soonCount: 0,
+  expiredCount: 0
+}
+
 const DEFAULT_FORM = {
   name: '',
   category: '',
@@ -68,6 +96,79 @@ function getDisplayText(map, value) {
   return map[value] || value || EMPTY_TEXT
 }
 
+function isObjectRecord(value) {
+  return value && typeof value === 'object' && !Array.isArray(value)
+}
+
+function normalizeFoodList(value) {
+  if (!Array.isArray(value)) {
+    return null
+  }
+
+  const normalizedFoods = []
+
+  for (const item of value) {
+    if (!isObjectRecord(item)) {
+      return null
+    }
+
+    const food = createMockFoodItem(item)
+
+    if (!food.id || !food.name) {
+      return null
+    }
+
+    normalizedFoods.push(food)
+  }
+
+  return normalizedFoods
+}
+
+function getFallbackFoods() {
+  return normalizeFoodList(mockFoods) || []
+}
+
+function readStoredFoods() {
+  if (typeof wx === 'undefined' || typeof wx.getStorageSync !== 'function') {
+    return null
+  }
+
+  try {
+    const storedFoods = wx.getStorageSync(STORAGE_KEY)
+
+    if (storedFoods === '' || storedFoods === null || typeof storedFoods === 'undefined') {
+      return null
+    }
+
+    return normalizeFoodList(storedFoods)
+  } catch (error) {
+    return null
+  }
+}
+
+function writeStoredFoods(rawFoods) {
+  if (typeof wx === 'undefined' || typeof wx.setStorageSync !== 'function') {
+    return true
+  }
+
+  try {
+    wx.setStorageSync(STORAGE_KEY, rawFoods)
+    return true
+  } catch (error) {
+    return false
+  }
+}
+
+function getInitialRawFoods() {
+  const storedFoods = readStoredFoods()
+
+  if (storedFoods !== null) {
+    return storedFoods
+  }
+
+  return getFallbackFoods()
+}
+
 function formatFoodForDisplay(food) {
   const status = getFoodExpiryStatus(food)
 
@@ -84,6 +185,103 @@ function formatFoodForDisplay(food) {
 
 function buildDisplayFoods(foods) {
   return sortFoodsByExpiryDate(foods).map(formatFoodForDisplay)
+}
+
+function buildCategoryFilterOptions(rawFoods) {
+  const seen = {}
+  const options = []
+
+  rawFoods.forEach((food) => {
+    const category = typeof food.category === 'string' ? food.category.trim() : ''
+
+    if (!category || seen[category]) {
+      return
+    }
+
+    seen[category] = true
+    options.push({
+      label: getDisplayText(CATEGORY_TEXT, category),
+      value: category
+    })
+  })
+
+  return options
+}
+
+function getCategoryFilterIndex(categoryFilterOptions, activeCategory) {
+  const index = categoryFilterOptions.findIndex((option) => option.value === activeCategory)
+  return index >= 0 ? index : 0
+}
+
+function filterRawFoods(rawFoods, filterType, activeCategory) {
+  if (filterType === FILTER_TYPES.SOON || filterType === FILTER_TYPES.EXPIRED) {
+    return rawFoods.filter((food) => getFoodExpiryStatus(food) === filterType)
+  }
+
+  if (filterType === FILTER_TYPES.CATEGORY) {
+    return rawFoods.filter((food) => food.category === activeCategory)
+  }
+
+  return rawFoods
+}
+
+function buildFoodStatistics(rawFoods) {
+  return rawFoods.reduce((statistics, food) => {
+    const status = getFoodExpiryStatus(food)
+
+    if (status === FILTER_TYPES.SOON) {
+      statistics.soonCount += 1
+    }
+
+    if (status === FILTER_TYPES.EXPIRED) {
+      statistics.expiredCount += 1
+    }
+
+    return statistics
+  }, {
+    totalCount: rawFoods.length,
+    soonCount: 0,
+    expiredCount: 0
+  })
+}
+
+function buildCurrentFilterText(filterType, activeCategory) {
+  if (filterType === FILTER_TYPES.CATEGORY) {
+    return `当前筛选：分类：${getDisplayText(CATEGORY_TEXT, activeCategory)}`
+  }
+
+  return `当前筛选：${FILTER_TEXT[filterType] || FILTER_TEXT.all}`
+}
+
+function buildFoodPageData(rawFoods, filterType, activeCategory) {
+  const categoryFilterOptions = buildCategoryFilterOptions(rawFoods)
+  let nextFilterType = FILTER_TEXT[filterType] ? filterType : FILTER_TYPES.ALL
+  let nextActiveCategory = typeof activeCategory === 'string' ? activeCategory : ''
+
+  if (nextFilterType === FILTER_TYPES.CATEGORY) {
+    const hasCategory = categoryFilterOptions.some((option) => option.value === nextActiveCategory)
+
+    if (!hasCategory) {
+      nextFilterType = FILTER_TYPES.ALL
+      nextActiveCategory = ''
+    }
+  } else {
+    nextActiveCategory = ''
+  }
+
+  const filteredFoods = filterRawFoods(rawFoods, nextFilterType, nextActiveCategory)
+
+  return {
+    rawFoods,
+    foods: buildDisplayFoods(filteredFoods),
+    statistics: buildFoodStatistics(rawFoods),
+    categoryFilterOptions,
+    categoryFilterIndex: getCategoryFilterIndex(categoryFilterOptions, nextActiveCategory),
+    activeFilterType: nextFilterType,
+    activeCategory: nextActiveCategory,
+    activeCategoryLabel: nextActiveCategory ? getDisplayText(CATEGORY_TEXT, nextActiveCategory) : '',
+    currentFilterText: buildCurrentFilterText(nextFilterType, nextActiveCategory)
+  }
 }
 
 function toFormText(value) {
@@ -179,6 +377,14 @@ Page({
   data: {
     foods: [],
     rawFoods: [],
+    statistics: { ...DEFAULT_STATISTICS },
+    filterOptions: FILTER_OPTIONS,
+    categoryFilterOptions: [],
+    categoryFilterIndex: 0,
+    activeFilterType: FILTER_TYPES.ALL,
+    activeCategory: '',
+    activeCategoryLabel: '',
+    currentFilterText: '当前筛选：全部',
     showAddForm: false,
     addForm: { ...DEFAULT_FORM },
     shelfLifeUnitOptions: SHELF_LIFE_UNIT_OPTIONS,
@@ -196,9 +402,43 @@ Page({
   },
 
   onLoad() {
+    this.setData(buildFoodPageData(getInitialRawFoods(), FILTER_TYPES.ALL, ''))
+  },
+
+  changeStatusFilter(event) {
+    const filterType = event.currentTarget.dataset.filter
+
     this.setData({
-      foods: buildDisplayFoods(mockFoods),
-      rawFoods: mockFoods
+      ...buildFoodPageData(this.data.rawFoods, filterType, ''),
+      selectedFood: null,
+      selectedFoodDetails: [],
+      isEditing: false,
+      editingFoodId: '',
+      editForm: { ...DEFAULT_FORM },
+      editShelfLifeUnitIndex: 0,
+      editShelfLifeUnitLabel: SHELF_LIFE_UNIT_OPTIONS[0].label,
+      editFormError: ''
+    })
+  },
+
+  changeCategoryFilter(event) {
+    const optionIndex = Number(event.detail.value) || 0
+    const categoryOption = this.data.categoryFilterOptions[optionIndex]
+
+    if (!categoryOption) {
+      return
+    }
+
+    this.setData({
+      ...buildFoodPageData(this.data.rawFoods, FILTER_TYPES.CATEGORY, categoryOption.value),
+      selectedFood: null,
+      selectedFoodDetails: [],
+      isEditing: false,
+      editingFoodId: '',
+      editForm: { ...DEFAULT_FORM },
+      editShelfLifeUnitIndex: 0,
+      editShelfLifeUnitLabel: SHELF_LIFE_UNIT_OPTIONS[0].label,
+      editFormError: ''
     })
   },
 
@@ -447,10 +687,14 @@ Page({
     })
 
     const rawFoods = [food, ...this.data.rawFoods]
+    const saved = writeStoredFoods(rawFoods)
+
+    if (!saved) {
+      showError('本地保存失败，数据可能只在当前页面保留')
+    }
 
     this.setData({
-      rawFoods,
-      foods: buildDisplayFoods(rawFoods),
+      ...buildFoodPageData(rawFoods, this.data.activeFilterType, this.data.activeCategory),
       addForm: { ...DEFAULT_FORM },
       shelfLifeUnitIndex: 0,
       shelfLifeUnitLabel: SHELF_LIFE_UNIT_OPTIONS[0].label,
@@ -513,12 +757,15 @@ Page({
     const rawFoods = this.data.rawFoods.map((food) => (
       food.id === foodId ? updatedFood : food
     ))
-    const foods = buildDisplayFoods(rawFoods)
-    const selectedFood = foods.find((food) => food.id === foodId) || null
+    const saved = writeStoredFoods(rawFoods)
+    const selectedFood = formatFoodForDisplay(updatedFood)
+
+    if (!saved) {
+      showError('本地保存失败，数据可能只在当前页面保留')
+    }
 
     this.setData({
-      rawFoods,
-      foods,
+      ...buildFoodPageData(rawFoods, this.data.activeFilterType, this.data.activeCategory),
       selectedFood,
       selectedFoodDetails: selectedFood ? buildFoodDetailRows(selectedFood) : [],
       isEditing: false,
@@ -538,10 +785,14 @@ Page({
     }
 
     const rawFoods = this.data.rawFoods.filter((food) => food.id !== selectedFood.id)
+    const saved = writeStoredFoods(rawFoods)
+
+    if (!saved) {
+      showError('本地保存失败，数据可能只在当前页面保留')
+    }
 
     this.setData({
-      rawFoods,
-      foods: buildDisplayFoods(rawFoods),
+      ...buildFoodPageData(rawFoods, this.data.activeFilterType, this.data.activeCategory),
       selectedFood: null,
       selectedFoodDetails: [],
       isEditing: false,

@@ -2,8 +2,10 @@
   <view class="header">
     <view class="eyebrow">食品到期列表</view>
     <view class="title">食期管家</view>
-    <view class="desc">按到期日查看当前页面内存中的食品数据</view>
+    <view class="desc">按到期日查看食品，支持筛选、统计和本机保存</view>
   </view>
+
+  <view class="storage-notice">数据保存在本机小程序内，暂不支持多设备同步。</view>
 
   <button class="add-toggle" bindtap="toggleAddForm">
     {{showAddForm ? '收起表单' : '新增食品'}}
@@ -84,6 +86,53 @@
     </view>
 
     <button class="submit-button" bindtap="submitAddForm">保存食品</button>
+  </view>
+
+  <view class="statistics-panel">
+    <view class="section-title">食品统计</view>
+    <view class="statistics-list">
+      <view class="statistics-item">
+        <text class="statistics-number">{{statistics.totalCount}}</text>
+        <text class="statistics-label">总食品数</text>
+      </view>
+      <view class="statistics-item">
+        <text class="statistics-number">{{statistics.soonCount}}</text>
+        <text class="statistics-label">即将过期</text>
+      </view>
+      <view class="statistics-item">
+        <text class="statistics-number">{{statistics.expiredCount}}</text>
+        <text class="statistics-label">已过期</text>
+      </view>
+    </view>
+  </view>
+
+  <view class="filter-panel">
+    <view class="section-title">筛选食品</view>
+    <view class="filter-buttons">
+      <button
+        class="filter-button {{activeFilterType === item.type ? 'filter-button-active' : ''}}"
+        wx:for="{{filterOptions}}"
+        wx:key="type"
+        data-filter="{{item.type}}"
+        bindtap="changeStatusFilter"
+      >
+        {{item.label}}
+      </button>
+    </view>
+
+    <picker wx:if="{{categoryFilterOptions.length}}" mode="selector" range="{{categoryFilterOptions}}" range-key="label" value="{{categoryFilterIndex}}" bindchange="changeCategoryFilter">
+      <view class="category-filter {{activeFilterType === 'category' ? 'category-filter-active' : ''}}">
+        <text class="category-filter-label">分类</text>
+        <text class="category-filter-value">{{activeFilterType === 'category' ? activeCategoryLabel : '选择分类'}}</text>
+      </view>
+    </picker>
+
+    <view class="category-filter category-filter-disabled" wx:else>
+      <text class="category-filter-label">分类</text>
+      <text class="category-filter-value">暂无分类</text>
+    </view>
+
+    <view class="current-filter">{{currentFilterText}}</view>
   </view>
 
   <view class="detail-panel" wx:if="{{selectedFood}}">
@@ -226,5 +275,5 @@
     </view>
   </view>
 
-  <view class="empty" wx:else>暂无食品数据</view>
+  <view class="empty" wx:else>{{rawFoods.length ? '当前筛选下暂无食品' : '暂无食品数据'}}</view>
 </view>
