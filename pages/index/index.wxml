@@ -135,7 +135,11 @@
 
         <view class="field">
           <view class="field-label">生产日期</view>
-          <input class="field-input" value="{{editForm.productionDate}}" data-field="productionDate" bindinput="updateEditForm" placeholder="YYYY-MM-DD，例如 2026-06-01" />
+          <picker mode="date" value="{{editForm.productionDate}}" data-field="productionDate" bindchange="updateEditForm">
+            <view class="field-input picker-value {{editForm.productionDate ? '' : 'picker-placeholder'}}">
+              {{editForm.productionDate || '请选择生产日期'}}
+            </view>
+          </picker>
         </view>
 
         <view class="field-row">
@@ -153,7 +157,11 @@
 
         <view class="field">
           <view class="field-label">最终可食用日期</view>
-          <input class="field-input" value="{{editForm.expiryDate}}" data-field="expiryDate" bindinput="updateEditForm" placeholder="YYYY-MM-DD，例如 2026-07-01" />
+          <picker mode="date" value="{{editForm.expiryDate}}" data-field="expiryDate" bindchange="updateEditForm">
+            <view class="field-input picker-value {{editForm.expiryDate ? '' : 'picker-placeholder'}}">
+              {{editForm.expiryDate || '请选择最终可食用日期'}}
+            </view>
+          </picker>
           <view class="field-hint">留空时，会根据生产日期和保质期计算。</view>
         </view>
 
