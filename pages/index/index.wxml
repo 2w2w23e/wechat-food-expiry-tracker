@@ -95,14 +95,103 @@
       <view class="status-pill {{selectedFood.statusClass}}">{{selectedFood.statusText || '未填写到期日'}}</view>
     </view>
 
-    <view class="detail-list">
-      <view class="detail-row" wx:for="{{selectedFoodDetails}}" wx:key="label">
-        <text class="detail-label">{{item.label}}</text>
-        <text class="detail-value">{{item.value}}</text>
-      </view>
-    </view>
+    <block wx:if="{{isEditing}}">
+      <view class="edit-form">
+        <view class="form-title">编辑食品</view>
 
-    <button class="close-detail-button" bindtap="closeFoodDetail">关闭</button>
+        <view class="form-error" wx:if="{{editFormError}}">{{editFormError}}</view>
+
+        <view class="field">
+          <view class="field-label">食品名称</view>
+          <input class="field-input" value="{{editForm.name}}" data-field="name" bindinput="updateEditForm" placeholder="例如：牛奶" />
+        </view>
+
+        <view class="field">
+          <view class="field-label">分类</view>
+          <input class="field-input" value="{{editForm.category}}" data-field="category" bindinput="updateEditForm" placeholder="例如：乳制品" />
+        </view>
+
+        <view class="field-row">
+          <view class="field half">
+            <view class="field-label">数量</view>
+            <input class="field-input" type="digit" value="{{editForm.quantity}}" data-field="quantity" bindinput="updateEditForm" placeholder="例如：2" />
+          </view>
+          <view class="field half">
+            <view class="field-label">剩余数量</view>
+            <input class="field-input" type="digit" value="{{editForm.remainingQuantity}}" data-field="remainingQuantity" bindinput="updateEditForm" placeholder="例如：1" />
+          </view>
+        </view>
+
+        <view class="field-row">
+          <view class="field half">
+            <view class="field-label">单位</view>
+            <input class="field-input" value="{{editForm.unit}}" data-field="unit" bindinput="updateEditForm" placeholder="例如：盒" />
+          </view>
+          <view class="field half">
+            <view class="field-label">保存方式</view>
+            <input class="field-input" value="{{editForm.storageMethod}}" data-field="storageMethod" bindinput="updateEditForm" placeholder="例如：冷藏" />
+          </view>
+        </view>
+
+        <view class="field">
+          <view class="field-label">生产日期</view>
+          <picker mode="date" value="{{editForm.productionDate}}" data-field="productionDate" bindchange="updateEditForm">
+            <view class="field-input picker-value {{editForm.productionDate ? '' : 'picker-placeholder'}}">
+              {{editForm.productionDate || '请选择生产日期'}}
+            </view>
+          </picker>
+        </view>
+
+        <view class="field-row">
+          <view class="field half">
+            <view class="field-label">保质期</view>
+            <input class="field-input" type="number" value="{{editForm.shelfLifeValue}}" data-field="shelfLifeValue" bindinput="updateEditForm" placeholder="例如：30" />
+          </view>
+          <view class="field half">
+            <view class="field-label">保质期单位</view>
+            <picker mode="selector" range="{{shelfLifeUnitOptions}}" range-key="label" value="{{editShelfLifeUnitIndex}}" data-field="shelfLifeUnit" bindchange="updateEditForm">
+              <view class="field-input picker-value">{{editShelfLifeUnitLabel}}</view>
+            </picker>
+          </view>
+        </view>
+
+        <view class="field">
+          <view class="field-label">最终可食用日期</view>
+          <picker mode="date" value="{{editForm.expiryDate}}" data-field="expiryDate" bindchange="updateEditForm">
+            <view class="field-input picker-value {{editForm.expiryDate ? '' : 'picker-placeholder'}}">
+              {{editForm.expiryDate || '请选择最终可食用日期'}}
+            </view>
+          </picker>
+          <view class="field-hint">留空时，会根据生产日期和保质期计算。</view>
+        </view>
+
+        <view class="field">
+          <view class="field-label">备注</view>
+          <textarea class="field-textarea" value="{{editForm.notes}}" data-field="notes" bindinput="updateEditForm" placeholder="可填写存放位置或其他提醒" />
+        </view>
+
+        <view class="edit-actions">
+          <button class="submit-button edit-submit-button" bindtap="submitEditForm">保存修改</button>
+          <button class="cancel-edit-button" bindtap="cancelEditFood">取消编辑</button>
+        </view>
+      </view>
+    </block>
+
+    <block wx:if="{{!isEditing}}">
+      <view class="detail-actions">
+        <button class="edit-detail-button" bindtap="startEditSelectedFood">编辑</button>
+        <button class="delete-detail-button" bindtap="confirmDeleteSelectedFood">删除</button>
+      </view>
+
+      <view class="detail-list">
+        <view class="detail-row" wx:for="{{selectedFoodDetails}}" wx:key="label">
+          <text class="detail-label">{{item.label}}</text>
+          <text class="detail-value">{{item.value}}</text>
+        </view>
+      </view>
+
+      <button class="close-detail-button" bindtap="closeFoodDetail">关闭</button>
+    </block>
   </view>
 
   <view class="food-list" wx:if="{{foods.length}}">

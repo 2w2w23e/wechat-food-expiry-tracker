@@ -204,7 +204,10 @@
 }
 
 .detail-button,
-.close-detail-button {
+.close-detail-button,
+.edit-detail-button,
+.delete-detail-button,
+.cancel-edit-button {
   display: flex;
   align-items: center;
   justify-content: center;
@@ -217,6 +220,40 @@
   font-size: 30rpx;
   font-weight: 700;
   line-height: 1.35;
+}
+
+.detail-actions,
+.edit-actions {
+  display: flex;
+  gap: 20rpx;
+  margin: 0 0 24rpx;
+}
+
+.detail-actions .edit-detail-button,
+.detail-actions .delete-detail-button,
+.edit-actions .submit-button,
+.edit-actions .cancel-edit-button {
+  flex: 1;
+  min-width: 0;
+  margin: 0;
+}
+
+.delete-detail-button {
+  border-color: #9f352e;
+  color: #87251f;
+}
+
+.cancel-edit-button {
+  border-color: #6a6f78;
+  color: #4a5059;
+}
+
+.edit-form {
+  padding-top: 4rpx;
+}
+
+.edit-submit-button {
+  background: #215c3a;
 }
 
 .detail-panel {
