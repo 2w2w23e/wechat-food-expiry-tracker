@@ -110,28 +110,66 @@
     <view class="section-title">筛选食品</view>
 
     <view class="filter-controls">
-      <view class="filter-control">
+      <view class="filter-control status-filter-control">
         <view class="filter-label">状态筛选</view>
-        <picker mode="selector" range="{{statusFilterOptions}}" range-key="label" value="{{statusFilterIndex}}" bindchange="changeStatusFilter">
-          <view class="filter-picker">
-            <text class="filter-picker-text">{{statusFilterLabel}}</text>
-            <text class="filter-picker-action">选择</text>
-          </view>
-        </picker>
+        <view class="status-filter-buttons">
+          <button
+            class="status-filter-button {{statusFilter === item.value ? 'status-filter-button-active' : ''}}"
+            wx:for="{{statusFilterOptions}}"
+            wx:key="value"
+            data-filter="{{item.value}}"
+            bindtap="changeStatusFilter"
+          >
+            {{item.label}}
+          </button>
+        </view>
       </view>
 
-      <view class="filter-control">
+      <view class="filter-control category-filter-control">
         <view class="filter-label">分类筛选</view>
-        <picker mode="selector" range="{{categoryFilterOptions}}" range-key="label" value="{{categoryFilterIndex}}" bindchange="changeCategoryFilter">
-          <view class="filter-picker">
-            <text class="filter-picker-text">{{categoryFilterLabel}}</text>
-            <text class="filter-picker-action">选择</text>
-          </view>
-        </picker>
+        <button class="category-open-button" bindtap="openCategoryPanel">
+          <text class="category-current-text">当前分类：{{categoryFilterLabel}}</text>
+          <text class="category-open-action">选择分类</text>
+        </button>
       </view>
     </view>
 
     <view class="current-filter">{{currentFilterText}}</view>
+  </view>
+
+  <view class="category-panel-mask" wx:if="{{showCategoryPanel}}" bindtap="closeCategoryPanel">
+    <view class="category-panel" catchtap="stopCategoryPanelTap">
+      <view class="category-panel-header">
+        <view class="category-panel-title">选择分类</view>
+        <button class="category-panel-close" bindtap="closeCategoryPanel">关闭</button>
+      </view>
+
+      <input
+        class="category-search-input"
+        value="{{categorySearchText}}"
+        bindinput="updateCategorySearch"
+        placeholder="输入分类名称"
+        focus="{{showCategoryPanel}}"
+      />
+
+      <scroll-view class="category-result-scroll" scroll-y="true">
+        <view class="category-result-list" wx:if="{{categorySearchResults.length}}">
+          <button
+            class="category-result-button {{categoryFilter === item.value ? 'category-result-button-active' : ''}}"
+            wx:for="{{categorySearchResults}}"
+            wx:key="value"
+            data-category="{{item.value}}"
+            bindtap="selectCategoryFilter"
+          >
+            {{item.label}}
+          </button>
+        </view>
+
+        <view class="category-search-empty" wx:else>没有匹配的分类</view>
+      </scroll-view>
+
+      <button class="category-cancel-button" bindtap="closeCategoryPanel">取消</button>
+    </view>
   </view>
 
   <view class="food-list" wx:if="{{foods.length}}">

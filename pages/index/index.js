@@ -62,6 +62,27 @@ const STATUS_FILTER_OPTIONS = [
   { label: '已过期', value: STATUS_FILTERS.EXPIRED }
 ]
 
+const BASE_CATEGORY_FILTER_OPTIONS = [
+  { label: '乳制品', value: 'dairy' },
+  { label: '主食', value: 'staple' },
+  { label: '冷冻食品', value: 'frozen' },
+  { label: '饮品', value: 'beverage' },
+  { label: '零食', value: 'snack' },
+  { label: '调味品', value: 'condiment' },
+  { label: '其他', value: 'other' }
+]
+
+const CATEGORY_SEARCH_ALIASES = {
+  all: ['quanbufenlei', 'qbf', 'quanbu', 'qb'],
+  dairy: ['ruzhipin', 'rzp'],
+  staple: ['zhushi', 'zs'],
+  frozen: ['lengdongshipin', 'ldsp'],
+  beverage: ['yinpin', 'yp'],
+  snack: ['lingshi', 'ls'],
+  condiment: ['tiaoweipin', 'twp'],
+  other: ['qita', 'qt']
+}
+
 const DEFAULT_STATISTICS = {
   totalCount: 0,
   soonCount: 0,
@@ -221,13 +242,26 @@ function buildDisplayFoods(foods) {
   return sortFoodsByExpiryDate(foods).map(formatFoodForDisplay)
 }
 
+function buildCategoryFilterOption(label, value) {
+  return {
+    label,
+    value,
+    searchAliases: CATEGORY_SEARCH_ALIASES[value] || []
+  }
+}
+
 function buildCategoryFilterOptions(rawFoods) {
   const seen = {
     [CATEGORY_FILTERS.ALL]: true
   }
   const options = [
-    { label: '全部分类', value: CATEGORY_FILTERS.ALL }
+    buildCategoryFilterOption('全部分类', CATEGORY_FILTERS.ALL)
   ]
+
+  BASE_CATEGORY_FILTER_OPTIONS.forEach((option) => {
+    seen[option.value] = true
+    options.push(buildCategoryFilterOption(option.label, option.value))
+  })
 
   rawFoods.forEach((food) => {
     const category = typeof food.category === 'string' ? food.category.trim() : ''
@@ -238,18 +272,46 @@ function buildCategoryFilterOptions(rawFoods) {
     }
 
     seen[category] = true
-    options.push({
-      label,
-      value: category
-    })
+    options.push(buildCategoryFilterOption(label, category))
   })
 
   return options
 }
 
-function getOptionIndex(options, value) {
-  const optionIndex = options.findIndex((option) => option.value === value)
-  return optionIndex >= 0 ? optionIndex : 0
+function normalizeSearchText(value) {
+  return typeof value === 'string'
+    ? value.trim().toLowerCase().replace(/\s+/g, '')
+    : ''
+}
+
+function matchesCategorySearch(option, searchText) {
+  const query = normalizeSearchText(searchText)
+
+  if (!query) {
+    return true
+  }
+
+  const label = normalizeSearchText(option.label)
+  const value = normalizeSearchText(option.value)
+
+  if (label.includes(query) || value.includes(query)) {
+    return true
+  }
+
+  return option.searchAliases.some((alias) => normalizeSearchText(alias).startsWith(query))
+}
+
+function filterCategorySearchResults(categoryFilterOptions, searchText) {
+  return categoryFilterOptions.filter((option) => matchesCategorySearch(option, searchText))
+}
+
+function getStatusFilterLabel(statusFilter) {
+  return STATUS_FILTER_TEXT[statusFilter] || STATUS_FILTER_TEXT.all
+}
+
+function getCategoryFilterLabel(categoryFilter, categoryFilterOptions) {
+  const option = categoryFilterOptions.find((item) => item.value === categoryFilter)
+  return option ? option.label : '全部分类'
 }
 
 function normalizeStatusFilter(statusFilter) {
@@ -299,7 +361,7 @@ function buildFoodStatistics(rawFoods) {
 }
 
 function buildCurrentFilterText(statusFilter, categoryFilter) {
-  const statusText = STATUS_FILTER_TEXT[statusFilter] || STATUS_FILTER_TEXT.all
+  const statusText = getStatusFilterLabel(statusFilter)
   const categoryText = categoryFilter === CATEGORY_FILTERS.ALL
     ? '全部分类'
     : getDisplayText(CATEGORY_TEXT, categoryFilter)
@@ -307,13 +369,11 @@ function buildCurrentFilterText(statusFilter, categoryFilter) {
   return `当前筛选：${statusText}；${categoryText}`
 }
 
-function buildFoodPageData(rawFoods, statusFilter, categoryFilter) {
+function buildFoodPageData(rawFoods, statusFilter, categoryFilter, categorySearchText = '') {
   const categoryFilterOptions = buildCategoryFilterOptions(rawFoods)
   const nextStatusFilter = normalizeStatusFilter(statusFilter)
   const nextCategoryFilter = normalizeCategoryFilter(categoryFilter, categoryFilterOptions)
   const filteredFoods = filterRawFoods(rawFoods, nextStatusFilter, nextCategoryFilter)
-  const statusFilterIndex = getOptionIndex(STATUS_FILTER_OPTIONS, nextStatusFilter)
-  const categoryFilterIndex = getOptionIndex(categoryFilterOptions, nextCategoryFilter)
 
   return {
     rawFoods,
@@ -322,10 +382,9 @@ function buildFoodPageData(rawFoods, statusFilter, categoryFilter) {
     categoryFilterOptions,
     statusFilter: nextStatusFilter,
     categoryFilter: nextCategoryFilter,
-    statusFilterIndex,
-    statusFilterLabel: STATUS_FILTER_OPTIONS[statusFilterIndex].label,
-    categoryFilterIndex,
-    categoryFilterLabel: categoryFilterOptions[categoryFilterIndex].label,
+    statusFilterLabel: getStatusFilterLabel(nextStatusFilter),
+    categoryFilterLabel: getCategoryFilterLabel(nextCategoryFilter, categoryFilterOptions),
+    categorySearchResults: filterCategorySearchResults(categoryFilterOptions, categorySearchText),
     currentFilterText: buildCurrentFilterText(nextStatusFilter, nextCategoryFilter)
   }
 }
@@ -364,10 +423,11 @@ Page({
     categoryFilterOptions: [],
     statusFilter: STATUS_FILTERS.ALL,
     categoryFilter: CATEGORY_FILTERS.ALL,
-    statusFilterIndex: 0,
     statusFilterLabel: STATUS_FILTER_OPTIONS[0].label,
-    categoryFilterIndex: 0,
     categoryFilterLabel: '全部分类',
+    showCategoryPanel: false,
+    categorySearchText: '',
+    categorySearchResults: [],
     currentFilterText: '当前筛选：全部状态；全部分类',
     showAddForm: false,
     addForm: { ...DEFAULT_FORM },
@@ -385,30 +445,66 @@ Page({
     this.setData(buildFoodPageData(
       getInitialRawFoods(),
       this.data.statusFilter,
-      this.data.categoryFilter
+      this.data.categoryFilter,
+      this.data.categorySearchText
     ))
   },
 
   changeStatusFilter(event) {
-    const optionIndex = Number(event.detail.value) || 0
-    const option = this.data.statusFilterOptions[optionIndex] || this.data.statusFilterOptions[0]
+    const statusFilter = event.currentTarget.dataset.filter || STATUS_FILTERS.ALL
 
     this.setData(buildFoodPageData(
       this.data.rawFoods,
-      option.value,
-      this.data.categoryFilter
+      statusFilter,
+      this.data.categoryFilter,
+      this.data.categorySearchText
     ))
   },
 
-  changeCategoryFilter(event) {
-    const optionIndex = Number(event.detail.value) || 0
-    const option = this.data.categoryFilterOptions[optionIndex] || this.data.categoryFilterOptions[0]
+  openCategoryPanel() {
+    const categorySearchText = ''
 
-    this.setData(buildFoodPageData(
+    this.setData({
+      showCategoryPanel: true,
+      categorySearchText,
+      categorySearchResults: filterCategorySearchResults(this.data.categoryFilterOptions, categorySearchText)
+    })
+  },
+
+  closeCategoryPanel() {
+    this.setData({
+      showCategoryPanel: false,
+      categorySearchText: '',
+      categorySearchResults: filterCategorySearchResults(this.data.categoryFilterOptions, '')
+    })
+  },
+
+  stopCategoryPanelTap() {},
+
+  updateCategorySearch(event) {
+    const categorySearchText = event.detail.value || ''
+
+    this.setData({
+      categorySearchText,
+      categorySearchResults: filterCategorySearchResults(this.data.categoryFilterOptions, categorySearchText)
+    })
+  },
+
+  selectCategoryFilter(event) {
+    const categoryFilter = event.currentTarget.dataset.category || CATEGORY_FILTERS.ALL
+    const nextData = buildFoodPageData(
       this.data.rawFoods,
       this.data.statusFilter,
-      option.value
-    ))
+      categoryFilter,
+      this.data.categorySearchText
+    )
+
+    this.setData({
+      ...nextData,
+      showCategoryPanel: false,
+      categorySearchText: '',
+      categorySearchResults: filterCategorySearchResults(nextData.categoryFilterOptions, '')
+    })
   },
 
   toggleAddForm() {
