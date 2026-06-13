@@ -284,6 +284,10 @@ function normalizeSearchText(value) {
     : ''
 }
 
+function hasChineseText(value) {
+  return /[\u4e00-\u9fff]/.test(value)
+}
+
 function matchesCategorySearch(option, searchText) {
   const query = normalizeSearchText(searchText)
 
@@ -292,9 +296,8 @@ function matchesCategorySearch(option, searchText) {
   }
 
   const label = normalizeSearchText(option.label)
-  const value = normalizeSearchText(option.value)
 
-  if (label.includes(query) || value.includes(query)) {
+  if (hasChineseText(query) && label.includes(query)) {
     return true
   }
 
@@ -434,7 +437,8 @@ Page({
     shelfLifeUnitOptions: SHELF_LIFE_UNIT_OPTIONS,
     shelfLifeUnitIndex: 0,
     shelfLifeUnitLabel: SHELF_LIFE_UNIT_OPTIONS[0].label,
-    formError: ''
+    formError: '',
+    openingFoodDetailId: ''
   },
 
   onLoad() {
@@ -673,8 +677,42 @@ Page({
       return
     }
 
+    if (this.data.openingFoodDetailId) {
+      return
+    }
+
+    this.setData({
+      openingFoodDetailId: foodId
+    })
+
+    if (typeof wx.showLoading === 'function') {
+      wx.showLoading({
+        title: '正在打开详情',
+        mask: true
+      })
+    }
+
     wx.navigateTo({
-      url: `/pages/food-detail/food-detail?id=${encodeURIComponent(foodId)}`
+      url: `/pages/food-detail/food-detail?id=${encodeURIComponent(foodId)}`,
+      success: () => {
+        if (typeof wx.hideLoading === 'function') {
+          wx.hideLoading()
+        }
+
+        this.setData({
+          openingFoodDetailId: ''
+        })
+      },
+      fail: () => {
+        if (typeof wx.hideLoading === 'function') {
+          wx.hideLoading()
+        }
+
+        this.setData({
+          openingFoodDetailId: ''
+        })
+        showError('打开详情失败，请稍后再试')
+      }
     })
   }
 })

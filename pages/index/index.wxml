@@ -200,7 +200,14 @@
         <text class="value">{{item.statusText}}</text>
       </view>
 
-      <button class="detail-button" data-id="{{item.id}}" bindtap="viewFoodDetail">查看详情</button>
+      <button
+        class="detail-button"
+        data-id="{{item.id}}"
+        disabled="{{openingFoodDetailId === item.id}}"
+        bindtap="viewFoodDetail"
+      >
+        {{openingFoodDetailId === item.id ? '正在打开详情' : '查看详情'}}
+      </button>
     </view>
   </view>
 

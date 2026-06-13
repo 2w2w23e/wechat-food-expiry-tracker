@@ -315,6 +315,8 @@
 }
 
 .category-panel-title {
+  flex: 1;
+  min-width: 0;
   color: #20231f;
   font-size: 36rpx;
   font-weight: 700;
@@ -338,7 +340,11 @@
 }
 
 .category-panel-close {
-  flex: 0 0 148rpx;
+  flex: 0 0 auto;
+  min-width: 176rpx;
+  padding: 0 28rpx;
+  white-space: nowrap;
+  word-break: keep-all;
 }
 
 .category-search-input {
@@ -356,7 +362,6 @@
 }
 
 .category-result-scroll {
-  height: 48vh;
   max-height: 560rpx;
 }
 
@@ -513,6 +518,12 @@
   font-size: 32rpx;
   font-weight: 700;
   line-height: 1.35;
+}
+
+.detail-button[disabled] {
+  border-color: #9aa395;
+  background: #f1f3ee;
+  color: #5d6659;
 }
 
 .empty {
