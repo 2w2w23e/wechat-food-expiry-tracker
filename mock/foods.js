@@ -90,23 +90,6 @@ const mockFoods = [
     updatedAt: '2026-06-07T14:00:00+08:00'
   }),
   createMockFoodItem({
-    id: 'food_006',
-    name: '散装坚果',
-    category: 'snack',
-    productionDate: null,
-    shelfLifeValue: null,
-    shelfLifeUnit: null,
-    expiryDate: null,
-    dateSource: 'unknown',
-    quantity: 500,
-    remainingQuantity: 300,
-    unit: 'g',
-    storageMethod: 'cool_dry',
-    notes: '无可靠到期日期示例',
-    createdAt: '2026-06-08T16:00:00+08:00',
-    updatedAt: '2026-06-08T16:00:00+08:00'
-  }),
-  createMockFoodItem({
     id: 'food_007',
     name: '酱油',
     category: 'condiment',

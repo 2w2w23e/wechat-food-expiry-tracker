@@ -119,12 +119,12 @@ test('sortFoodsByExpiryDate does not mutate input array', () => {
   assert.deepStrictEqual(foods.map((food) => food.id), originalOrder)
 })
 
-test('mock foods can be recognized by status utility', () => {
+test('mock foods can be recognized by status utility without unknown examples', () => {
   const statuses = mockFoods.map((food) => getFoodExpiryStatus(food, { today: TEST_TODAY }))
 
   assert.strictEqual(statuses.includes(EXPIRY_STATUS.EXPIRED), true)
   assert.strictEqual(statuses.includes(EXPIRY_STATUS.TODAY), true)
   assert.strictEqual(statuses.includes(EXPIRY_STATUS.SOON), true)
   assert.strictEqual(statuses.includes(EXPIRY_STATUS.NORMAL), true)
-  assert.strictEqual(statuses.includes(EXPIRY_STATUS.UNKNOWN), true)
+  assert.strictEqual(statuses.includes(EXPIRY_STATUS.UNKNOWN), false)
 })
