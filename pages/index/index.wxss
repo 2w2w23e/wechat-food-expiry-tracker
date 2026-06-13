@@ -200,6 +200,10 @@
   min-width: 0;
 }
 
+.category-filter-control {
+  width: 100%;
+}
+
 .filter-label {
   margin-bottom: 12rpx;
   color: #263022;
@@ -244,6 +248,8 @@
   justify-content: space-between;
   box-sizing: border-box;
   width: 100%;
+  min-width: 100%;
+  max-width: 100%;
   min-height: 84rpx;
   margin: 0;
   padding: 16rpx 18rpx;
@@ -260,7 +266,10 @@
   flex: 1;
   min-width: 0;
   font-weight: 700;
-  word-break: break-all;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  word-break: keep-all;
 }
 
 .category-open-action {
@@ -270,6 +279,8 @@
   font-size: 28rpx;
   font-weight: 700;
   line-height: 1.35;
+  white-space: nowrap;
+  word-break: keep-all;
 }
 
 .current-filter {
