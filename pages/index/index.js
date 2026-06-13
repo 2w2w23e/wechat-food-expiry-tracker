@@ -11,7 +11,7 @@ const STATUS_TEXT = {
   today: '今日到期',
   soon: '即将到期',
   normal: '正常',
-  unknown: '未填写到期日'
+  unknown: '暂无到期日'
 }
 
 const CATEGORY_TEXT = {
@@ -54,22 +54,12 @@ const CATEGORY_FILTERS = {
   ALL: 'all'
 }
 
-const EMPTY_TEXT = '未填写'
+const PLACEHOLDER_TEXT = '未填写'
 
 const STATUS_FILTER_OPTIONS = [
   { label: '全部状态', value: STATUS_FILTERS.ALL },
   { label: '即将过期', value: STATUS_FILTERS.SOON },
   { label: '已过期', value: STATUS_FILTERS.EXPIRED }
-]
-
-const BASE_CATEGORY_FILTER_OPTIONS = [
-  { label: '乳制品', value: 'dairy' },
-  { label: '主食', value: 'staple' },
-  { label: '冷冻食品', value: 'frozen' },
-  { label: '饮品', value: 'beverage' },
-  { label: '零食', value: 'snack' },
-  { label: '调味品', value: 'condiment' },
-  { label: '其他', value: 'other' }
 ]
 
 const DEFAULT_STATISTICS = {
@@ -98,8 +88,42 @@ const SHELF_LIFE_UNIT_OPTIONS = [
   { label: '年', value: 'year' }
 ]
 
+function normalizeDisplayValue(value) {
+  if (typeof value !== 'string') {
+    return value || ''
+  }
+
+  const text = value.trim()
+  return text === PLACEHOLDER_TEXT ? '' : text
+}
+
 function getDisplayText(map, value) {
-  return map[value] || value || EMPTY_TEXT
+  const displayValue = normalizeDisplayValue(value)
+  return map[displayValue] || displayValue || ''
+}
+
+function sanitizeFoodInput(item) {
+  const sanitizedItem = { ...item }
+  const textFields = [
+    'name',
+    'category',
+    'productionDate',
+    'shelfLifeValue',
+    'shelfLifeUnit',
+    'expiryDate',
+    'dateSource',
+    'unit',
+    'storageMethod',
+    'notes'
+  ]
+
+  textFields.forEach((field) => {
+    if (Object.prototype.hasOwnProperty.call(sanitizedItem, field)) {
+      sanitizedItem[field] = normalizeDisplayValue(sanitizedItem[field])
+    }
+  })
+
+  return sanitizedItem
 }
 
 function isObjectRecord(value) {
@@ -118,7 +142,7 @@ function normalizeFoodList(value) {
       return null
     }
 
-    const food = createMockFoodItem(item)
+    const food = createMockFoodItem(sanitizeFoodInput(item))
 
     if (!food.id || !food.name) {
       return null
@@ -177,14 +201,18 @@ function getInitialRawFoods() {
 
 function formatFoodForDisplay(food) {
   const status = getFoodExpiryStatus(food)
+  const categoryText = getDisplayText(CATEGORY_TEXT, food.category)
+  const storageMethodText = getDisplayText(STORAGE_TEXT, food.storageMethod)
 
   return {
     ...food,
     status,
     statusText: STATUS_TEXT[status] || STATUS_TEXT.unknown,
     statusClass: `status-${status}`,
-    categoryText: getDisplayText(CATEGORY_TEXT, food.category),
-    storageMethodText: getDisplayText(STORAGE_TEXT, food.storageMethod),
+    categoryText,
+    storageMethodText,
+    hasCategoryText: Boolean(categoryText),
+    hasStorageMethodText: Boolean(storageMethodText),
     expiryDateText: food.expiryDate || STATUS_TEXT.unknown
   }
 }
@@ -198,29 +226,30 @@ function buildCategoryFilterOptions(rawFoods) {
     [CATEGORY_FILTERS.ALL]: true
   }
   const options = [
-    { label: '全部分类', value: CATEGORY_FILTERS.ALL },
-    ...BASE_CATEGORY_FILTER_OPTIONS
+    { label: '全部分类', value: CATEGORY_FILTERS.ALL }
   ]
-
-  BASE_CATEGORY_FILTER_OPTIONS.forEach((option) => {
-    seen[option.value] = true
-  })
 
   rawFoods.forEach((food) => {
     const category = typeof food.category === 'string' ? food.category.trim() : ''
+    const label = getDisplayText(CATEGORY_TEXT, category)
 
-    if (!category || seen[category]) {
+    if (!category || !label || seen[category]) {
       return
     }
 
     seen[category] = true
     options.push({
-      label: getDisplayText(CATEGORY_TEXT, category),
+      label,
       value: category
     })
   })
 
   return options
+}
+
+function getOptionIndex(options, value) {
+  const optionIndex = options.findIndex((option) => option.value === value)
+  return optionIndex >= 0 ? optionIndex : 0
 }
 
 function normalizeStatusFilter(statusFilter) {
@@ -283,6 +312,8 @@ function buildFoodPageData(rawFoods, statusFilter, categoryFilter) {
   const nextStatusFilter = normalizeStatusFilter(statusFilter)
   const nextCategoryFilter = normalizeCategoryFilter(categoryFilter, categoryFilterOptions)
   const filteredFoods = filterRawFoods(rawFoods, nextStatusFilter, nextCategoryFilter)
+  const statusFilterIndex = getOptionIndex(STATUS_FILTER_OPTIONS, nextStatusFilter)
+  const categoryFilterIndex = getOptionIndex(categoryFilterOptions, nextCategoryFilter)
 
   return {
     rawFoods,
@@ -291,12 +322,17 @@ function buildFoodPageData(rawFoods, statusFilter, categoryFilter) {
     categoryFilterOptions,
     statusFilter: nextStatusFilter,
     categoryFilter: nextCategoryFilter,
+    statusFilterIndex,
+    statusFilterLabel: STATUS_FILTER_OPTIONS[statusFilterIndex].label,
+    categoryFilterIndex,
+    categoryFilterLabel: categoryFilterOptions[categoryFilterIndex].label,
     currentFilterText: buildCurrentFilterText(nextStatusFilter, nextCategoryFilter)
   }
 }
 
 function trimFormValue(value) {
-  return typeof value === 'string' ? value.trim() : ''
+  const normalizedValue = normalizeDisplayValue(value)
+  return typeof normalizedValue === 'string' ? normalizedValue : ''
 }
 
 function parseFormQuantity(value, emptyFallback) {
@@ -328,6 +364,10 @@ Page({
     categoryFilterOptions: [],
     statusFilter: STATUS_FILTERS.ALL,
     categoryFilter: CATEGORY_FILTERS.ALL,
+    statusFilterIndex: 0,
+    statusFilterLabel: STATUS_FILTER_OPTIONS[0].label,
+    categoryFilterIndex: 0,
+    categoryFilterLabel: '全部分类',
     currentFilterText: '当前筛选：全部状态；全部分类',
     showAddForm: false,
     addForm: { ...DEFAULT_FORM },
@@ -350,22 +390,24 @@ Page({
   },
 
   changeStatusFilter(event) {
-    const statusFilter = event.currentTarget.dataset.filter || STATUS_FILTERS.ALL
+    const optionIndex = Number(event.detail.value) || 0
+    const option = this.data.statusFilterOptions[optionIndex] || this.data.statusFilterOptions[0]
 
     this.setData(buildFoodPageData(
       this.data.rawFoods,
-      statusFilter,
+      option.value,
       this.data.categoryFilter
     ))
   },
 
   changeCategoryFilter(event) {
-    const categoryFilter = event.currentTarget.dataset.category || CATEGORY_FILTERS.ALL
+    const optionIndex = Number(event.detail.value) || 0
+    const option = this.data.categoryFilterOptions[optionIndex] || this.data.categoryFilterOptions[0]
 
     this.setData(buildFoodPageData(
       this.data.rawFoods,
       this.data.statusFilter,
-      categoryFilter
+      option.value
     ))
   },
 

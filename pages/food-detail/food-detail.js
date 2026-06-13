@@ -10,7 +10,7 @@ const STATUS_TEXT = {
   today: '今日到期',
   soon: '即将到期',
   normal: '正常',
-  unknown: '未填写到期日'
+  unknown: '暂无到期日'
 }
 
 const CATEGORY_TEXT = {
@@ -34,7 +34,7 @@ const STORAGE_TEXT = {
 const DATE_SOURCE_TEXT = {
   calculated: '自动计算',
   manual: '手动填写',
-  unknown: '未填写'
+  unknown: ''
 }
 
 const SHELF_LIFE_UNIT_TEXT = {
@@ -43,7 +43,9 @@ const SHELF_LIFE_UNIT_TEXT = {
   year: '年'
 }
 
-const EMPTY_TEXT = '未填写'
+const PLACEHOLDER_TEXT = '未填写'
+const NO_EXPIRY_DATE_TEXT = '暂无到期日'
+const NO_NOTES_TEXT = '暂无备注'
 
 const DEFAULT_FORM = {
   name: '',
@@ -65,8 +67,42 @@ const SHELF_LIFE_UNIT_OPTIONS = [
   { label: '年', value: 'year' }
 ]
 
+function normalizeDisplayValue(value) {
+  if (typeof value !== 'string') {
+    return value || ''
+  }
+
+  const text = value.trim()
+  return text === PLACEHOLDER_TEXT ? '' : text
+}
+
 function getDisplayText(map, value) {
-  return map[value] || value || EMPTY_TEXT
+  const displayValue = normalizeDisplayValue(value)
+  return map[displayValue] || displayValue || ''
+}
+
+function sanitizeFoodInput(item) {
+  const sanitizedItem = { ...item }
+  const textFields = [
+    'name',
+    'category',
+    'productionDate',
+    'shelfLifeValue',
+    'shelfLifeUnit',
+    'expiryDate',
+    'dateSource',
+    'unit',
+    'storageMethod',
+    'notes'
+  ]
+
+  textFields.forEach((field) => {
+    if (Object.prototype.hasOwnProperty.call(sanitizedItem, field)) {
+      sanitizedItem[field] = normalizeDisplayValue(sanitizedItem[field])
+    }
+  })
+
+  return sanitizedItem
 }
 
 function isObjectRecord(value) {
@@ -85,7 +121,7 @@ function normalizeFoodList(value) {
       return null
     }
 
-    const food = createMockFoodItem(item)
+    const food = createMockFoodItem(sanitizeFoodInput(item))
 
     if (!food.id || !food.name) {
       return null
@@ -144,21 +180,27 @@ function getInitialRawFoods() {
 
 function formatFoodForDisplay(food) {
   const status = getFoodExpiryStatus(food)
+  const categoryText = getDisplayText(CATEGORY_TEXT, food.category)
+  const storageMethodText = getDisplayText(STORAGE_TEXT, food.storageMethod)
+  const dateSourceText = getDisplayText(DATE_SOURCE_TEXT, food.dateSource)
+  const shelfLifeUnitText = getDisplayText(SHELF_LIFE_UNIT_TEXT, food.shelfLifeUnit)
 
   return {
     ...food,
     status,
     statusText: STATUS_TEXT[status] || STATUS_TEXT.unknown,
     statusClass: `status-${status}`,
-    categoryText: getDisplayText(CATEGORY_TEXT, food.category),
-    storageMethodText: getDisplayText(STORAGE_TEXT, food.storageMethod),
-    dateSourceText: getDisplayText(DATE_SOURCE_TEXT, food.dateSource),
-    shelfLifeUnitText: getDisplayText(SHELF_LIFE_UNIT_TEXT, food.shelfLifeUnit)
+    categoryText,
+    storageMethodText,
+    dateSourceText,
+    shelfLifeUnitText,
+    expiryDateText: food.expiryDate || NO_EXPIRY_DATE_TEXT
   }
 }
 
 function trimFormValue(value) {
-  return typeof value === 'string' ? value.trim() : ''
+  const normalizedValue = normalizeDisplayValue(value)
+  return typeof normalizedValue === 'string' ? normalizedValue : ''
 }
 
 function toFormText(value) {
@@ -171,11 +213,23 @@ function toFormText(value) {
 
 function formatDetailValue(value) {
   if (typeof value === 'number') {
-    return Number.isFinite(value) ? String(value) : EMPTY_TEXT
+    return Number.isFinite(value) ? String(value) : ''
   }
 
-  const text = trimFormValue(value)
-  return text || EMPTY_TEXT
+  return normalizeDisplayValue(value)
+}
+
+function buildDetailRow(label, value, fallbackText) {
+  const detailValue = formatDetailValue(value) || fallbackText || ''
+
+  if (!detailValue) {
+    return null
+  }
+
+  return {
+    label,
+    value: detailValue
+  }
 }
 
 function getShelfLifeUnitIndex(value) {
@@ -201,20 +255,20 @@ function buildFoodForm(food) {
 
 function buildFoodDetailRows(food) {
   return [
-    { label: '食品名称', value: formatDetailValue(food.name) },
-    { label: '分类', value: food.categoryText || formatDetailValue(food.category) },
-    { label: '数量', value: formatDetailValue(food.quantity) },
-    { label: '剩余数量', value: formatDetailValue(food.remainingQuantity) },
-    { label: '单位', value: formatDetailValue(food.unit) },
-    { label: '保存方式', value: food.storageMethodText || formatDetailValue(food.storageMethod) },
-    { label: '生产日期', value: formatDetailValue(food.productionDate) },
-    { label: '保质期', value: formatDetailValue(food.shelfLifeValue) },
-    { label: '保质期单位', value: food.shelfLifeUnitText || formatDetailValue(food.shelfLifeUnit) },
-    { label: '最终可食用日期', value: formatDetailValue(food.expiryDate) },
-    { label: '日期来源', value: food.dateSourceText || formatDetailValue(food.dateSource) },
-    { label: '到期状态', value: formatDetailValue(food.statusText) },
-    { label: '备注', value: formatDetailValue(food.notes) }
-  ]
+    buildDetailRow('食品名称', food.name),
+    buildDetailRow('分类', food.categoryText || food.category),
+    buildDetailRow('数量', food.quantity),
+    buildDetailRow('剩余数量', food.remainingQuantity),
+    buildDetailRow('单位', food.unit),
+    buildDetailRow('保存方式', food.storageMethodText || food.storageMethod),
+    buildDetailRow('生产日期', food.productionDate),
+    buildDetailRow('保质期', food.shelfLifeValue),
+    buildDetailRow('保质期单位', food.shelfLifeUnitText || food.shelfLifeUnit),
+    buildDetailRow('最终可食用日期', food.expiryDate, NO_EXPIRY_DATE_TEXT),
+    buildDetailRow('日期来源', food.dateSourceText),
+    buildDetailRow('到期状态', food.statusText, NO_EXPIRY_DATE_TEXT),
+    buildDetailRow('备注', food.notes, NO_NOTES_TEXT)
+  ].filter(Boolean)
 }
 
 function parseFormQuantity(value, emptyFallback) {

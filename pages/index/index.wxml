@@ -109,30 +109,26 @@
   <view class="filter-panel">
     <view class="section-title">筛选食品</view>
 
-    <view class="filter-group-title">状态筛选</view>
-    <view class="filter-buttons">
-      <button
-        class="filter-button {{statusFilter === item.value ? 'filter-button-active' : ''}}"
-        wx:for="{{statusFilterOptions}}"
-        wx:key="value"
-        data-filter="{{item.value}}"
-        bindtap="changeStatusFilter"
-      >
-        {{item.label}}
-      </button>
-    </view>
+    <view class="filter-controls">
+      <view class="filter-control">
+        <view class="filter-label">状态筛选</view>
+        <picker mode="selector" range="{{statusFilterOptions}}" range-key="label" value="{{statusFilterIndex}}" bindchange="changeStatusFilter">
+          <view class="filter-picker">
+            <text class="filter-picker-text">{{statusFilterLabel}}</text>
+            <text class="filter-picker-action">选择</text>
+          </view>
+        </picker>
+      </view>
 
-    <view class="filter-group-title category-title">分类筛选</view>
-    <view class="category-buttons">
-      <button
-        class="category-button {{categoryFilter === item.value ? 'category-button-active' : ''}}"
-        wx:for="{{categoryFilterOptions}}"
-        wx:key="value"
-        data-category="{{item.value}}"
-        bindtap="changeCategoryFilter"
-      >
-        {{item.label}}
-      </button>
+      <view class="filter-control">
+        <view class="filter-label">分类筛选</view>
+        <picker mode="selector" range="{{categoryFilterOptions}}" range-key="label" value="{{categoryFilterIndex}}" bindchange="changeCategoryFilter">
+          <view class="filter-picker">
+            <text class="filter-picker-text">{{categoryFilterLabel}}</text>
+            <text class="filter-picker-action">选择</text>
+          </view>
+        </picker>
+      </view>
     </view>
 
     <view class="current-filter">{{currentFilterText}}</view>
@@ -145,7 +141,7 @@
         <view class="status-pill {{item.statusClass}}">{{item.statusText}}</view>
       </view>
 
-      <view class="info-row">
+      <view class="info-row" wx:if="{{item.hasCategoryText}}">
         <text class="label">分类：</text>
         <text class="value">{{item.categoryText}}</text>
       </view>
@@ -153,7 +149,7 @@
         <text class="label">数量：</text>
         <text class="value">{{item.quantity}} {{item.unit}} / 剩余 {{item.remainingQuantity}} {{item.unit}}</text>
       </view>
-      <view class="info-row">
+      <view class="info-row" wx:if="{{item.hasStorageMethodText}}">
         <text class="label">保存方式：</text>
         <text class="value">{{item.storageMethodText}}</text>
       </view>

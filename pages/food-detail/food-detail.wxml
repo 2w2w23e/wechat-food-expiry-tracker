@@ -17,10 +17,10 @@
     <view class="detail-panel">
       <view class="detail-header">
         <view class="detail-title-group">
-          <view class="detail-name">{{food.name || '未填写'}}</view>
-          <view class="detail-subtitle">{{food.categoryText || '未填写'}}</view>
+          <view class="detail-name">{{food.name || '食品详情'}}</view>
+          <view class="detail-subtitle" wx:if="{{food.categoryText}}">{{food.categoryText}}</view>
         </view>
-        <view class="status-pill {{food.statusClass}}">{{food.statusText || '未填写到期日'}}</view>
+        <view class="status-pill {{food.statusClass}}">{{food.statusText || '暂无到期日'}}</view>
       </view>
 
       <block wx:if="{{isEditing}}">
