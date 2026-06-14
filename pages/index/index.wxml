@@ -279,8 +279,8 @@
     </view>
   </view>
 
-  <view class="food-list" wx:if="{{foods.length}}">
-    <view class="food-card" wx:for="{{foods}}" wx:key="id">
+  <view class="food-list {{foodListAnimationClass}}" wx:if="{{foods.length}}">
+    <view class="food-card" wx:for="{{foods}}" wx:key="id" style="animation-delay: {{item.animationDelay}};">
       <view class="card-header">
         <view class="food-name">{{item.name}}</view>
         <view class="status-pill {{item.statusClass}}">{{item.statusText}}</view>

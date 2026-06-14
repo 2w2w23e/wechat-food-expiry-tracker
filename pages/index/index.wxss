@@ -283,7 +283,7 @@
   font-weight: 700;
   line-height: 1.35;
   text-align: center;
-  transition: border-color 160ms ease, background-color 160ms ease, color 160ms ease;
+  transition: border-color 160ms ease, background-color 160ms ease, color 160ms ease, transform 120ms ease;
 }
 
 .status-filter-button::after {
@@ -294,6 +294,7 @@
   border-color: #215c3a;
   background: #e7f3e9;
   color: #1f5135;
+  transform: translateY(-2rpx);
 }
 
 .category-open-button {
@@ -478,6 +479,7 @@
   font-size: 26rpx;
   font-weight: 700;
   line-height: 1.25;
+  animation: chip-soft-pop 140ms ease-out both;
   transition: border-color 160ms ease, background-color 160ms ease, color 160ms ease, transform 160ms ease;
 }
 
@@ -671,6 +673,7 @@
   flex-direction: column;
   gap: 16rpx;
   padding-bottom: 4rpx;
+  animation: category-options-enter 140ms ease-out both;
 }
 
 .category-result-button {
@@ -691,7 +694,7 @@
   font-weight: 700;
   line-height: 1.35;
   text-align: left;
-  transition: border-color 160ms ease, background-color 160ms ease, color 160ms ease;
+  transition: border-color 140ms ease, background-color 140ms ease, color 140ms ease, transform 120ms ease;
 }
 
 .category-result-button::after {
@@ -702,6 +705,7 @@
   border-color: #215c3a;
   background: #e7f3e9;
   color: #1f5135;
+  transform: translateX(4rpx);
 }
 
 .category-result-label {
@@ -743,7 +747,17 @@
   display: flex;
   flex-direction: column;
   gap: 24rpx;
-  animation: list-soft-fade 160ms ease-out;
+  animation: list-soft-fade 170ms ease-out;
+  transition: opacity 70ms ease, transform 70ms ease;
+}
+
+.food-list-leaving {
+  opacity: 0.58;
+  transform: translateY(8rpx);
+}
+
+.food-list-entering {
+  animation: list-content-enter 190ms ease-out both;
 }
 
 .food-card {
@@ -751,7 +765,13 @@
   border: 1rpx solid #dde1d4;
   border-radius: 8rpx;
   background: #ffffff;
-  transition: border-color 160ms ease, box-shadow 160ms ease;
+  animation: food-card-soft-enter 180ms ease-out both;
+  transition: border-color 160ms ease, box-shadow 160ms ease, opacity 120ms ease, transform 120ms ease;
+}
+
+.food-list-leaving .food-card {
+  opacity: 0.72;
+  transform: translateY(6rpx);
 }
 
 .card-header {
@@ -981,10 +1001,58 @@
 
 @keyframes list-soft-fade {
   from {
-    opacity: 0.72;
+    opacity: 0.9;
   }
 
   to {
     opacity: 1;
+  }
+}
+
+@keyframes list-content-enter {
+  from {
+    opacity: 0.88;
+    transform: translateY(8rpx);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes food-card-soft-enter {
+  from {
+    opacity: 0.9;
+    transform: translateY(10rpx);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes category-options-enter {
+  from {
+    opacity: 0.9;
+    transform: translateY(6rpx);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes chip-soft-pop {
+  from {
+    opacity: 0.88;
+    transform: scale(0.98);
+  }
+
+  to {
+    opacity: 1;
+    transform: scale(1);
   }
 }

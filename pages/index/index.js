@@ -22,6 +22,8 @@ const {
 const { getFoodExpiryStatus } = require('../../utils/foodStatus')
 
 const STORAGE_KEY = 'food_expiry_tracker_foods_v0'
+const LIST_ANIMATION_EXIT_MS = 70
+const LIST_ANIMATION_ENTER_MS = 190
 
 const STATUS_TEXT = {
   expired: '已过期',
@@ -223,7 +225,10 @@ function formatFoodForDisplay(food) {
 }
 
 function buildDisplayFoods(foods) {
-  return sortFoodsByExpiryDate(foods).map(formatFoodForDisplay)
+  return sortFoodsByExpiryDate(foods).map((food, index) => ({
+    ...formatFoodForDisplay(food),
+    animationDelay: `${Math.min(index, 6) * 18}ms`
+  }))
 }
 
 function buildCategoryFilterOption(category) {
@@ -674,6 +679,7 @@ Page({
     emptyText: '还没有食品记录',
     showEmptyGuide: false,
     showFilteredEmpty: false,
+    foodListAnimationClass: '',
     showAddForm: false,
     addForm: { ...DEFAULT_FORM },
     addCategoryLabel: '请选择分类',
@@ -692,24 +698,73 @@ Page({
   },
 
   onShow() {
-    this.setData(buildFoodPageData(
+    this.clearFoodListAnimationTimers()
+    const nextData = buildFoodPageData(
       getInitialRawFoods(),
       this.data.statusFilters,
       this.data.categoryFilters,
       this.data.categorySearchText
-    ))
+    )
+
+    this.setData({
+      ...nextData,
+      foodListAnimationClass: ''
+    })
+  },
+
+  clearFoodListAnimationTimers() {
+    if (this.foodListExitTimer) {
+      clearTimeout(this.foodListExitTimer)
+      this.foodListExitTimer = null
+    }
+
+    if (this.foodListEnterTimer) {
+      clearTimeout(this.foodListEnterTimer)
+      this.foodListEnterTimer = null
+    }
+  },
+
+  setFoodPageData(nextData, options = {}) {
+    const shouldAnimateList = Boolean(options.animateList && (this.data.foods.length || nextData.foods.length))
+
+    this.clearFoodListAnimationTimers()
+
+    if (!shouldAnimateList) {
+      this.setData({
+        ...nextData,
+        foodListAnimationClass: ''
+      })
+      return
+    }
+
+    this.setData({
+      foodListAnimationClass: 'food-list-leaving'
+    }, () => {
+      this.foodListExitTimer = setTimeout(() => {
+        this.setData({
+          ...nextData,
+          foodListAnimationClass: 'food-list-entering'
+        }, () => {
+          this.foodListEnterTimer = setTimeout(() => {
+            this.setData({
+              foodListAnimationClass: ''
+            })
+          }, LIST_ANIMATION_ENTER_MS)
+        })
+      }, LIST_ANIMATION_EXIT_MS)
+    })
   },
 
   toggleStatusFilter(event) {
     const statusFilter = event.currentTarget.dataset.status || ''
     const statusFilters = toggleStatusFilterValue(this.data.statusFilters, statusFilter)
 
-    this.setData(buildFoodPageData(
+    this.setFoodPageData(buildFoodPageData(
       this.data.rawFoods,
       statusFilters,
       this.data.categoryFilters,
       this.data.categorySearchText
-    ))
+    ), { animateList: true })
   },
 
   removeStatusFilter(event) {
@@ -718,12 +773,12 @@ Page({
       this.data.statusFilters.filter((value) => value !== statusFilter)
     )
 
-    this.setData(buildFoodPageData(
+    this.setFoodPageData(buildFoodPageData(
       this.data.rawFoods,
       statusFilters,
       this.data.categoryFilters,
       this.data.categorySearchText
-    ))
+    ), { animateList: true })
   },
 
   openCategoryPanel() {
@@ -784,13 +839,13 @@ Page({
       this.data.categorySearchText
     )
 
-    this.setData({
+    this.setFoodPageData({
       ...nextData,
       categorySearchResults: updateCategorySearchResultSelections(
         this.data.categorySearchResults,
         categoryFilters
       )
-    })
+    }, { animateList: true })
   },
 
   selectAllCategoryFilters() {
@@ -800,7 +855,7 @@ Page({
       this.data.categoryFilterOptions
     )
 
-    this.setData({
+    this.setFoodPageData({
       ...buildFoodPageData(
         this.data.rawFoods,
         this.data.statusFilters,
@@ -811,7 +866,7 @@ Page({
         this.data.categorySearchResults,
         categoryFilters
       )
-    })
+    }, { animateList: true })
   },
 
   resetCategoryFilters() {
@@ -821,7 +876,7 @@ Page({
       this.data.categoryFilterOptions
     )
 
-    this.setData({
+    this.setFoodPageData({
       ...buildFoodPageData(
         this.data.rawFoods,
         this.data.statusFilters,
@@ -832,7 +887,7 @@ Page({
         this.data.categorySearchResults,
         categoryFilters
       )
-    })
+    }, { animateList: true })
   },
 
   removeCategoryFilter(event) {
@@ -843,12 +898,12 @@ Page({
       this.data.categoryFilterOptions
     )
 
-    this.setData(buildFoodPageData(
+    this.setFoodPageData(buildFoodPageData(
       this.data.rawFoods,
       this.data.statusFilters,
       categoryFilters,
       this.data.categorySearchText
-    ))
+    ), { animateList: true })
   },
 
   tapCategoryFilterChip(event) {
