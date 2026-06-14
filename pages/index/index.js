@@ -237,22 +237,36 @@ function buildCategoryFilterOption(category) {
 
 function buildCategoryFilterOptions(rawFoods) {
   const seen = {}
+  const standardValues = {}
+  const customOptions = []
   const options = []
 
   CATEGORY_OPTIONS.forEach((category) => {
-    seen[category.value] = true
-    options.push(buildCategoryFilterOption(category))
+    standardValues[category.value] = true
   })
 
   rawFoods.forEach((food) => {
     const categoryOption = getCategoryOption(food.category)
 
-    if (!categoryOption || seen[categoryOption.value]) {
+    if (!categoryOption || !categoryOption.value || seen[categoryOption.value]) {
       return
     }
 
     seen[categoryOption.value] = true
-    options.push(buildCategoryFilterOption(categoryOption))
+
+    if (!standardValues[categoryOption.value]) {
+      customOptions.push(categoryOption)
+    }
+  })
+
+  CATEGORY_OPTIONS.forEach((category) => {
+    if (seen[category.value]) {
+      options.push(buildCategoryFilterOption(category))
+    }
+  })
+
+  customOptions.forEach((category) => {
+    options.push(buildCategoryFilterOption(category))
   })
 
   return options
@@ -274,10 +288,6 @@ function normalizeStatusFilters(statusFilters) {
   return normalizeStatusFilterValues(statusFilters)
 }
 
-function areAllStatusFiltersSelected(statusFilters) {
-  return normalizeStatusFilters(statusFilters).length === STATUS_FILTER_VALUES.length
-}
-
 function buildStatusFilterOptions(statusFilters) {
   const normalizedStatusFilters = normalizeStatusFilters(statusFilters)
 
@@ -289,14 +299,6 @@ function buildStatusFilterOptions(statusFilters) {
 
 function buildSelectedStatusChips(statusFilters) {
   const normalizedStatusFilters = normalizeStatusFilters(statusFilters)
-
-  if (areAllStatusFiltersSelected(normalizedStatusFilters)) {
-    return [{
-      value: 'all',
-      label: '全部状态',
-      removable: false
-    }]
-  }
 
   return normalizedStatusFilters.map((value) => ({
     value,
@@ -871,6 +873,23 @@ Page({
     })
   },
 
+  scrollToAddForm() {
+    if (typeof wx === 'undefined' || typeof wx.pageScrollTo !== 'function') {
+      return
+    }
+
+    wx.pageScrollTo({
+      selector: '#add-food-form-anchor',
+      duration: 260,
+      fail: () => {
+        wx.pageScrollTo({
+          scrollTop: 0,
+          duration: 260
+        })
+      }
+    })
+  },
+
   toggleActiveFilterCollapse() {
     this.setData({
       activeFilterCollapsed: !this.data.activeFilterCollapsed
@@ -915,7 +934,10 @@ Page({
   openFirstFoodForm() {
     this.setData({
       showAddForm: true,
-      formError: ''
+      formError: '',
+      showAddCategoryPanel: false
+    }, () => {
+      this.scrollToAddForm()
     })
   },
 
