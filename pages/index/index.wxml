@@ -2,10 +2,12 @@
   <view class="header">
     <view class="eyebrow">食品到期列表</view>
     <view class="title">食期管家</view>
-    <view class="desc">按到期日查看当前页面内存中的食品数据</view>
+    <view class="desc">按到期日查看食品，支持筛选、统计和本机保存</view>
   </view>
 
-  <button class="add-toggle" bindtap="toggleAddForm">
+  <view class="storage-notice">数据保存在本机小程序内，暂不支持多设备同步。</view>
+
+  <button id="add-food-form-anchor" class="add-toggle" bindtap="toggleAddForm">
     {{showAddForm ? '收起表单' : '新增食品'}}
   </button>
 
@@ -20,8 +22,11 @@
     </view>
 
     <view class="field">
-      <view class="field-label">分类</view>
-      <input class="field-input" value="{{addForm.category}}" data-field="category" bindinput="updateAddForm" placeholder="例如：乳制品" />
+      <view class="field-label">选择分类</view>
+      <button class="category-select-button" bindtap="openAddCategoryPanel">
+        <text class="category-select-text {{addForm.category ? '' : 'category-select-placeholder'}}">{{addCategoryLabel}}</text>
+        <text class="category-select-arrow">›</text>
+      </button>
     </view>
 
     <view class="field-row">
@@ -86,122 +91,202 @@
     <button class="submit-button" bindtap="submitAddForm">保存食品</button>
   </view>
 
-  <view class="detail-panel" wx:if="{{selectedFood}}">
-    <view class="detail-header">
-      <view class="detail-title-group">
-        <view class="detail-eyebrow">食品详情</view>
-        <view class="detail-title">{{selectedFood.name || '未填写'}}</view>
+  <view class="category-panel-mask" wx:if="{{showAddCategoryPanel}}" bindtap="closeAddCategoryPanel">
+    <view class="category-panel" catchtap="stopCategoryPanelTap">
+      <view class="category-panel-header">
+        <view class="category-panel-title">选择分类</view>
+        <button class="category-panel-close" bindtap="closeAddCategoryPanel">关闭</button>
       </view>
-      <view class="status-pill {{selectedFood.statusClass}}">{{selectedFood.statusText || '未填写到期日'}}</view>
+
+      <input
+        class="category-search-input"
+        value="{{addCategorySearchText}}"
+        bindinput="updateAddCategorySearch"
+        placeholder="输入中文、拼音或首字母"
+        focus="{{showAddCategoryPanel}}"
+      />
+
+      <scroll-view class="category-result-scroll" scroll-y="true">
+        <view class="category-result-list" wx:if="{{addCategorySearchResults.length}}">
+          <button
+            class="category-result-button {{item.selected ? 'category-result-button-active' : ''}}"
+            wx:for="{{addCategorySearchResults}}"
+            wx:key="value"
+            data-category="{{item.value}}"
+            bindtap="selectAddCategory"
+          >
+            <text class="category-result-label">{{item.label}}</text>
+            <text class="category-result-state" wx:if="{{item.selected}}">已选</text>
+          </button>
+        </view>
+
+        <view class="category-search-empty" wx:else>没有匹配的分类</view>
+      </scroll-view>
     </view>
-
-    <block wx:if="{{isEditing}}">
-      <view class="edit-form">
-        <view class="form-title">编辑食品</view>
-
-        <view class="form-error" wx:if="{{editFormError}}">{{editFormError}}</view>
-
-        <view class="field">
-          <view class="field-label">食品名称</view>
-          <input class="field-input" value="{{editForm.name}}" data-field="name" bindinput="updateEditForm" placeholder="例如：牛奶" />
-        </view>
-
-        <view class="field">
-          <view class="field-label">分类</view>
-          <input class="field-input" value="{{editForm.category}}" data-field="category" bindinput="updateEditForm" placeholder="例如：乳制品" />
-        </view>
-
-        <view class="field-row">
-          <view class="field half">
-            <view class="field-label">数量</view>
-            <input class="field-input" type="digit" value="{{editForm.quantity}}" data-field="quantity" bindinput="updateEditForm" placeholder="例如：2" />
-          </view>
-          <view class="field half">
-            <view class="field-label">剩余数量</view>
-            <input class="field-input" type="digit" value="{{editForm.remainingQuantity}}" data-field="remainingQuantity" bindinput="updateEditForm" placeholder="例如：1" />
-          </view>
-        </view>
-
-        <view class="field-row">
-          <view class="field half">
-            <view class="field-label">单位</view>
-            <input class="field-input" value="{{editForm.unit}}" data-field="unit" bindinput="updateEditForm" placeholder="例如：盒" />
-          </view>
-          <view class="field half">
-            <view class="field-label">保存方式</view>
-            <input class="field-input" value="{{editForm.storageMethod}}" data-field="storageMethod" bindinput="updateEditForm" placeholder="例如：冷藏" />
-          </view>
-        </view>
-
-        <view class="field">
-          <view class="field-label">生产日期</view>
-          <picker mode="date" value="{{editForm.productionDate}}" data-field="productionDate" bindchange="updateEditForm">
-            <view class="field-input picker-value {{editForm.productionDate ? '' : 'picker-placeholder'}}">
-              {{editForm.productionDate || '请选择生产日期'}}
-            </view>
-          </picker>
-        </view>
-
-        <view class="field-row">
-          <view class="field half">
-            <view class="field-label">保质期</view>
-            <input class="field-input" type="number" value="{{editForm.shelfLifeValue}}" data-field="shelfLifeValue" bindinput="updateEditForm" placeholder="例如：30" />
-          </view>
-          <view class="field half">
-            <view class="field-label">保质期单位</view>
-            <picker mode="selector" range="{{shelfLifeUnitOptions}}" range-key="label" value="{{editShelfLifeUnitIndex}}" data-field="shelfLifeUnit" bindchange="updateEditForm">
-              <view class="field-input picker-value">{{editShelfLifeUnitLabel}}</view>
-            </picker>
-          </view>
-        </view>
-
-        <view class="field">
-          <view class="field-label">最终可食用日期</view>
-          <picker mode="date" value="{{editForm.expiryDate}}" data-field="expiryDate" bindchange="updateEditForm">
-            <view class="field-input picker-value {{editForm.expiryDate ? '' : 'picker-placeholder'}}">
-              {{editForm.expiryDate || '请选择最终可食用日期'}}
-            </view>
-          </picker>
-          <view class="field-hint">留空时，会根据生产日期和保质期计算。</view>
-        </view>
-
-        <view class="field">
-          <view class="field-label">备注</view>
-          <textarea class="field-textarea" value="{{editForm.notes}}" data-field="notes" bindinput="updateEditForm" placeholder="可填写存放位置或其他提醒" />
-        </view>
-
-        <view class="edit-actions">
-          <button class="submit-button edit-submit-button" bindtap="submitEditForm">保存修改</button>
-          <button class="cancel-edit-button" bindtap="cancelEditFood">取消编辑</button>
-        </view>
-      </view>
-    </block>
-
-    <block wx:if="{{!isEditing}}">
-      <view class="detail-actions">
-        <button class="edit-detail-button" bindtap="startEditSelectedFood">编辑</button>
-        <button class="delete-detail-button" bindtap="confirmDeleteSelectedFood">删除</button>
-      </view>
-
-      <view class="detail-list">
-        <view class="detail-row" wx:for="{{selectedFoodDetails}}" wx:key="label">
-          <text class="detail-label">{{item.label}}</text>
-          <text class="detail-value">{{item.value}}</text>
-        </view>
-      </view>
-
-      <button class="close-detail-button" bindtap="closeFoodDetail">关闭</button>
-    </block>
   </view>
 
-  <view class="food-list" wx:if="{{foods.length}}">
-    <view class="food-card" wx:for="{{foods}}" wx:key="id">
+  <view class="statistics-panel">
+    <view class="section-title">食品统计</view>
+    <view class="statistics-list">
+      <view class="statistics-item">
+        <text class="statistics-number">{{statistics.totalCount}}</text>
+        <text class="statistics-label">总食品数</text>
+      </view>
+      <view class="statistics-item">
+        <text class="statistics-number">{{statistics.soonCount}}</text>
+        <text class="statistics-label">即将过期</text>
+      </view>
+      <view class="statistics-item">
+        <text class="statistics-number">{{statistics.expiredCount}}</text>
+        <text class="statistics-label">已过期</text>
+      </view>
+    </view>
+  </view>
+
+  <view class="filter-panel">
+    <view class="section-title">筛选食品</view>
+
+    <view class="filter-controls">
+      <view class="filter-control status-filter-control">
+        <view class="filter-label">状态筛选</view>
+        <view class="status-filter-buttons">
+          <button
+            class="status-filter-button {{item.selected ? 'status-filter-button-active' : ''}}"
+            wx:for="{{statusFilterOptions}}"
+            wx:key="value"
+            data-status="{{item.value}}"
+            bindtap="toggleStatusFilter"
+          >
+            {{item.label}}
+          </button>
+        </view>
+      </view>
+
+      <view class="filter-control category-filter-control">
+        <view class="filter-label">分类筛选</view>
+        <button class="category-open-button" hover-class="category-open-button-hover" bindtap="openCategoryPanel">
+          <text class="category-current-text">当前分类：{{categoryFilterLabel}}</text>
+          <view class="category-open-affordance">
+            <text class="category-open-action">选择分类</text>
+            <text class="category-open-arrow">›</text>
+          </view>
+        </button>
+      </view>
+    </view>
+  </view>
+
+  <view class="active-filter-bar {{activeFilterCollapsed ? 'active-filter-bar-collapsed' : ''}}">
+    <view class="active-filter-header">
+      <view class="active-filter-title">当前筛选</view>
+      <button
+        class="active-filter-collapse-button"
+        wx:if="{{showFilterBarCollapse}}"
+        bindtap="toggleActiveFilterCollapse"
+      >
+        {{activeFilterCollapsed ? '展开' : '收起'}}
+      </button>
+    </view>
+
+    <view class="active-filter-collapsed-text" wx:if="{{activeFilterCollapsed}}">
+      {{activeFilterSummary}}
+    </view>
+
+    <view class="active-filter-body" wx:else>
+      <view class="active-filter-row">
+        <text class="active-filter-label">状态</text>
+        <view class="active-filter-chip-list" wx:if="{{selectedStatusChips.length}}">
+          <view
+            class="active-filter-chip {{item.removable ? '' : 'active-filter-chip-static'}}"
+            wx:for="{{selectedStatusChips}}"
+            wx:key="value"
+            data-status="{{item.value}}"
+            bindtap="removeStatusFilter"
+          >
+            <text class="active-filter-chip-text">{{item.label}}</text>
+            <text class="active-filter-chip-remove" wx:if="{{item.removable}}">×</text>
+          </view>
+        </view>
+        <text class="active-filter-empty" wx:else>全部状态</text>
+      </view>
+
+      <view class="active-filter-row">
+        <text class="active-filter-label">分类</text>
+        <view class="active-filter-chip-list">
+          <view
+            class="active-filter-chip {{item.removable ? '' : 'active-filter-chip-static'}}"
+            wx:for="{{selectedCategoryChips}}"
+            wx:key="value"
+            data-category="{{item.value}}"
+            bindtap="tapCategoryFilterChip"
+          >
+            <text class="active-filter-chip-text">{{item.label}}</text>
+            <text
+              class="active-filter-chip-remove"
+              wx:if="{{item.removable}}"
+              data-category="{{item.value}}"
+              catchtap="removeCategoryFilter"
+            >
+              ×
+            </text>
+            <text class="active-filter-chip-open" wx:else>›</text>
+          </view>
+        </view>
+      </view>
+    </view>
+  </view>
+
+  <view class="category-panel-mask" wx:if="{{showCategoryPanel}}" bindtap="closeCategoryPanel">
+    <view class="category-panel" catchtap="stopCategoryPanelTap">
+      <view class="category-panel-header">
+        <view class="category-panel-title">选择分类</view>
+        <button class="category-panel-close" bindtap="closeCategoryPanel">关闭</button>
+      </view>
+
+      <input
+        class="category-search-input"
+        value="{{categorySearchText}}"
+        bindinput="updateCategorySearch"
+        placeholder="输入中文、拼音或首字母"
+        focus="{{showCategoryPanel}}"
+      />
+
+      <view class="category-panel-tools">
+        <text class="category-panel-selected">{{categoryPanelSelectedText}}</text>
+        <view class="category-tool-actions">
+          <button class="category-tool-button" bindtap="selectAllCategoryFilters">一键全选</button>
+          <button class="category-tool-button category-reset-button" bindtap="resetCategoryFilters">一键重置</button>
+        </view>
+      </view>
+
+      <scroll-view class="category-result-scroll" scroll-y="true">
+        <view class="category-result-list" wx:if="{{categorySearchResults.length}}">
+          <button
+            class="category-result-button {{item.selected ? 'category-result-button-active' : ''}}"
+            wx:for="{{categorySearchResults}}"
+            wx:key="value"
+            data-category="{{item.value}}"
+            bindtap="toggleCategoryFilter"
+          >
+            <text class="category-result-label">{{item.label}}</text>
+            <text class="category-result-state" wx:if="{{item.selected}}">已选</text>
+          </button>
+        </view>
+
+        <view class="category-search-empty" wx:else>没有匹配的分类</view>
+      </scroll-view>
+
+      <button class="category-cancel-button" bindtap="closeCategoryPanel">完成</button>
+    </view>
+  </view>
+
+  <view class="food-list {{foodListAnimationClass}}" wx:if="{{foods.length}}">
+    <view class="food-card" wx:for="{{foods}}" wx:key="id" style="animation-delay: {{item.animationDelay}};">
       <view class="card-header">
         <view class="food-name">{{item.name}}</view>
         <view class="status-pill {{item.statusClass}}">{{item.statusText}}</view>
       </view>
 
-      <view class="info-row">
+      <view class="info-row" wx:if="{{item.hasCategoryText}}">
         <text class="label">分类：</text>
         <text class="value">{{item.categoryText}}</text>
       </view>
@@ -209,7 +294,7 @@
         <text class="label">数量：</text>
         <text class="value">{{item.quantity}} {{item.unit}} / 剩余 {{item.remainingQuantity}} {{item.unit}}</text>
       </view>
-      <view class="info-row">
+      <view class="info-row" wx:if="{{item.hasStorageMethodText}}">
         <text class="label">保存方式：</text>
         <text class="value">{{item.storageMethodText}}</text>
       </view>
@@ -222,9 +307,29 @@
         <text class="value">{{item.statusText}}</text>
       </view>
 
-      <button class="detail-button" data-id="{{item.id}}" bindtap="showFoodDetail">查看详情</button>
+      <button
+        class="detail-button"
+        data-id="{{item.id}}"
+        disabled="{{openingFoodDetailId === item.id}}"
+        bindtap="viewFoodDetail"
+      >
+        {{openingFoodDetailId === item.id ? '正在打开详情' : '查看详情'}}
+      </button>
     </view>
   </view>
 
-  <view class="empty" wx:else>暂无食品数据</view>
+  <view class="empty-guide" wx:elif="{{showEmptyGuide}}">
+    <view class="empty-guide-title">还没有食品记录</view>
+    <view class="empty-guide-desc">可以先添加一件食品。</view>
+    <view class="empty-guide-note">不知道生产日期也可以，只填写最终可食用日期。</view>
+    <view class="empty-guide-note">食品会按最终可食用日期自动排序。</view>
+    <view class="empty-guide-actions">
+      <button class="empty-guide-primary" bindtap="openFirstFoodForm">新增第一件食品</button>
+      <button class="empty-guide-secondary" bindtap="loadSampleFoods">加载示例数据</button>
+    </view>
+  </view>
+
+  <view class="empty" wx:elif="{{showFilteredEmpty}}">{{emptyText}}</view>
+
+  <view class="back-to-top-fab" wx:if="{{showBackToTop}}" bindtap="scrollToTop">↑</view>
 </view>

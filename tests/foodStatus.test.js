@@ -7,6 +7,14 @@ const {
   getFoodExpiryStatus
 } = require('../utils/foodStatus')
 const { sortFoodsByExpiryDate } = require('../utils/foodList')
+const {
+  ALL_CATEGORY_FILTER,
+  ALL_STATUS_FILTER_VALUES,
+  canLoadSampleFoods,
+  filterFoodsByStatusAndCategory,
+  normalizeStatusFilterValues,
+  resolveInitialFoods
+} = require('../utils/foodList')
 const { mockFoods } = require('../mock/foods')
 
 const TEST_TODAY = '2026-06-09'
@@ -119,12 +127,52 @@ test('sortFoodsByExpiryDate does not mutate input array', () => {
   assert.deepStrictEqual(foods.map((food) => food.id), originalOrder)
 })
 
-test('mock foods can be recognized by status utility', () => {
+test('mock foods can be recognized by status utility without unknown examples', () => {
   const statuses = mockFoods.map((food) => getFoodExpiryStatus(food, { today: TEST_TODAY }))
 
   assert.strictEqual(statuses.includes(EXPIRY_STATUS.EXPIRED), true)
   assert.strictEqual(statuses.includes(EXPIRY_STATUS.TODAY), true)
   assert.strictEqual(statuses.includes(EXPIRY_STATUS.SOON), true)
   assert.strictEqual(statuses.includes(EXPIRY_STATUS.NORMAL), true)
-  assert.strictEqual(statuses.includes(EXPIRY_STATUS.UNKNOWN), true)
+  assert.strictEqual(statuses.includes(EXPIRY_STATUS.UNKNOWN), false)
+})
+
+test('default list filters are equivalent to showing all foods', () => {
+  assert.deepStrictEqual(normalizeStatusFilterValues([]), ALL_STATUS_FILTER_VALUES)
+  assert.strictEqual(
+    filterFoodsByStatusAndCategory(mockFoods, {
+      statusFilters: [],
+      categoryFilters: [ALL_CATEGORY_FILTER],
+      statusOptions: { today: TEST_TODAY }
+    }).length,
+    mockFoods.length
+  )
+})
+
+test('status and category filters combine without breaking expiryDate sorting', () => {
+  const filteredFoods = filterFoodsByStatusAndCategory(mockFoods, {
+    statusFilters: [EXPIRY_STATUS.SOON],
+    categoryFilters: ['staple'],
+    statusOptions: { today: TEST_TODAY }
+  })
+
+  assert.strictEqual(filteredFoods.length > 0, true)
+  assert.strictEqual(filteredFoods.every((food) => food.category === 'staple'), true)
+  assert.strictEqual(filteredFoods.every((food) => (
+    getFoodExpiryStatus(food, { today: TEST_TODAY }) === EXPIRY_STATUS.SOON
+  )), true)
+  assert.deepStrictEqual(
+    sortFoodsByExpiryDate(filteredFoods).map((food) => food.expiryDate),
+    filteredFoods.map((food) => food.expiryDate).sort()
+  )
+})
+
+test('empty stored food list stays empty instead of restoring sample data', () => {
+  assert.deepStrictEqual(resolveInitialFoods([]), [])
+  assert.deepStrictEqual(resolveInitialFoods(null), [])
+})
+
+test('sample data can only be loaded into an empty local list', () => {
+  assert.strictEqual(canLoadSampleFoods([]), true)
+  assert.strictEqual(canLoadSampleFoods(mockFoods), false)
 })

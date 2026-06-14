@@ -1,4 +1,5 @@
 const { calculateExpiryDate, isValidDateString } = require('./date')
+const { normalizeCategoryValue } = require('./category')
 
 const VALID_DATE_SOURCES = ['calculated', 'manual', 'unknown']
 const VALID_SHELF_LIFE_UNITS = ['day', 'month', 'year']
@@ -82,7 +83,7 @@ function normalizeFoodItem(input) {
   return {
     id: typeof source.id === 'string' ? source.id : DEFAULT_FOOD_ITEM.id,
     name: typeof source.name === 'string' ? source.name : DEFAULT_FOOD_ITEM.name,
-    category: typeof source.category === 'string' && source.category ? source.category : DEFAULT_FOOD_ITEM.category,
+    category: normalizeCategoryValue(source.category) || DEFAULT_FOOD_ITEM.category,
     productionDate,
     shelfLifeValue,
     shelfLifeUnit,

@@ -1,0 +1,162 @@
+<view class="page">
+  <view class="header">
+    <view class="eyebrow">食品详情</view>
+    <view class="title">{{food ? food.name : '食品详情'}}</view>
+    <view class="desc">查看完整信息，也可以编辑或删除这个食品。</view>
+  </view>
+
+  <view class="storage-notice">数据保存在本机小程序内，暂不支持多设备同步。</view>
+
+  <view class="empty" wx:if="{{notFound}}">
+    <view class="empty-title">没有找到这个食品</view>
+    <view class="empty-desc">可能已经被删除，或本地数据暂时无法读取。</view>
+    <button class="back-button" bindtap="goBack">返回首页</button>
+  </view>
+
+  <block wx:elif="{{food}}">
+    <view class="detail-panel">
+      <view class="detail-header">
+        <view class="detail-title-group">
+          <view class="detail-name">{{food.name || '食品详情'}}</view>
+          <view class="detail-subtitle" wx:if="{{food.categoryText}}">{{food.categoryText}}</view>
+        </view>
+        <view class="status-pill {{food.statusClass}}">{{food.statusText || '暂无到期日'}}</view>
+      </view>
+
+      <block wx:if="{{isEditing}}">
+        <view class="edit-form">
+          <view class="form-title">编辑食品</view>
+
+          <view class="form-error" wx:if="{{editFormError}}">{{editFormError}}</view>
+
+          <view class="field">
+            <view class="field-label">食品名称</view>
+            <input class="field-input" value="{{editForm.name}}" data-field="name" bindinput="updateEditForm" placeholder="例如：牛奶" />
+          </view>
+
+          <view class="field">
+            <view class="field-label">选择分类</view>
+            <button class="category-select-button" bindtap="openEditCategoryPanel">
+              <text class="category-select-text {{editForm.category ? '' : 'category-select-placeholder'}}">{{editCategoryLabel}}</text>
+              <text class="category-select-arrow">›</text>
+            </button>
+          </view>
+
+          <view class="field-row">
+            <view class="field half">
+              <view class="field-label">数量</view>
+              <input class="field-input" type="digit" value="{{editForm.quantity}}" data-field="quantity" bindinput="updateEditForm" placeholder="例如：2" />
+            </view>
+            <view class="field half">
+              <view class="field-label">剩余数量</view>
+              <input class="field-input" type="digit" value="{{editForm.remainingQuantity}}" data-field="remainingQuantity" bindinput="updateEditForm" placeholder="例如：1" />
+            </view>
+          </view>
+
+          <view class="field-row">
+            <view class="field half">
+              <view class="field-label">单位</view>
+              <input class="field-input" value="{{editForm.unit}}" data-field="unit" bindinput="updateEditForm" placeholder="例如：盒" />
+            </view>
+            <view class="field half">
+              <view class="field-label">保存方式</view>
+              <input class="field-input" value="{{editForm.storageMethod}}" data-field="storageMethod" bindinput="updateEditForm" placeholder="例如：冷藏" />
+            </view>
+          </view>
+
+          <view class="field">
+            <view class="field-label">生产日期</view>
+            <picker mode="date" value="{{editForm.productionDate}}" data-field="productionDate" bindchange="updateEditForm">
+              <view class="field-input picker-value {{editForm.productionDate ? '' : 'picker-placeholder'}}">
+                {{editForm.productionDate || '请选择生产日期'}}
+              </view>
+            </picker>
+          </view>
+
+          <view class="field-row">
+            <view class="field half">
+              <view class="field-label">保质期</view>
+              <input class="field-input" type="number" value="{{editForm.shelfLifeValue}}" data-field="shelfLifeValue" bindinput="updateEditForm" placeholder="例如：30" />
+            </view>
+            <view class="field half">
+              <view class="field-label">保质期单位</view>
+              <picker mode="selector" range="{{shelfLifeUnitOptions}}" range-key="label" value="{{editShelfLifeUnitIndex}}" data-field="shelfLifeUnit" bindchange="updateEditForm">
+                <view class="field-input picker-value">{{editShelfLifeUnitLabel}}</view>
+              </picker>
+            </view>
+          </view>
+
+          <view class="field">
+            <view class="field-label">最终可食用日期</view>
+            <picker mode="date" value="{{editForm.expiryDate}}" data-field="expiryDate" bindchange="updateEditForm">
+              <view class="field-input picker-value {{editForm.expiryDate ? '' : 'picker-placeholder'}}">
+                {{editForm.expiryDate || '请选择最终可食用日期'}}
+              </view>
+            </picker>
+            <view class="field-hint">留空时，会根据生产日期和保质期计算。</view>
+          </view>
+
+          <view class="field">
+            <view class="field-label">备注</view>
+            <textarea class="field-textarea" value="{{editForm.notes}}" data-field="notes" bindinput="updateEditForm" placeholder="可填写存放位置或其他提醒" />
+          </view>
+
+          <view class="edit-actions">
+            <button class="submit-button edit-submit-button" bindtap="submitEditForm">保存修改</button>
+            <button class="cancel-edit-button" bindtap="cancelEditFood">取消编辑</button>
+          </view>
+        </view>
+      </block>
+
+      <block wx:else>
+        <view class="detail-actions">
+          <button class="edit-detail-button" bindtap="startEditFood">编辑食品</button>
+          <button class="delete-detail-button" bindtap="confirmDeleteFood">删除食品</button>
+        </view>
+
+        <view class="detail-list">
+          <view class="detail-row" wx:for="{{foodDetails}}" wx:key="label">
+            <text class="detail-label">{{item.label}}</text>
+            <text class="detail-value">{{item.value}}</text>
+          </view>
+        </view>
+
+        <button class="back-button" bindtap="goBack">返回首页</button>
+      </block>
+    </view>
+  </block>
+
+  <view class="category-panel-mask" wx:if="{{showEditCategoryPanel}}" bindtap="closeEditCategoryPanel">
+    <view class="category-panel" catchtap="stopCategoryPanelTap">
+      <view class="category-panel-header">
+        <view class="category-panel-title">选择分类</view>
+        <button class="category-panel-close" bindtap="closeEditCategoryPanel">关闭</button>
+      </view>
+
+      <input
+        class="category-search-input"
+        value="{{editCategorySearchText}}"
+        bindinput="updateEditCategorySearch"
+        placeholder="输入中文、拼音或首字母"
+        focus="{{showEditCategoryPanel}}"
+      />
+
+      <scroll-view class="category-result-scroll" scroll-y="true">
+        <view class="category-result-list" wx:if="{{editCategorySearchResults.length}}">
+          <button
+            class="category-result-button {{item.selected ? 'category-result-button-active' : ''}}"
+            wx:for="{{editCategorySearchResults}}"
+            wx:key="value"
+            data-category="{{item.value}}"
+            bindtap="selectEditCategory"
+          >
+            <text class="category-result-label">{{item.label}}</text>
+            <text class="category-result-state" wx:if="{{item.selected}}">已选</text>
+          </button>
+        </view>
+
+        <view class="category-search-empty" wx:else>没有匹配的分类</view>
+      </scroll-view>
+    </view>
+  </view>
+</view>

@@ -6,6 +6,8 @@ const {
   isValidFoodItem,
   normalizeFoodItem
 } = require('../utils/food')
+const { isValidDateString } = require('../utils/date')
+const { CATEGORY_OPTIONS } = require('../utils/category')
 const { MOCK_REFERENCE_DATE, mockFoods } = require('../mock/foods')
 
 function test(name, fn) {
@@ -51,19 +53,46 @@ test('mock foods use expiryDate as the canonical date field', () => {
   })
 })
 
+test('mock foods include at least 20 valid examples', () => {
+  assert.strictEqual(mockFoods.length >= 20, true)
+})
+
+test('mock foods cover every standard category', () => {
+  const mockCategories = mockFoods.reduce((map, food) => {
+    map[food.category] = true
+    return map
+  }, {})
+
+  CATEGORY_OPTIONS.forEach((category) => {
+    assert.strictEqual(mockCategories[category.value], true, `${category.value} should be covered`)
+  })
+})
+
+test('mock foods all have valid expiryDate values', () => {
+  mockFoods.forEach((food) => {
+    assert.strictEqual(isValidDateString(food.expiryDate), true, `${food.id} should have valid expiryDate`)
+  })
+})
+
 test('dateSource values are limited to calculated manual or unknown', () => {
   mockFoods.forEach((food) => {
     assert.strictEqual(VALID_DATE_SOURCES.includes(food.dateSource), true, `${food.id} has invalid dateSource`)
   })
 })
 
-test('mock foods cover normal soon today expired manual and unknown expiry scenarios', () => {
+test('mock foods cover normal soon today expired and manual expiry scenarios', () => {
   assert.strictEqual(mockFoods.some((food) => food.expiryDate > '2026-06-16'), true)
   assert.strictEqual(mockFoods.some((food) => food.expiryDate > MOCK_REFERENCE_DATE && food.expiryDate <= '2026-06-16'), true)
   assert.strictEqual(mockFoods.some((food) => food.expiryDate === MOCK_REFERENCE_DATE), true)
   assert.strictEqual(mockFoods.some((food) => food.expiryDate && food.expiryDate < MOCK_REFERENCE_DATE), true)
   assert.strictEqual(mockFoods.some((food) => food.dateSource === 'manual'), true)
-  assert.strictEqual(mockFoods.some((food) => food.expiryDate === null && food.dateSource === 'unknown'), true)
+})
+
+test('mock foods do not expose unknown or missing expiry date examples', () => {
+  mockFoods.forEach((food) => {
+    assert.notStrictEqual(food.expiryDate, null, `${food.id} should have expiryDate`)
+    assert.notStrictEqual(food.dateSource, 'unknown', `${food.id} should not use unknown dateSource`)
+  })
 })
 
 test('normalizeFoodItem does not mutate input and preserves expiryDate/dateSource', () => {
