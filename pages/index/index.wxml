@@ -127,9 +127,12 @@
 
       <view class="filter-control category-filter-control">
         <view class="filter-label">分类筛选</view>
-        <button class="category-open-button" bindtap="openCategoryPanel">
+        <button class="category-open-button" hover-class="category-open-button-hover" bindtap="openCategoryPanel">
           <text class="category-current-text">当前分类：{{categoryFilterLabel}}</text>
-          <text class="category-open-action">选择分类</text>
+          <view class="category-open-affordance">
+            <text class="category-open-action">选择分类</text>
+            <text class="category-open-arrow">›</text>
+          </view>
         </button>
       </view>
     </view>

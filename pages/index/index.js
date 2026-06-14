@@ -35,19 +35,22 @@ const STORAGE_TEXT = {
 const STATUS_FILTERS = {
   ALL: 'all',
   SOON: 'soon',
-  EXPIRED: 'expired'
+  EXPIRED: 'expired',
+  NORMAL: 'normal'
 }
 
 const STATUS_FILTER_VALUES = [
   STATUS_FILTERS.ALL,
   STATUS_FILTERS.SOON,
-  STATUS_FILTERS.EXPIRED
+  STATUS_FILTERS.EXPIRED,
+  STATUS_FILTERS.NORMAL
 ]
 
 const STATUS_FILTER_TEXT = {
   all: '全部状态',
   soon: '即将过期',
-  expired: '已过期'
+  expired: '已过期',
+  normal: '正常'
 }
 
 const CATEGORY_FILTERS = {
@@ -59,7 +62,8 @@ const PLACEHOLDER_TEXT = '未填写'
 const STATUS_FILTER_OPTIONS = [
   { label: '全部状态', value: STATUS_FILTERS.ALL },
   { label: '即将过期', value: STATUS_FILTERS.SOON },
-  { label: '已过期', value: STATUS_FILTERS.EXPIRED }
+  { label: '已过期', value: STATUS_FILTERS.EXPIRED },
+  { label: '正常', value: STATUS_FILTERS.NORMAL }
 ]
 
 const BASE_CATEGORY_FILTER_OPTIONS = [
