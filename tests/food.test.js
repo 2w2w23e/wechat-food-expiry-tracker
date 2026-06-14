@@ -6,6 +6,8 @@ const {
   isValidFoodItem,
   normalizeFoodItem
 } = require('../utils/food')
+const { isValidDateString } = require('../utils/date')
+const { CATEGORY_OPTIONS } = require('../utils/category')
 const { MOCK_REFERENCE_DATE, mockFoods } = require('../mock/foods')
 
 function test(name, fn) {
@@ -48,6 +50,27 @@ test('mock foods use expiryDate as the canonical date field', () => {
     competingFields.forEach((field) => {
       assert.strictEqual(Object.prototype.hasOwnProperty.call(food, field), false, `${food.id} has ${field}`)
     })
+  })
+})
+
+test('mock foods include at least 20 valid examples', () => {
+  assert.strictEqual(mockFoods.length >= 20, true)
+})
+
+test('mock foods cover every standard category', () => {
+  const mockCategories = mockFoods.reduce((map, food) => {
+    map[food.category] = true
+    return map
+  }, {})
+
+  CATEGORY_OPTIONS.forEach((category) => {
+    assert.strictEqual(mockCategories[category.value], true, `${category.value} should be covered`)
+  })
+})
+
+test('mock foods all have valid expiryDate values', () => {
+  mockFoods.forEach((food) => {
+    assert.strictEqual(isValidDateString(food.expiryDate), true, `${food.id} should have valid expiryDate`)
   })
 })
 

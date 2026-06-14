@@ -22,8 +22,11 @@
     </view>
 
     <view class="field">
-      <view class="field-label">分类</view>
-      <input class="field-input" value="{{addForm.category}}" data-field="category" bindinput="updateAddForm" placeholder="例如：dairy 或乳制品" />
+      <view class="field-label">选择分类</view>
+      <button class="category-select-button" bindtap="openAddCategoryPanel">
+        <text class="category-select-text {{addForm.category ? '' : 'category-select-placeholder'}}">{{addCategoryLabel}}</text>
+        <text class="category-select-arrow">›</text>
+      </button>
     </view>
 
     <view class="field-row">
@@ -86,6 +89,40 @@
     </view>
 
     <button class="submit-button" bindtap="submitAddForm">保存食品</button>
+  </view>
+
+  <view class="category-panel-mask" wx:if="{{showAddCategoryPanel}}" bindtap="closeAddCategoryPanel">
+    <view class="category-panel" catchtap="stopCategoryPanelTap">
+      <view class="category-panel-header">
+        <view class="category-panel-title">选择分类</view>
+        <button class="category-panel-close" bindtap="closeAddCategoryPanel">关闭</button>
+      </view>
+
+      <input
+        class="category-search-input"
+        value="{{addCategorySearchText}}"
+        bindinput="updateAddCategorySearch"
+        placeholder="输入中文、拼音或首字母"
+        focus="{{showAddCategoryPanel}}"
+      />
+
+      <scroll-view class="category-result-scroll" scroll-y="true">
+        <view class="category-result-list" wx:if="{{addCategorySearchResults.length}}">
+          <button
+            class="category-result-button {{item.selected ? 'category-result-button-active' : ''}}"
+            wx:for="{{addCategorySearchResults}}"
+            wx:key="value"
+            data-category="{{item.value}}"
+            bindtap="selectAddCategory"
+          >
+            <text class="category-result-label">{{item.label}}</text>
+            <text class="category-result-state" wx:if="{{item.selected}}">已选</text>
+          </button>
+        </view>
+
+        <view class="category-search-empty" wx:else>没有匹配的分类</view>
+      </scroll-view>
+    </view>
   </view>
 
   <view class="statistics-panel">
@@ -159,17 +196,17 @@
         <text class="active-filter-label">状态</text>
         <view class="active-filter-chip-list" wx:if="{{selectedStatusChips.length}}">
           <view
-            class="active-filter-chip"
+            class="active-filter-chip {{item.removable ? '' : 'active-filter-chip-static'}}"
             wx:for="{{selectedStatusChips}}"
             wx:key="value"
             data-status="{{item.value}}"
             bindtap="removeStatusFilter"
           >
             <text class="active-filter-chip-text">{{item.label}}</text>
-            <text class="active-filter-chip-remove">×</text>
+            <text class="active-filter-chip-remove" wx:if="{{item.removable}}">×</text>
           </view>
         </view>
-        <text class="active-filter-empty" wx:else>未选择，列表不展示</text>
+        <text class="active-filter-empty" wx:else>全部状态</text>
       </view>
 
       <view class="active-filter-row">
@@ -209,7 +246,7 @@
         class="category-search-input"
         value="{{categorySearchText}}"
         bindinput="updateCategorySearch"
-        placeholder="输入分类名称"
+        placeholder="输入中文、拼音或首字母"
         focus="{{showCategoryPanel}}"
       />
 
@@ -281,7 +318,18 @@
     </view>
   </view>
 
-  <view class="empty" wx:else>{{emptyText}}</view>
+  <view class="empty-guide" wx:elif="{{showEmptyGuide}}">
+    <view class="empty-guide-title">还没有食品记录</view>
+    <view class="empty-guide-desc">可以先添加一件食品。</view>
+    <view class="empty-guide-note">不知道生产日期也可以，只填写最终可食用日期。</view>
+    <view class="empty-guide-note">食品会按最终可食用日期自动排序。</view>
+    <view class="empty-guide-actions">
+      <button class="empty-guide-primary" bindtap="openFirstFoodForm">新增第一件食品</button>
+      <button class="empty-guide-secondary" bindtap="loadSampleFoods">加载示例数据</button>
+    </view>
+  </view>
+
+  <view class="empty" wx:elif="{{showFilteredEmpty}}">{{emptyText}}</view>
 
   <view class="back-to-top-fab" wx:if="{{showBackToTop}}" bindtap="scrollToTop">↑</view>
 </view>

@@ -1,6 +1,11 @@
-const { mockFoods } = require('../../mock/foods')
+const {
+  getCategoryLabel,
+  normalizeCategoryValue,
+  searchCategories
+} = require('../../utils/category')
 const { calculateExpiryDate } = require('../../utils/date')
 const { createMockFoodItem } = require('../../utils/food')
+const { resolveInitialFoods } = require('../../utils/foodList')
 const { getFoodExpiryStatus } = require('../../utils/foodStatus')
 
 const STORAGE_KEY = 'food_expiry_tracker_foods_v0'
@@ -11,16 +16,6 @@ const STATUS_TEXT = {
   soon: '即将到期',
   normal: '正常',
   unknown: '暂无到期日'
-}
-
-const CATEGORY_TEXT = {
-  dairy: '乳制品',
-  staple: '主食',
-  frozen: '冷冻食品',
-  beverage: '饮品',
-  snack: '零食',
-  condiment: '调味品',
-  other: '其他'
 }
 
 const STORAGE_TEXT = {
@@ -133,10 +128,6 @@ function normalizeFoodList(value) {
   return normalizedFoods
 }
 
-function getFallbackFoods() {
-  return normalizeFoodList(mockFoods) || []
-}
-
 function readStoredFoods() {
   if (typeof wx === 'undefined' || typeof wx.getStorageSync !== 'function') {
     return null
@@ -170,17 +161,12 @@ function writeStoredFoods(rawFoods) {
 
 function getInitialRawFoods() {
   const storedFoods = readStoredFoods()
-
-  if (storedFoods !== null) {
-    return storedFoods
-  }
-
-  return getFallbackFoods()
+  return resolveInitialFoods(storedFoods)
 }
 
 function formatFoodForDisplay(food) {
   const status = getFoodExpiryStatus(food)
-  const categoryText = getDisplayText(CATEGORY_TEXT, food.category)
+  const categoryText = getCategoryLabel(food.category)
   const storageMethodText = getDisplayText(STORAGE_TEXT, food.storageMethod)
   const dateSourceText = getDisplayText(DATE_SOURCE_TEXT, food.dateSource)
   const shelfLifeUnitText = getDisplayText(SHELF_LIFE_UNIT_TEXT, food.shelfLifeUnit)
@@ -201,6 +187,19 @@ function formatFoodForDisplay(food) {
 function trimFormValue(value) {
   const normalizedValue = normalizeDisplayValue(value)
   return typeof normalizedValue === 'string' ? normalizedValue : ''
+}
+
+function buildFormCategoryLabel(category) {
+  return getCategoryLabel(category) || '请选择分类'
+}
+
+function buildFormCategorySearchResults(searchText, selectedCategory) {
+  const selectedValue = normalizeCategoryValue(selectedCategory)
+
+  return searchCategories(searchText).map((category) => ({
+    ...category,
+    selected: category.value === selectedValue
+  }))
 }
 
 function toFormText(value) {
@@ -240,7 +239,7 @@ function getShelfLifeUnitIndex(value) {
 function buildFoodForm(food) {
   return {
     name: toFormText(food.name),
-    category: toFormText(food.category),
+    category: toFormText(normalizeCategoryValue(food.category)),
     quantity: toFormText(food.quantity),
     remainingQuantity: toFormText(food.remainingQuantity),
     unit: toFormText(food.unit),
@@ -325,6 +324,10 @@ Page({
     shelfLifeUnitOptions: SHELF_LIFE_UNIT_OPTIONS,
     editShelfLifeUnitIndex: 0,
     editShelfLifeUnitLabel: SHELF_LIFE_UNIT_OPTIONS[0].label,
+    editCategoryLabel: '请选择分类',
+    showEditCategoryPanel: false,
+    editCategorySearchText: '',
+    editCategorySearchResults: buildFormCategorySearchResults('', DEFAULT_FORM.category),
     editFormError: ''
   },
 
@@ -349,6 +352,10 @@ Page({
         notFound: true,
         isEditing: false,
         editForm: { ...DEFAULT_FORM },
+        editCategoryLabel: '请选择分类',
+        showEditCategoryPanel: false,
+        editCategorySearchText: '',
+        editCategorySearchResults: buildFormCategorySearchResults('', DEFAULT_FORM.category),
         editFormError: ''
       })
       return
@@ -365,6 +372,10 @@ Page({
       editForm: { ...DEFAULT_FORM },
       editShelfLifeUnitIndex: 0,
       editShelfLifeUnitLabel: SHELF_LIFE_UNIT_OPTIONS[0].label,
+      editCategoryLabel: '请选择分类',
+      showEditCategoryPanel: false,
+      editCategorySearchText: '',
+      editCategorySearchResults: buildFormCategorySearchResults('', DEFAULT_FORM.category),
       editFormError: ''
     })
   },
@@ -385,6 +396,10 @@ Page({
       editForm,
       editShelfLifeUnitIndex,
       editShelfLifeUnitLabel: editShelfLifeUnitOption.label,
+      editCategoryLabel: buildFormCategoryLabel(editForm.category),
+      showEditCategoryPanel: false,
+      editCategorySearchText: '',
+      editCategorySearchResults: buildFormCategorySearchResults('', editForm.category),
       editFormError: ''
     })
   },
@@ -395,6 +410,58 @@ Page({
       editForm: { ...DEFAULT_FORM },
       editShelfLifeUnitIndex: 0,
       editShelfLifeUnitLabel: SHELF_LIFE_UNIT_OPTIONS[0].label,
+      editCategoryLabel: '请选择分类',
+      showEditCategoryPanel: false,
+      editCategorySearchText: '',
+      editCategorySearchResults: buildFormCategorySearchResults('', DEFAULT_FORM.category),
+      editFormError: ''
+    })
+  },
+
+  openEditCategoryPanel() {
+    const editCategorySearchText = ''
+
+    this.setData({
+      showEditCategoryPanel: true,
+      editCategorySearchText,
+      editCategorySearchResults: buildFormCategorySearchResults(
+        editCategorySearchText,
+        this.data.editForm.category
+      )
+    })
+  },
+
+  closeEditCategoryPanel() {
+    this.setData({
+      showEditCategoryPanel: false,
+      editCategorySearchText: '',
+      editCategorySearchResults: buildFormCategorySearchResults('', this.data.editForm.category)
+    })
+  },
+
+  stopCategoryPanelTap() {},
+
+  updateEditCategorySearch(event) {
+    const editCategorySearchText = event.detail.value || ''
+
+    this.setData({
+      editCategorySearchText,
+      editCategorySearchResults: buildFormCategorySearchResults(
+        editCategorySearchText,
+        this.data.editForm.category
+      )
+    })
+  },
+
+  selectEditCategory(event) {
+    const category = normalizeCategoryValue(event.currentTarget.dataset.category) || 'other'
+
+    this.setData({
+      'editForm.category': category,
+      editCategoryLabel: buildFormCategoryLabel(category),
+      showEditCategoryPanel: false,
+      editCategorySearchText: '',
+      editCategorySearchResults: buildFormCategorySearchResults('', category),
       editFormError: ''
     })
   },
@@ -533,7 +600,7 @@ Page({
     const updatedFood = createMockFoodItem({
       ...originalFood,
       name: validation.name,
-      category: trimFormValue(form.category) || 'other',
+      category: normalizeCategoryValue(form.category) || 'other',
       quantity: validation.quantity,
       remainingQuantity: validation.remainingQuantity,
       unit: trimFormValue(form.unit) || 'piece',
@@ -566,6 +633,10 @@ Page({
       editForm: { ...DEFAULT_FORM },
       editShelfLifeUnitIndex: 0,
       editShelfLifeUnitLabel: SHELF_LIFE_UNIT_OPTIONS[0].label,
+      editCategoryLabel: '请选择分类',
+      showEditCategoryPanel: false,
+      editCategorySearchText: '',
+      editCategorySearchResults: buildFormCategorySearchResults('', DEFAULT_FORM.category),
       editFormError: ''
     })
   },

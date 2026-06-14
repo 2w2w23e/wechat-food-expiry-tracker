@@ -35,8 +35,11 @@
           </view>
 
           <view class="field">
-            <view class="field-label">分类</view>
-            <input class="field-input" value="{{editForm.category}}" data-field="category" bindinput="updateEditForm" placeholder="例如：dairy 或乳制品" />
+            <view class="field-label">选择分类</view>
+            <button class="category-select-button" bindtap="openEditCategoryPanel">
+              <text class="category-select-text {{editForm.category ? '' : 'category-select-placeholder'}}">{{editCategoryLabel}}</text>
+              <text class="category-select-arrow">›</text>
+            </button>
           </view>
 
           <view class="field-row">
@@ -122,4 +125,38 @@
       </block>
     </view>
   </block>
+
+  <view class="category-panel-mask" wx:if="{{showEditCategoryPanel}}" bindtap="closeEditCategoryPanel">
+    <view class="category-panel" catchtap="stopCategoryPanelTap">
+      <view class="category-panel-header">
+        <view class="category-panel-title">选择分类</view>
+        <button class="category-panel-close" bindtap="closeEditCategoryPanel">关闭</button>
+      </view>
+
+      <input
+        class="category-search-input"
+        value="{{editCategorySearchText}}"
+        bindinput="updateEditCategorySearch"
+        placeholder="输入中文、拼音或首字母"
+        focus="{{showEditCategoryPanel}}"
+      />
+
+      <scroll-view class="category-result-scroll" scroll-y="true">
+        <view class="category-result-list" wx:if="{{editCategorySearchResults.length}}">
+          <button
+            class="category-result-button {{item.selected ? 'category-result-button-active' : ''}}"
+            wx:for="{{editCategorySearchResults}}"
+            wx:key="value"
+            data-category="{{item.value}}"
+            bindtap="selectEditCategory"
+          >
+            <text class="category-result-label">{{item.label}}</text>
+            <text class="category-result-state" wx:if="{{item.selected}}">已选</text>
+          </button>
+        </view>
+
+        <view class="category-search-empty" wx:else>没有匹配的分类</view>
+      </scroll-view>
+    </view>
+  </view>
 </view>
