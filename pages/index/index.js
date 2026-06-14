@@ -33,21 +33,20 @@ const STORAGE_TEXT = {
 }
 
 const STATUS_FILTERS = {
-  ALL: 'all',
   SOON: 'soon',
   EXPIRED: 'expired',
   NORMAL: 'normal'
 }
 
+const DEFAULT_STATUS_FILTERS = [STATUS_FILTERS.SOON]
+
 const STATUS_FILTER_VALUES = [
-  STATUS_FILTERS.ALL,
   STATUS_FILTERS.SOON,
   STATUS_FILTERS.EXPIRED,
   STATUS_FILTERS.NORMAL
 ]
 
 const STATUS_FILTER_TEXT = {
-  all: '全部状态',
   soon: '即将过期',
   expired: '已过期',
   normal: '正常'
@@ -60,7 +59,6 @@ const CATEGORY_FILTERS = {
 const PLACEHOLDER_TEXT = '未填写'
 
 const STATUS_FILTER_OPTIONS = [
-  { label: '全部状态', value: STATUS_FILTERS.ALL },
   { label: '即将过期', value: STATUS_FILTERS.SOON },
   { label: '已过期', value: STATUS_FILTERS.EXPIRED },
   { label: '正常', value: STATUS_FILTERS.NORMAL }
@@ -77,7 +75,6 @@ const BASE_CATEGORY_FILTER_OPTIONS = [
 ]
 
 const CATEGORY_SEARCH_ALIASES = {
-  all: ['quanbufenlei', 'qbf', 'quanbu', 'qb'],
   dairy: ['ruzhipin', 'rzp'],
   staple: ['zhushi', 'zs'],
   frozen: ['lengdongshipin', 'ldsp'],
@@ -255,12 +252,8 @@ function buildCategoryFilterOption(label, value) {
 }
 
 function buildCategoryFilterOptions(rawFoods) {
-  const seen = {
-    [CATEGORY_FILTERS.ALL]: true
-  }
-  const options = [
-    buildCategoryFilterOption('全部分类', CATEGORY_FILTERS.ALL)
-  ]
+  const seen = {}
+  const options = []
 
   BASE_CATEGORY_FILTER_OPTIONS.forEach((option) => {
     seen[option.value] = true
@@ -308,40 +301,283 @@ function matchesCategorySearch(option, searchText) {
   return option.searchAliases.some((alias) => normalizeSearchText(alias).startsWith(query))
 }
 
-function filterCategorySearchResults(categoryFilterOptions, searchText) {
-  return categoryFilterOptions.filter((option) => matchesCategorySearch(option, searchText))
-}
-
-function getStatusFilterLabel(statusFilter) {
-  return STATUS_FILTER_TEXT[statusFilter] || STATUS_FILTER_TEXT.all
-}
-
-function getCategoryFilterLabel(categoryFilter, categoryFilterOptions) {
-  const option = categoryFilterOptions.find((item) => item.value === categoryFilter)
-  return option ? option.label : '全部分类'
-}
-
-function normalizeStatusFilter(statusFilter) {
-  return STATUS_FILTER_VALUES.includes(statusFilter)
-    ? statusFilter
-    : STATUS_FILTERS.ALL
-}
-
-function normalizeCategoryFilter(categoryFilter, categoryFilterOptions) {
-  if (typeof categoryFilter !== 'string' || categoryFilter === '') {
-    return CATEGORY_FILTERS.ALL
+function normalizeFilterArray(value, fallback) {
+  if (Array.isArray(value)) {
+    return value
   }
 
-  const hasCategory = categoryFilterOptions.some((option) => option.value === categoryFilter)
-  return hasCategory ? categoryFilter : CATEGORY_FILTERS.ALL
+  if (typeof value === 'string' && value) {
+    return [value]
+  }
+
+  return fallback
 }
 
-function filterRawFoods(rawFoods, statusFilter, categoryFilter) {
+function normalizeStatusFilters(statusFilters) {
+  const selectedValues = normalizeFilterArray(statusFilters, DEFAULT_STATUS_FILTERS)
+  const selectedMap = selectedValues.reduce((map, value) => {
+    if (STATUS_FILTER_VALUES.includes(value)) {
+      map[value] = true
+    }
+
+    return map
+  }, {})
+
+  return STATUS_FILTER_VALUES.filter((value) => selectedMap[value])
+}
+
+function buildStatusFilterOptions(statusFilters) {
+  return STATUS_FILTER_OPTIONS.map((option) => ({
+    ...option,
+    selected: statusFilters.includes(option.value)
+  }))
+}
+
+function buildSelectedStatusChips(statusFilters) {
+  return statusFilters.map((value) => ({
+    value,
+    label: STATUS_FILTER_TEXT[value] || value
+  }))
+}
+
+function getAvailableCategoryValues(categoryFilterOptions) {
+  return categoryFilterOptions
+    .map((option) => option.value)
+    .filter((value) => value !== CATEGORY_FILTERS.ALL)
+}
+
+function normalizeExplicitCategoryFilters(categoryFilters, categoryFilterOptions) {
+  const selectedValues = normalizeFilterArray(categoryFilters, [])
+  const availableValues = getAvailableCategoryValues(categoryFilterOptions)
+  const availableMap = availableValues.reduce((map, value) => {
+    map[value] = true
+    return map
+  }, {})
+  const selectedMap = selectedValues.reduce((map, value) => {
+    if (availableMap[value]) {
+      map[value] = true
+    }
+
+    return map
+  }, {})
+
+  return availableValues.filter((value) => selectedMap[value])
+}
+
+function collapseCategoryFilters(categoryFilters, categoryFilterOptions) {
+  const normalizedValues = normalizeExplicitCategoryFilters(categoryFilters, categoryFilterOptions)
+  const availableValues = getAvailableCategoryValues(categoryFilterOptions)
+
+  if (availableValues.length && normalizedValues.length === availableValues.length) {
+    return [CATEGORY_FILTERS.ALL]
+  }
+
+  return normalizedValues
+}
+
+function expandCategoryFilters(categoryFilters, categoryFilterOptions) {
+  return isAllCategorySelected(categoryFilters)
+    ? getAvailableCategoryValues(categoryFilterOptions)
+    : normalizeExplicitCategoryFilters(categoryFilters, categoryFilterOptions)
+}
+
+function normalizeCategoryFilters(categoryFilters, categoryFilterOptions) {
+  const selectedValues = normalizeFilterArray(categoryFilters, [CATEGORY_FILTERS.ALL])
+
+  if (selectedValues.includes(CATEGORY_FILTERS.ALL)) {
+    return [CATEGORY_FILTERS.ALL]
+  }
+
+  return collapseCategoryFilters(selectedValues, categoryFilterOptions)
+}
+
+function isAllCategorySelected(categoryFilters) {
+  return categoryFilters.length === 1 && categoryFilters[0] === CATEGORY_FILTERS.ALL
+}
+
+function buildCategoryFilterLabel(categoryFilters, categoryFilterOptions) {
+  if (isAllCategorySelected(categoryFilters)) {
+    return '已全选'
+  }
+
+  if (!categoryFilters.length) {
+    return '未选择'
+  }
+
+  if (categoryFilters.length === 1) {
+    const option = categoryFilterOptions.find((item) => item.value === categoryFilters[0])
+    return option ? option.label : '已全选'
+  }
+
+  return `已选 ${categoryFilters.length} 个分类`
+}
+
+function buildSelectedCategoryChips(categoryFilters, categoryFilterOptions) {
+  if (isAllCategorySelected(categoryFilters)) {
+    return [{
+      value: CATEGORY_FILTERS.ALL,
+      label: '已全选',
+      removable: false
+    }]
+  }
+
+  if (!categoryFilters.length) {
+    return [{
+      value: 'none',
+      label: '未选择分类',
+      removable: false
+    }]
+  }
+
+  return categoryFilters.map((value) => {
+    const option = categoryFilterOptions.find((item) => item.value === value)
+
+    return {
+      value,
+      label: option ? option.label : value,
+      removable: true
+    }
+  })
+}
+
+function buildCategoryPanelSelectedText(categoryFilters) {
+  if (isAllCategorySelected(categoryFilters)) {
+    return '已全选'
+  }
+
+  return categoryFilters.length
+    ? `已选 ${categoryFilters.length} 个分类`
+    : '未选择分类'
+}
+
+function applyCategoryOptionSelection(categoryFilterOptions, categoryFilters) {
+  const allCategorySelected = isAllCategorySelected(categoryFilters)
+  const selectedMap = categoryFilters.reduce((map, value) => {
+    map[value] = true
+    return map
+  }, {})
+
+  return categoryFilterOptions.map((option) => ({
+    ...option,
+    selected: allCategorySelected || Boolean(selectedMap[option.value])
+  }))
+}
+
+function sortCategoryOptionsBySelection(categoryFilterOptions, categoryFilters) {
+  return applyCategoryOptionSelection(categoryFilterOptions, categoryFilters)
+    .map((option, index) => ({
+      ...option,
+      originalIndex: index
+    }))
+    .sort((left, right) => {
+      if (left.selected !== right.selected) {
+        return left.selected ? -1 : 1
+      }
+
+      return left.originalIndex - right.originalIndex
+    })
+    .map(({ originalIndex, ...option }) => option)
+}
+
+function filterCategorySearchResults(
+  categoryFilterOptions,
+  searchText,
+  categoryFilters,
+  prioritizeSelected = false
+) {
+  const matchedOptions = categoryFilterOptions.filter((option) => matchesCategorySearch(option, searchText))
+
+  return prioritizeSelected
+    ? sortCategoryOptionsBySelection(matchedOptions, categoryFilters)
+    : applyCategoryOptionSelection(matchedOptions, categoryFilters)
+}
+
+function updateCategorySearchResultSelections(categorySearchResults, categoryFilters) {
+  return applyCategoryOptionSelection(categorySearchResults, categoryFilters)
+}
+
+function toggleStatusFilterValue(statusFilters, statusFilter) {
+  if (!STATUS_FILTER_VALUES.includes(statusFilter)) {
+    return statusFilters
+  }
+
+  const nextStatusFilters = statusFilters.includes(statusFilter)
+    ? statusFilters.filter((value) => value !== statusFilter)
+    : [...statusFilters, statusFilter]
+
+  return normalizeStatusFilters(nextStatusFilters)
+}
+
+function toggleCategoryFilterValue(categoryFilters, categoryFilter, categoryFilterOptions) {
+  if (categoryFilter === CATEGORY_FILTERS.ALL) {
+    return [CATEGORY_FILTERS.ALL]
+  }
+
+  const baseCategoryFilters = expandCategoryFilters(categoryFilters, categoryFilterOptions)
+  const nextCategoryFilters = baseCategoryFilters.includes(categoryFilter)
+    ? baseCategoryFilters.filter((value) => value !== categoryFilter)
+    : [...baseCategoryFilters, categoryFilter]
+
+  return collapseCategoryFilters(nextCategoryFilters, categoryFilterOptions)
+}
+
+function removeCategoryFilterValue(categoryFilters, categoryFilter, categoryFilterOptions) {
+  if (categoryFilter === CATEGORY_FILTERS.ALL) {
+    return [CATEGORY_FILTERS.ALL]
+  }
+
+  return collapseCategoryFilters(
+    expandCategoryFilters(categoryFilters, categoryFilterOptions).filter((value) => value !== categoryFilter),
+    categoryFilterOptions
+  )
+}
+
+function getVisibleCategoryValues(categorySearchResults) {
+  return getAvailableCategoryValues(categorySearchResults)
+}
+
+function selectVisibleCategoryFilters(categoryFilters, categorySearchResults, categoryFilterOptions) {
+  const visibleValues = getVisibleCategoryValues(categorySearchResults)
+
+  if (!visibleValues.length || isAllCategorySelected(categoryFilters)) {
+    return categoryFilters
+  }
+
+  return collapseCategoryFilters(
+    [...expandCategoryFilters(categoryFilters, categoryFilterOptions), ...visibleValues],
+    categoryFilterOptions
+  )
+}
+
+function resetVisibleCategoryFilters(categoryFilters, categorySearchResults, categoryFilterOptions) {
+  const visibleValues = getVisibleCategoryValues(categorySearchResults)
+
+  if (!visibleValues.length) {
+    return categoryFilters
+  }
+
+  const visibleMap = visibleValues.reduce((map, value) => {
+    map[value] = true
+    return map
+  }, {})
+
+  return collapseCategoryFilters(
+    expandCategoryFilters(categoryFilters, categoryFilterOptions).filter((value) => !visibleMap[value]),
+    categoryFilterOptions
+  )
+}
+
+function filterRawFoods(rawFoods, statusFilters, categoryFilters) {
+  if (!statusFilters.length) {
+    return []
+  }
+
   return rawFoods.filter((food) => {
-    const matchesStatus = statusFilter === STATUS_FILTERS.ALL ||
-      getFoodExpiryStatus(food) === statusFilter
-    const matchesCategory = categoryFilter === CATEGORY_FILTERS.ALL ||
-      food.category === categoryFilter
+    const matchesStatus = statusFilters.includes(getFoodExpiryStatus(food))
+    const matchesCategory = categoryFilters.length > 0 && (
+      isAllCategorySelected(categoryFilters) ||
+      categoryFilters.includes(food.category)
+    )
 
     return matchesStatus && matchesCategory
   })
@@ -367,32 +603,60 @@ function buildFoodStatistics(rawFoods) {
   })
 }
 
-function buildCurrentFilterText(statusFilter, categoryFilter) {
-  const statusText = getStatusFilterLabel(statusFilter)
-  const categoryText = categoryFilter === CATEGORY_FILTERS.ALL
-    ? '全部分类'
-    : getDisplayText(CATEGORY_TEXT, categoryFilter)
+function buildEmptyText(rawFoods, statusFilters, categoryFilters) {
+  if (!rawFoods.length) {
+    return '暂无食品数据'
+  }
 
-  return `当前筛选：${statusText}；${categoryText}`
+  if (!statusFilters.length) {
+    return '未选择状态，列表不展示食品'
+  }
+
+  if (!categoryFilters.length) {
+    return '未选择分类，列表不展示食品'
+  }
+
+  return '当前筛选下没有食品'
 }
 
-function buildFoodPageData(rawFoods, statusFilter, categoryFilter, categorySearchText = '') {
+function buildActiveFilterSummary(statusFilters, categoryFilters, categoryFilterOptions) {
+  const statusText = statusFilters.length
+    ? buildSelectedStatusChips(statusFilters).map((item) => item.label).join('、')
+    : '未选状态'
+  const categoryText = buildCategoryFilterLabel(categoryFilters, categoryFilterOptions)
+
+  return `状态：${statusText}；分类：${categoryText}`
+}
+
+function buildFoodPageData(rawFoods, statusFilters, categoryFilters, categorySearchText = '') {
   const categoryFilterOptions = buildCategoryFilterOptions(rawFoods)
-  const nextStatusFilter = normalizeStatusFilter(statusFilter)
-  const nextCategoryFilter = normalizeCategoryFilter(categoryFilter, categoryFilterOptions)
-  const filteredFoods = filterRawFoods(rawFoods, nextStatusFilter, nextCategoryFilter)
+  const nextStatusFilters = normalizeStatusFilters(statusFilters)
+  const nextCategoryFilters = normalizeCategoryFilters(categoryFilters, categoryFilterOptions)
+  const filteredFoods = filterRawFoods(rawFoods, nextStatusFilters, nextCategoryFilters)
 
   return {
     rawFoods,
     foods: buildDisplayFoods(filteredFoods),
     statistics: buildFoodStatistics(rawFoods),
     categoryFilterOptions,
-    statusFilter: nextStatusFilter,
-    categoryFilter: nextCategoryFilter,
-    statusFilterLabel: getStatusFilterLabel(nextStatusFilter),
-    categoryFilterLabel: getCategoryFilterLabel(nextCategoryFilter, categoryFilterOptions),
-    categorySearchResults: filterCategorySearchResults(categoryFilterOptions, categorySearchText),
-    currentFilterText: buildCurrentFilterText(nextStatusFilter, nextCategoryFilter)
+    statusFilters: nextStatusFilters,
+    categoryFilters: nextCategoryFilters,
+    statusFilterOptions: buildStatusFilterOptions(nextStatusFilters),
+    categoryFilterLabel: buildCategoryFilterLabel(nextCategoryFilters, categoryFilterOptions),
+    categoryPanelSelectedText: buildCategoryPanelSelectedText(nextCategoryFilters),
+    selectedStatusChips: buildSelectedStatusChips(nextStatusFilters),
+    selectedCategoryChips: buildSelectedCategoryChips(nextCategoryFilters, categoryFilterOptions),
+    categorySearchResults: filterCategorySearchResults(
+      categoryFilterOptions,
+      categorySearchText,
+      nextCategoryFilters
+    ),
+    activeFilterSummary: buildActiveFilterSummary(
+      nextStatusFilters,
+      nextCategoryFilters,
+      categoryFilterOptions
+    ),
+    emptyText: buildEmptyText(rawFoods, nextStatusFilters, nextCategoryFilters)
   }
 }
 
@@ -426,16 +690,26 @@ Page({
     foods: [],
     rawFoods: [],
     statistics: { ...DEFAULT_STATISTICS },
-    statusFilterOptions: STATUS_FILTER_OPTIONS,
+    statusFilterOptions: buildStatusFilterOptions(DEFAULT_STATUS_FILTERS),
     categoryFilterOptions: [],
-    statusFilter: STATUS_FILTERS.ALL,
-    categoryFilter: CATEGORY_FILTERS.ALL,
-    statusFilterLabel: STATUS_FILTER_OPTIONS[0].label,
-    categoryFilterLabel: '全部分类',
+    statusFilters: [...DEFAULT_STATUS_FILTERS],
+    categoryFilters: [CATEGORY_FILTERS.ALL],
+    categoryFilterLabel: '已全选',
+    categoryPanelSelectedText: '已全选',
+    selectedStatusChips: buildSelectedStatusChips(DEFAULT_STATUS_FILTERS),
+    selectedCategoryChips: [{
+      value: CATEGORY_FILTERS.ALL,
+      label: '已全选',
+      removable: false
+    }],
     showCategoryPanel: false,
     categorySearchText: '',
     categorySearchResults: [],
-    currentFilterText: '当前筛选：全部状态；全部分类',
+    activeFilterSummary: '状态：即将过期；分类：已全选',
+    activeFilterCollapsed: false,
+    showFilterBarCollapse: false,
+    showBackToTop: false,
+    emptyText: '当前筛选下没有食品',
     showAddForm: false,
     addForm: { ...DEFAULT_FORM },
     shelfLifeUnitOptions: SHELF_LIFE_UNIT_OPTIONS,
@@ -446,25 +720,40 @@ Page({
   },
 
   onLoad() {
-    this.setData(buildFoodPageData(getInitialRawFoods(), STATUS_FILTERS.ALL, CATEGORY_FILTERS.ALL))
+    this.setData(buildFoodPageData(getInitialRawFoods(), DEFAULT_STATUS_FILTERS, [CATEGORY_FILTERS.ALL]))
   },
 
   onShow() {
     this.setData(buildFoodPageData(
       getInitialRawFoods(),
-      this.data.statusFilter,
-      this.data.categoryFilter,
+      this.data.statusFilters,
+      this.data.categoryFilters,
       this.data.categorySearchText
     ))
   },
 
-  changeStatusFilter(event) {
-    const statusFilter = event.currentTarget.dataset.filter || STATUS_FILTERS.ALL
+  toggleStatusFilter(event) {
+    const statusFilter = event.currentTarget.dataset.status || ''
+    const statusFilters = toggleStatusFilterValue(this.data.statusFilters, statusFilter)
 
     this.setData(buildFoodPageData(
       this.data.rawFoods,
-      statusFilter,
-      this.data.categoryFilter,
+      statusFilters,
+      this.data.categoryFilters,
+      this.data.categorySearchText
+    ))
+  },
+
+  removeStatusFilter(event) {
+    const statusFilter = event.currentTarget.dataset.status || ''
+    const statusFilters = normalizeStatusFilters(
+      this.data.statusFilters.filter((value) => value !== statusFilter)
+    )
+
+    this.setData(buildFoodPageData(
+      this.data.rawFoods,
+      statusFilters,
+      this.data.categoryFilters,
       this.data.categorySearchText
     ))
   },
@@ -475,7 +764,12 @@ Page({
     this.setData({
       showCategoryPanel: true,
       categorySearchText,
-      categorySearchResults: filterCategorySearchResults(this.data.categoryFilterOptions, categorySearchText)
+      categorySearchResults: filterCategorySearchResults(
+        this.data.categoryFilterOptions,
+        categorySearchText,
+        this.data.categoryFilters,
+        true
+      )
     })
   },
 
@@ -483,7 +777,12 @@ Page({
     this.setData({
       showCategoryPanel: false,
       categorySearchText: '',
-      categorySearchResults: filterCategorySearchResults(this.data.categoryFilterOptions, '')
+      categorySearchResults: filterCategorySearchResults(
+        this.data.categoryFilterOptions,
+        '',
+        this.data.categoryFilters,
+        false
+      )
     })
   },
 
@@ -494,25 +793,145 @@ Page({
 
     this.setData({
       categorySearchText,
-      categorySearchResults: filterCategorySearchResults(this.data.categoryFilterOptions, categorySearchText)
+      categorySearchResults: filterCategorySearchResults(
+        this.data.categoryFilterOptions,
+        categorySearchText,
+        this.data.categoryFilters,
+        true
+      )
     })
   },
 
-  selectCategoryFilter(event) {
+  toggleCategoryFilter(event) {
     const categoryFilter = event.currentTarget.dataset.category || CATEGORY_FILTERS.ALL
+    const categoryFilters = toggleCategoryFilterValue(
+      this.data.categoryFilters,
+      categoryFilter,
+      this.data.categoryFilterOptions
+    )
     const nextData = buildFoodPageData(
       this.data.rawFoods,
-      this.data.statusFilter,
-      categoryFilter,
+      this.data.statusFilters,
+      categoryFilters,
       this.data.categorySearchText
     )
 
     this.setData({
       ...nextData,
-      showCategoryPanel: false,
-      categorySearchText: '',
-      categorySearchResults: filterCategorySearchResults(nextData.categoryFilterOptions, '')
+      categorySearchResults: updateCategorySearchResultSelections(
+        this.data.categorySearchResults,
+        categoryFilters
+      )
     })
+  },
+
+  selectAllCategoryFilters() {
+    const categoryFilters = selectVisibleCategoryFilters(
+      this.data.categoryFilters,
+      this.data.categorySearchResults,
+      this.data.categoryFilterOptions
+    )
+
+    this.setData({
+      ...buildFoodPageData(
+        this.data.rawFoods,
+        this.data.statusFilters,
+        categoryFilters,
+        this.data.categorySearchText
+      ),
+      categorySearchResults: updateCategorySearchResultSelections(
+        this.data.categorySearchResults,
+        categoryFilters
+      )
+    })
+  },
+
+  resetCategoryFilters() {
+    const categoryFilters = resetVisibleCategoryFilters(
+      this.data.categoryFilters,
+      this.data.categorySearchResults,
+      this.data.categoryFilterOptions
+    )
+
+    this.setData({
+      ...buildFoodPageData(
+        this.data.rawFoods,
+        this.data.statusFilters,
+        categoryFilters,
+        this.data.categorySearchText
+      ),
+      categorySearchResults: updateCategorySearchResultSelections(
+        this.data.categorySearchResults,
+        categoryFilters
+      )
+    })
+  },
+
+  removeCategoryFilter(event) {
+    const categoryFilter = event.currentTarget.dataset.category || CATEGORY_FILTERS.ALL
+    const categoryFilters = removeCategoryFilterValue(
+      this.data.categoryFilters,
+      categoryFilter,
+      this.data.categoryFilterOptions
+    )
+
+    this.setData(buildFoodPageData(
+      this.data.rawFoods,
+      this.data.statusFilters,
+      categoryFilters,
+      this.data.categorySearchText
+    ))
+  },
+
+  tapCategoryFilterChip(event) {
+    const categoryFilter = event.currentTarget.dataset.category || CATEGORY_FILTERS.ALL
+
+    if (categoryFilter === CATEGORY_FILTERS.ALL || categoryFilter === 'none') {
+      this.openCategoryPanel()
+      return
+    }
+
+    this.removeCategoryFilter(event)
+  },
+
+  scrollToTop() {
+    if (typeof wx === 'undefined' || typeof wx.pageScrollTo !== 'function') {
+      return
+    }
+
+    wx.pageScrollTo({
+      scrollTop: 0,
+      duration: 260
+    })
+  },
+
+  toggleActiveFilterCollapse() {
+    this.setData({
+      activeFilterCollapsed: !this.data.activeFilterCollapsed
+    })
+  },
+
+  onPageScroll(event) {
+    const scrollTop = event && typeof event.scrollTop === 'number' ? event.scrollTop : 0
+    const showBackToTop = scrollTop > 360
+    const showFilterBarCollapse = scrollTop > 260
+    const nextData = {}
+
+    if (this.data.showBackToTop !== showBackToTop) {
+      nextData.showBackToTop = showBackToTop
+    }
+
+    if (this.data.showFilterBarCollapse !== showFilterBarCollapse) {
+      nextData.showFilterBarCollapse = showFilterBarCollapse
+    }
+
+    if (!showFilterBarCollapse && this.data.activeFilterCollapsed) {
+      nextData.activeFilterCollapsed = false
+    }
+
+    if (Object.keys(nextData).length) {
+      this.setData(nextData)
+    }
   },
 
   toggleAddForm() {
@@ -665,7 +1084,7 @@ Page({
     }
 
     this.setData({
-      ...buildFoodPageData(rawFoods, this.data.statusFilter, this.data.categoryFilter),
+      ...buildFoodPageData(rawFoods, this.data.statusFilters, this.data.categoryFilters),
       addForm: { ...DEFAULT_FORM },
       shelfLifeUnitIndex: 0,
       shelfLifeUnitLabel: SHELF_LIFE_UNIT_OPTIONS[0].label,

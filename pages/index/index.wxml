@@ -114,11 +114,11 @@
         <view class="filter-label">状态筛选</view>
         <view class="status-filter-buttons">
           <button
-            class="status-filter-button {{statusFilter === item.value ? 'status-filter-button-active' : ''}}"
+            class="status-filter-button {{item.selected ? 'status-filter-button-active' : ''}}"
             wx:for="{{statusFilterOptions}}"
             wx:key="value"
-            data-filter="{{item.value}}"
-            bindtap="changeStatusFilter"
+            data-status="{{item.value}}"
+            bindtap="toggleStatusFilter"
           >
             {{item.label}}
           </button>
@@ -136,8 +136,66 @@
         </button>
       </view>
     </view>
+  </view>
 
-    <view class="current-filter">{{currentFilterText}}</view>
+  <view class="active-filter-bar {{activeFilterCollapsed ? 'active-filter-bar-collapsed' : ''}}">
+    <view class="active-filter-header">
+      <view class="active-filter-title">当前筛选</view>
+      <button
+        class="active-filter-collapse-button"
+        wx:if="{{showFilterBarCollapse}}"
+        bindtap="toggleActiveFilterCollapse"
+      >
+        {{activeFilterCollapsed ? '展开' : '收起'}}
+      </button>
+    </view>
+
+    <view class="active-filter-collapsed-text" wx:if="{{activeFilterCollapsed}}">
+      {{activeFilterSummary}}
+    </view>
+
+    <view class="active-filter-body" wx:else>
+      <view class="active-filter-row">
+        <text class="active-filter-label">状态</text>
+        <view class="active-filter-chip-list" wx:if="{{selectedStatusChips.length}}">
+          <view
+            class="active-filter-chip"
+            wx:for="{{selectedStatusChips}}"
+            wx:key="value"
+            data-status="{{item.value}}"
+            bindtap="removeStatusFilter"
+          >
+            <text class="active-filter-chip-text">{{item.label}}</text>
+            <text class="active-filter-chip-remove">×</text>
+          </view>
+        </view>
+        <text class="active-filter-empty" wx:else>未选择，列表不展示</text>
+      </view>
+
+      <view class="active-filter-row">
+        <text class="active-filter-label">分类</text>
+        <view class="active-filter-chip-list">
+          <view
+            class="active-filter-chip {{item.removable ? '' : 'active-filter-chip-static'}}"
+            wx:for="{{selectedCategoryChips}}"
+            wx:key="value"
+            data-category="{{item.value}}"
+            bindtap="tapCategoryFilterChip"
+          >
+            <text class="active-filter-chip-text">{{item.label}}</text>
+            <text
+              class="active-filter-chip-remove"
+              wx:if="{{item.removable}}"
+              data-category="{{item.value}}"
+              catchtap="removeCategoryFilter"
+            >
+              ×
+            </text>
+            <text class="active-filter-chip-open" wx:else>›</text>
+          </view>
+        </view>
+      </view>
+    </view>
   </view>
 
   <view class="category-panel-mask" wx:if="{{showCategoryPanel}}" bindtap="closeCategoryPanel">
@@ -155,23 +213,32 @@
         focus="{{showCategoryPanel}}"
       />
 
+      <view class="category-panel-tools">
+        <text class="category-panel-selected">{{categoryPanelSelectedText}}</text>
+        <view class="category-tool-actions">
+          <button class="category-tool-button" bindtap="selectAllCategoryFilters">一键全选</button>
+          <button class="category-tool-button category-reset-button" bindtap="resetCategoryFilters">一键重置</button>
+        </view>
+      </view>
+
       <scroll-view class="category-result-scroll" scroll-y="true">
         <view class="category-result-list" wx:if="{{categorySearchResults.length}}">
           <button
-            class="category-result-button {{categoryFilter === item.value ? 'category-result-button-active' : ''}}"
+            class="category-result-button {{item.selected ? 'category-result-button-active' : ''}}"
             wx:for="{{categorySearchResults}}"
             wx:key="value"
             data-category="{{item.value}}"
-            bindtap="selectCategoryFilter"
+            bindtap="toggleCategoryFilter"
           >
-            {{item.label}}
+            <text class="category-result-label">{{item.label}}</text>
+            <text class="category-result-state" wx:if="{{item.selected}}">已选</text>
           </button>
         </view>
 
         <view class="category-search-empty" wx:else>没有匹配的分类</view>
       </scroll-view>
 
-      <button class="category-cancel-button" bindtap="closeCategoryPanel">取消</button>
+      <button class="category-cancel-button" bindtap="closeCategoryPanel">完成</button>
     </view>
   </view>
 
@@ -214,5 +281,7 @@
     </view>
   </view>
 
-  <view class="empty" wx:else>{{rawFoods.length ? '当前筛选下没有食品' : '暂无食品数据'}}</view>
+  <view class="empty" wx:else>{{emptyText}}</view>
+
+  <view class="back-to-top-fab" wx:if="{{showBackToTop}}" bindtap="scrollToTop">↑</view>
 </view>
