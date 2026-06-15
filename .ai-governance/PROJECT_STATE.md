@@ -46,20 +46,36 @@ As of the latest repository review after PR #7:
 
 Current version: V0.
 
-Current practical status: V0 local version appears largely implemented in code after PR #7, but project governance docs still need synchronization and user/manual verification before declaring V0 complete.
+Current practical status: V0 core local workflow passed user manual acceptance on 2026-06-15.
+
+The user also identified a missing experience feature: food search in the home list.
 
 Current recommended state label:
 
-`V0 local build: code-complete candidate, pending governance/documentation sync and manual acceptance review.`
+`V0 core accepted; V0.1 food search enhancement approved before V1 planning.`
 
-## Known Documentation Drift
+## V0 Acceptance Result
 
-The following drift was observed during bootstrap review:
+User-confirmed acceptance result on 2026-06-15:
 
-- `README.md` still describes the project as early foundation-building, while code already includes V0 local flows.
-- `docs/PHASE_STATUS.md` still labels V0-6 as preparing to start, while PR #7 appears to include V0 local completion work.
-- `docs/PHASE_STATUS.md` still contains older wording about detail display that may no longer match the independent `food-detail` page.
-- `docs/VERSION_ROADMAP.md` states V0 is still being advanced and should be reviewed against the latest implementation.
+- V0 manual acceptance checks passed.
+- The app should not move directly into V1 yet.
+- A V0.1 local search enhancement should be planned first.
+
+## V0.1 Search Enhancement Scope
+
+V0.1 should add local food search without crossing V1 or data-security boundaries.
+
+Recommended scope:
+
+- Add a home-list search entry for food records.
+- Search at minimum by food name.
+- Search may also include category display name, storage method, and notes if the implementation remains simple.
+- Search results must still combine with existing status and category filters.
+- Search results must still sort by `expiryDate`.
+- Empty search results should show a clear elder-friendly message.
+- No new dependency should be introduced unless explicitly approved.
+- Do not introduce cloud database, cloud functions, account system, barcode, OCR, AI, reminders, or multi-device sync.
 
 ## Current Governance Migration State
 
@@ -69,7 +85,8 @@ What is approved:
 
 - `.ai-governance/` becomes the highest governance layer.
 - Existing `docs/*` AI collaboration files are retained as historical governance documents and import evidence.
-- The first writeback targets are `PROJECT_INTAKE.md`, `PROJECT_STATE.md`, `handoff/CURRENT.md`, and `decisions/2026-06.md`.
+- The first writeback targets were `PROJECT_INTAKE.md`, `PROJECT_STATE.md`, `handoff/CURRENT.md`, and `decisions/2026-06.md`.
+- V0.1 food search enhancement should happen before V1 planning.
 
 What is not yet approved:
 
@@ -81,23 +98,20 @@ What is not yet approved:
 
 ## Current Stop Boundaries
 
-- Do not write implementation code during governance bootstrap.
-- Do not ask Codex to modify source files until governance handoff is clear.
-- Do not move into V1 until V0 acceptance and documentation sync are explicitly handled.
+- Do not write implementation code from the Project Governor window.
+- Do not ask Codex to modify source files without a bounded approved task packet or prompt.
+- Do not move into V1 until V0.1 search scope is handled or explicitly deferred by the user.
 - Do not create new RepoMind OS role files before role migration is approved.
 - Do not store secrets, raw private chat transcripts, or unnecessary personal information.
 
 ## Recommended Next Governance Action
 
-Synchronize the old foundation docs with the verified repository state and RepoMind OS hierarchy.
+Prepare the next task as V0.1 food search enhancement.
 
-Suggested target documents for the next approved documentation sync:
+Recommended route:
 
-- `README.md`
-- `docs/PHASE_STATUS.md`
-- `docs/VERSION_ROADMAP.md`
-- possibly `docs/AI_COLLABORATION.md`
-- possibly `docs/ROLE_PROMPTS.md`
-- possibly `docs/DOCUMENT_OWNERSHIP.md`
-
-Do not start implementation work until the user confirms the next documentation-sync scope.
+1. Project Governor records the accepted direction.
+2. Main Brain or Project Governor prepares a bounded V0.1 task packet.
+3. Prompt Architect or codex-task-generator turns it into a Codex prompt or `/goal + require.txt`.
+4. Codex implements only the approved local search scope.
+5. Code review verifies that search combines with filters and preserves `expiryDate` sorting.
