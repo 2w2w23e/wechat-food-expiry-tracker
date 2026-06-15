@@ -19,6 +19,24 @@ state can be restored by reading the governance files again.
 - Memory files record reusable lessons and recurring patterns.
 - Context indexes route each task to the smallest sufficient set of files.
 
+## Repository-Read Rule For Every Role Response
+
+Every AI role must ground each substantive answer in the repository before
+answering.
+
+Before each answer, the role must:
+
+1. read or refresh the minimum required repository files for the current role and
+   task;
+2. include the role file itself when acting as a named role;
+3. use `CONTEXT_INDEX.md` to choose additional files when the task is not obvious;
+4. state briefly what files were read or refreshed;
+5. refuse to rely only on hidden chat memory when repository files are needed.
+
+If the current GPT window cannot access repository files, ask the user to paste
+or provide the needed files before making durable recommendations, role changes,
+Codex prompts, or writeback decisions.
+
 ## GPT Web Window Startup Order
 
 1. Read this file first.
