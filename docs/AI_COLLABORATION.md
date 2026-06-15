@@ -1,18 +1,37 @@
 # AI 协作体系
 
-本文件定义“食期管家”项目中不同 AI 角色、Codex、GitHub 文档和 PR 审核之间的协作方式。
+## 当前状态说明
+
+本仓库已启用 RepoMind OS。
+
+当前最高治理层是：
+
+```text
+.ai-governance/
+```
+
+本文件是旧 AI 协作体系文档，继续保留为历史治理文档和导入证据。
+
+如果本文件与 `.ai-governance/PROJECT_STATE.md`、`.ai-governance/handoff/CURRENT.md`、`.ai-governance/decisions/*` 或后续 `.ai-governance/roles/*` 冲突，以 `.ai-governance/` 为准。
+
+本文件中的旧角色仍可作为工作习惯参考，但不自动等同于 RepoMind OS 下已批准的角色文件。是否迁移到 `.ai-governance/roles/`，需要用户另行确认。
 
 ## 1. 基本原则
 
 1. 用户是项目最终负责人，保留最终产品方向、技术路线、PR 合并和发布决定权。
-2. project-architect 是 AI 协作体系中的最高协调角色，负责大阶段方向、项目地基改进、角色分工和跨阶段交接。
-3. main-brain 负责当前小阶段的细节统筹，不直接越权决定长期方向。
-4. 只有 Codex 可以修改运行时代码；其他 AI 角色只能修改自己权限范围内的文档，或生成交给 Codex 的任务。
-5. 所有涉及代码实现的任务必须通过 `/goal + require.txt` 工作流，并默认使用 `$miniapp-food-expiry`。
-6. OCR、条形码、AI 识别结果必须经过用户确认后保存。
-7. API Key、OCR Key、OpenAI Key、商品库密钥、云开发密钥等敏感信息不得写入小程序前端或公开仓库。
+2. RepoMind OS / Project Governor 是当前最高治理层，负责项目状态、决策、角色迁移、交接和写回。
+3. 旧 project-architect 可作为历史上的项目地基规划角色继续参考，但其权限不得高于 `.ai-governance/`。
+4. main-brain 负责当前阶段或版本内部的细节统筹，不直接越权决定长期方向。
+5. 只有 Codex 可以修改运行时代码；其他 AI 角色只能修改自己权限范围内的文档，或生成交给 Codex 的任务。
+6. 所有涉及代码实现的任务必须通过 `/goal + require.txt` 工作流，并默认使用 `$miniapp-food-expiry`。
+7. OCR、条形码、AI 识别结果必须经过用户确认后保存。
+8. API Key、OCR Key、OpenAI Key、商品库密钥、云开发密钥等敏感信息不得写入小程序前端或公开仓库。
 
-## 2. 角色定义
+## 2. 历史角色定义
+
+以下角色是旧协作体系中的角色定义。它们现在属于历史协作结构和导入证据。
+
+后续如需继续使用这些角色，应通过 RepoMind OS 的角色迁移流程重新确认。
 
 ### 2.1 user
 
@@ -27,7 +46,9 @@
 
 ### 2.2 project-architect
 
-项目大方向规划与地基协调角色。
+历史定位：项目大方向规划与地基协调角色。
+
+当前定位：旧治理体系中的地基规划角色。RepoMind OS 启用后，不再高于 `.ai-governance/`。
 
 职责：
 
@@ -39,21 +60,21 @@
 
 权限：
 
-- 可以修改所有 docs 文档、README.md、AGENTS.md 和 `.agents/skills/**/SKILL.md`。
+- 可以建议或执行 docs 文档同步，但不得与 `.ai-governance/` 冲突。
 - 不能直接修改小程序运行时代码。
-- 可以创建交接文档和角色命令文档。
+- 涉及角色权威、项目方向、V1 进入、云开发、安全边界等事项时，应回到 RepoMind OS / Project Governor。
 
 ### 2.3 main-brain
 
-项目主脑，负责当前小阶段的细节统筹。
+历史定位：项目主脑，负责当前小阶段的细节统筹。
 
 职责：
 
-- 根据 project-architect 给出的阶段方向制定当前小阶段任务。
-- 判断当前小阶段是否结束。
+- 根据版本或阶段方向制定当前阶段内部任务。
+- 判断当前阶段是否结束。
 - 生成给 codex-task-generator 的任务需求。
 - Codex 创建 PR 后，生成给 code-reviewer 的代码审核提示词。
-- 阶段结束时写入阶段交接文档，交还给 project-architect。
+- 阶段结束时写入阶段交接文档，交还给治理窗口。
 
 权限：
 
@@ -68,14 +89,14 @@
 
 职责：
 
-- 根据 main-brain 或 project-architect 的要求更新项目文档。
+- 根据 main-brain、project-architect 或 RepoMind OS 的要求更新项目文档。
 - 保持 README、功能范围、数据模型、阶段状态、决策记录之间一致。
 - 把关键长信息写入 GitHub 文档，减少聊天窗口之间的信息丢失。
 
 权限：
 
 - 可以修改 `README.md` 和 `docs/**/*.md`。
-- 不能修改 `.agents/skills/**/SKILL.md`，除非 project-architect 明确授权。
+- 不能修改 `.agents/skills/**/SKILL.md`，除非 RepoMind OS / Project Governor 明确授权。
 - 不能修改运行时代码。
 
 ### 2.5 codex-task-generator
@@ -84,7 +105,7 @@ Codex 任务生成角色。
 
 职责：
 
-- 把需求拆成小的 Codex 任务。
+- 把需求拆成适合 Codex 的任务。
 - 输出 `/goal` 和 `require.txt`。
 - 确保 `require.txt` 第一行是 `Use $miniapp-food-expiry.`。
 - 明确允许修改文件、禁止修改文件、验收标准和测试方式。
@@ -102,7 +123,7 @@ Codex 任务生成角色。
 职责：
 
 - 根据 `/goal + require.txt` 执行文档或代码修改。
-- 对代码任务进行小范围实现。
+- 对代码任务进行边界清晰、可审查、可回退的实现。
 - 完成后提交 commit 并创建 PR。
 - 在 PR 描述中列出修改内容、测试方式、风险和未覆盖项。
 
@@ -149,19 +170,18 @@ Codex 任务生成角色。
 - 可以建议 documentation-ai 更新学习相关文档。
 - 不能修改运行时代码。
 
-## 3. 标准阶段流程
+## 3. 当前推荐协作流程
 
-1. project-architect 制定大阶段方向。
-2. project-architect 给 main-brain 下一阶段提示词。
-3. main-brain 细化当前小阶段。
-4. main-brain 请求 codex-task-generator 生成 `/goal + require.txt`。
-5. Codex 根据任务修改文件、提交 commit、创建 PR。
-6. main-brain 生成 code-reviewer 审核提示词。
-7. code-reviewer 审查 PR。
-8. documentation-ai 同步相关文档。
-9. main-brain 判断小阶段是否结束。
-10. main-brain 创建交接文件给 project-architect。
-11. project-architect 读取交接文件并决定下一阶段地基改进。
+在 RepoMind OS 启用后，推荐流程调整为：
+
+1. RepoMind OS / Project Governor 维护项目状态、决策、交接和角色迁移。
+2. 用户确认项目方向、版本切换、工具引入和关键安全边界。
+3. main-brain 只在被授权的版本或阶段内部做任务统筹。
+4. codex-task-generator 生成 `/goal + require.txt`。
+5. Codex 按 `require.txt` 修改代码或文档，提交 commit 并创建 PR。
+6. code-reviewer 审查 PR。
+7. documentation-ai 或治理窗口同步文档。
+8. 必要时将结论写入 `.ai-governance/PROJECT_STATE.md`、`handoff/CURRENT.md`、`decisions/*` 或 `memory/*`。
 
 ## 4. PR 流程
 
@@ -181,23 +201,18 @@ Codex 任务生成角色。
 - 引入条形码、OCR、AI、云函数、数据库权限相关能力。
 - 发现关键风险或做出关键技术决策。
 - 主脑判断小阶段结束。
+- RepoMind OS 项目状态或决策发生变化。
 
-文档更新优先交给 documentation-ai。如果涉及 Skill、AGENTS 或 AI 协作规则，必须由 project-architect 审核或直接更新。
+文档更新如涉及 `.ai-governance/`、Skill、AGENTS 或 AI 协作规则，必须由 RepoMind OS / Project Governor 审核或直接更新。
 
 ## 6. 交接规则
 
-阶段交接使用 `docs/ai-handoffs/` 目录。
+旧阶段交接仍可使用 `docs/ai-handoffs/` 目录作为历史兼容方式。
 
-交接文档第一行必须使用状态标签：
-
-```text
-STATUS: UNREAD | TO: project-architect | FROM: main-brain | TYPE: phase-handoff | CREATED: YYYY-MM-DD
-```
-
-读取后改为：
+RepoMind OS 启用后，当前权威交接位置是：
 
 ```text
-STATUS: READ | TO: project-architect | FROM: main-brain | READ_BY: project-architect | READ_AT: YYYY-MM-DD
+.ai-governance/handoff/CURRENT.md
 ```
 
-交接文件只记录阶段总结、关键决策、未完成事项、需要下一个角色处理的任务，不记录普通聊天流水账。
+旧交接文档如需保留，应避免记录普通聊天流水账，只记录阶段总结、关键决策、未完成事项和需要下一个角色处理的任务。
