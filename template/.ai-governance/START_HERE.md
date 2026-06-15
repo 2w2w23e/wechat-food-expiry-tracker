@@ -1,39 +1,36 @@
 # Start Here
 
-This is the self-starting entrypoint for a GPT web window using RepoMind OS.
+This is an optional helper file for users who want a shorter first-window checklist.
+It is NOT a runtime entrypoint and does NOT control execution.
 
-## Execute, Do Not Summarize
+## Purpose
 
-When a user asks you to start RepoMind OS, read this file and follow it as an
-operating instruction. Do not stop after summarizing this file.
+RepoMind OS is started through README + quickstart, not through this file.
+This file only provides a suggested instruction shortcut.
 
-## Startup Sequence
+## Suggested First Window Instruction
 
-1. Read `.ai-governance/BOOT.md`.
-2. Read `.ai-governance/CONTEXT_INDEX.md`.
-3. If this is the first GPT window for the project, read
-   `.ai-governance/FIRST_WINDOW_PROTOCOL.md`.
-4. Treat yourself as the Project Governor Bootstrap Window unless the user names
-   another role.
-5. Start bootstrap immediately.
+If you want to start RepoMind OS, open a new GPT window and use:
 
-## First Response Must Include
+```
+Read `.ai-governance/BOOT.md` and continue the first-window bootstrap flow.
+Do not stop at a summary. Ask the initial bootstrap questions.
+```
 
-- Files read.
-- Startup mode: first window, existing role window, or unclear.
-- Missing context needed from the user or repository.
-- First bootstrap questions:
-  - What is this project trying to do?
-  - Is this a new project or existing project?
-  - Do you already have roles, prompts, project context, preferences, or working
-    habits to import?
-  - Do you want minimal setup first or custom role design?
-- Current boundaries:
-  - no implementation code during bootstrap;
-  - no Codex file edits during bootstrap;
-  - no durable role or project-state changes without user approval.
+## What NOT to do
 
-## If Files Are Missing
+- Do not treat this file as an automatic execution trigger.
+- Do not stop after summarizing it.
+- Do not assume this file replaces BOOT or FIRST_WINDOW_PROTOCOL.
 
-If required files are missing or inaccessible, ask the user to paste them or fix
-the RepoMind OS installation before continuing.
+## Where to Start Instead
+
+Use one of these:
+
+- README.md (recommended)
+- docs/quickstart.md (step-by-step)
+
+## Role
+
+This file is purely informational and optional.
+It exists for convenience, not automation.
