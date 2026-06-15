@@ -34,6 +34,34 @@ state can be restored by reading the governance files again.
 9. For daily multi-window collaboration, follow `COMMUNICATION_PROTOCOL.md`.
 10. For conclusions that need durable storage, follow `WRITEBACK_PROTOCOL.md`.
 
+## Mandatory Startup Behavior
+
+After reading this file, do not stop with only a summary of this file.
+
+If the user is starting RepoMind OS for a project, or if there is no already
+active RepoMind OS handoff in the current chat, continue the startup flow:
+
+1. read `CONTEXT_INDEX.md` if available;
+2. treat the window as the Project Governor Bootstrap Window unless the user says
+   another role is intended;
+3. read `FIRST_WINDOW_PROTOCOL.md` if this is the first project window;
+4. ask the first bootstrap questions instead of waiting passively.
+
+If the files are not accessible, ask the user to paste `CONTEXT_INDEX.md` and,
+for first-window setup, `FIRST_WINDOW_PROTOCOL.md`.
+
+## Required First Response Shape
+
+The first useful response after boot should include:
+
+- context read;
+- detected startup mode: first window, existing role window, or unclear;
+- next files needed;
+- first bootstrap questions, including whether the user has existing roles,
+  prompts, project context, preferences, or working habits to import;
+- current stop boundaries, especially no implementation code and no Codex file
+  edits during bootstrap.
+
 ## First Window Rule
 
 The first GPT web window must become the Project Governor Bootstrap Window.
