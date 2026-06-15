@@ -4,6 +4,20 @@
 
 项目后续会逐步探索条形码识别、商品信息查询、规则化智能提醒、OCR / AI 信息确认、大模型对话和基于库存的食谱建议。但这些能力必须建立在稳定的数据模型、用户确认流程和安全边界之上。
 
+## 当前治理状态
+
+本仓库已启用 RepoMind OS。
+
+当前最高治理层是：
+
+```text
+.ai-governance/
+```
+
+旧的 `docs/AI_COLLABORATION.md`、`docs/ROLE_PROMPTS.md`、`docs/CODEX_WORKFLOW.md`、`docs/DOCUMENT_OWNERSHIP.md`、`docs/TOOL_AND_SKILL_POLICY.md` 等文档仍然保留，用作历史治理文档和导入证据。
+
+如果 `.ai-governance/` 与旧 `docs/*` 治理文档发生冲突，以 `.ai-governance/` 为准。
+
 ## 项目目标
 
 本项目计划实现：
@@ -19,40 +33,49 @@
 - 第二阶段探索条形码扫描与商品信息查询，结果必须经用户确认后保存
 - 后续探索 OCR / AI 信息抽取、大模型对话和食谱建议
 
-## MVP 优先级
+## 当前版本状态
 
-第一阶段优先完成：
+当前版本：V0 手动食品库存 MVP。
 
-1. 项目初始化
-2. 食品数据模型
-3. 日期计算工具函数
-4. 手动录入页面
-5. 食品列表页面
-6. 分类、数量和剩余数量字段
-7. 到期状态显示
-8. 基础排序和筛选
-9. 简单总览统计
-10. 本地数据或云数据库保存
+当前状态：V0 本地版代码完成候选，等待文档同步、人工验收和是否进入 V1 的项目级确认。
 
-第二阶段再考虑：
+已具备的 V0 本地版能力：
 
-1. 云数据库用户隔离
-2. 云函数
-3. 规则化智能提醒
-4. 便捷修改剩余数量
-5. 条形码扫描入口
-6. 商品信息查询
-7. 查询结果确认页
+1. 日期计算工具函数。
+2. 食品数据结构和本地模拟数据。
+3. 首页食品列表。
+4. 按 `expiryDate` 排序。
+5. 到期状态显示。
+6. 手动新增食品。
+7. 独立食品详情页。
+8. 编辑食品。
+9. 删除食品。
+10. 状态和分类筛选。
+11. 基础统计。
+12. 微信小程序本地存储。
+13. 示例数据加载入口。
+14. 页面提示用户当前数据保存在本机小程序内，暂不支持多设备同步。
 
-后续阶段再考虑：
+V0 仍需确认：
 
-1. OCR / AI 信息抽取
-2. 大模型对话
-3. 基于库存的食谱规划
-4. 批量管理
-5. 数据导出
-6. UI 优化
-7. 体验版测试和发布
+- 微信开发者工具中的完整人工验收。
+- README、阶段状态、路线图等地基文档同步。
+- 是否把 V0 标记为完成。
+- 是否进入 V1：云端数据与提醒基础。
+
+## 版本路线
+
+V0：手动食品库存 MVP。
+
+V1：云端数据与提醒基础。
+
+V2：条形码与省力录入。
+
+V3：OCR / AI 识别确认流。
+
+V4：AI 对话与食谱建议。
+
+V5：发布、优化与家庭协作。
 
 ## 技术方向
 
@@ -66,6 +89,8 @@
 - 云数据库
 - 云函数
 
+当前 V0 本地版暂不启用云开发。云数据库、云函数、用户隔离、订阅消息和提醒调度应在 V1 前由 RepoMind OS / Project Governor 重新评估。
+
 ## 重要原则
 
 - 最终可食用日期 `expiryDate` 是排序和提醒的核心字段。
@@ -77,6 +102,15 @@
 
 ## 项目文档
 
+### RepoMind OS 治理
+
+- `.ai-governance/BOOT.md`：RepoMind OS 启动协议
+- `.ai-governance/CONTEXT_INDEX.md`：上下文路由索引
+- `.ai-governance/PROJECT_INTAKE.md`：项目导入记录
+- `.ai-governance/PROJECT_STATE.md`：当前已验证项目状态
+- `.ai-governance/handoff/CURRENT.md`：当前交接状态
+- `.ai-governance/decisions/2026-06.md`：2026 年 6 月治理决策记录
+
 ### 产品与数据
 
 - `docs/FEATURE_SCOPE.md`：新版功能范围和阶段边界
@@ -84,36 +118,35 @@
 - `docs/project-brief.md`：项目简报
 - `docs/decision-log.md`：关键决策记录
 - `docs/learning-map.md`：学习地图
+- `docs/VERSION_ROADMAP.md`：版本路线图
+- `docs/PHASE_STATUS.md`：当前阶段状态
 
-### AI 协作与 Codex
+### 历史 AI 协作与 Codex 文档
 
 - `AGENTS.md`：给 Codex / AI 编码助手的仓库规则
 - `.agents/skills/miniapp-food-expiry/SKILL.md`：食期管家项目专属 Codex Skill
 - `docs/CODEX_WORKFLOW.md`：Codex 的 `/goal + require.txt` 工作流
-- `docs/AI_COLLABORATION.md`：AI 角色协作体系
+- `docs/AI_COLLABORATION.md`：历史 AI 角色协作体系
 - `docs/DOCUMENT_OWNERSHIP.md`：文档与代码修改权限
 - `docs/TOOL_AND_SKILL_POLICY.md`：工具和 Skill 引入策略
 - `docs/TOOL_RESEARCH.md`：工具与开源项目调研
 - `docs/SUPERPOWERS_REFERENCE.md`：Superpowers 方法论参考
-- `docs/PHASE_STATUS.md`：当前阶段状态
-- `docs/ROLE_PROMPTS.md`：各 AI 角色提示词
-- `docs/ai-handoffs/README.md`：AI 角色交接协议
+- `docs/ROLE_PROMPTS.md`：历史 AI 角色提示词
+- `docs/ai-handoffs/README.md`：旧 AI 角色交接协议
 
-## 当前状态
+## 当前不做
 
-项目处于早期地基搭建阶段。当前重点是建立清晰的文档、AI 协作规则、Codex 工作流和权限边界，再逐步进入小程序功能开发。
+当前不要直接进入以下实现：
 
-当前已完成：
+- V1 云数据库实现
+- 云函数实现
+- 用户账号或 openid 隔离实现
+- 多设备同步
+- 条形码扫描
+- 商品信息查询
+- OCR / AI 信息抽取
+- 提醒调度
+- 订阅消息
+- 新依赖或新 Skill 引入
 
-- 小程序最小可运行骨架
-- 功能范围文档
-- 数据模型文档
-- Codex 工作流文档
-- AI 协作体系文档
-- 文档与代码修改权限说明
-- 工具与 Skill 引入策略
-- 工具与开源项目调研
-- Superpowers 方法论参考
-- 阶段状态文档
-- AI 角色提示词文档
-- AI 角色交接协议
+这些能力需要在 V0 验收和治理文档同步后，重新由 RepoMind OS 进行项目级评估。
