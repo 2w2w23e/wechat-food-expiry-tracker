@@ -43,14 +43,59 @@ Codex prompts, or writeback decisions.
 2. Read `CONTEXT_INDEX.md` to choose the minimum required context.
 3. If this is the first GPT window for the project, enter
    `FIRST_WINDOW_PROTOCOL.md` before doing any other work.
-4. Read only the files required for the current task.
-5. State what context was read before making a recommendation or asking Codex
-   to perform work.
-6. For major judgments, follow `THINKING_PROTOCOL.md`.
-7. For imported prior context, follow `CONTEXT_IMPORT_PROTOCOL.md`.
-8. For new roles or role changes, follow `ROLE_CREATION_PROTOCOL.md`.
-9. For daily multi-window collaboration, follow `COMMUNICATION_PROTOCOL.md`.
-10. For conclusions that need durable storage, follow `WRITEBACK_PROTOCOL.md`.
+4. Read `COORDINATION_GRAPH.md` when deciding state transitions, role routing,
+   handoff, or execution eligibility.
+5. Read only the files required for the current task.
+6. Output the Context Refresh Header before making a recommendation, routing
+   work, or asking Codex to perform work.
+7. For major judgments, follow `THINKING_PROTOCOL.md`.
+8. For imported prior context, follow `CONTEXT_IMPORT_PROTOCOL.md`.
+9. For existing roles, prompts, agent rules, or working habits, follow
+   `ROLE_INTEGRATION_PROTOCOL.md`.
+10. For new roles or role changes, follow `ROLE_CREATION_PROTOCOL.md`.
+11. For daily multi-window collaboration, follow `COMMUNICATION_PROTOCOL.md`.
+12. For conclusions that need durable storage, follow `WRITEBACK_PROTOCOL.md`.
+
+## Context Refresh Header
+
+Before every substantive answer, each AI role must refresh the minimum necessary
+repository context for that answer.
+
+At the start of the answer, state what was refreshed:
+
+```text
+Context refreshed:
+- Role/protocol files read: ...
+- Long-term memory read: ...
+- Project files sampled: ...
+- Experience / anti-pattern lookup: ...
+```
+
+Long-term memory includes `PROJECT_STATE.md`, `PROJECT_INTAKE.md`,
+`handoff/CURRENT.md`, `memory/*`, `decisions/*`, `user_preferences/*`, and any
+other durable governance file used as project memory.
+
+If any long-term memory file was read, list each file. If a listed file is empty,
+say it was empty.
+
+If no long-term memory file was read for this answer, say:
+
+```text
+Long-term memory read: none for this answer
+```
+
+If a long-term memory path was checked and no content was available, say:
+
+```text
+Long-term memory read: checked but empty
+```
+
+Experience / anti-pattern lookup includes relevant `memory/*`, `decisions/*`,
+`anti_patterns/*`, and role-specific experience notes. If none was checked, say
+so.
+
+Do not imply repository memory was preserved unless the relevant files were
+actually read for the current answer.
 
 ## Mandatory Startup Behavior
 
@@ -103,6 +148,8 @@ It must not:
   collaborate on role work.
 - Use `WRITEBACK_PROTOCOL.md` before turning temporary chat output into durable
   repository state.
+- Before routing to Codex, testing, implementation, or validation, check the
+  Coordination Graph state.
 - Do not store secrets, tokens, private chat transcripts, or unnecessary
   personal information in the repository.
 - When a window is about to end, leave durable handoff information in the
