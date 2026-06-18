@@ -14,10 +14,55 @@ the goal is to read the right files.
 - Use this index to choose task-specific context.
 - Read project files only when the task requires repository evidence.
 - Do not treat this index as project state; it is a routing table.
+- Wildcard routes mean discover candidates first, then read only relevant files.
+- Do not silently expand to every file unless the task explicitly requires a
+  full audit.
 - If this index is stale, propose an update and ask for approval before relying
   on the new route.
 
 ## Task Routes
+
+### First-window Bootstrap
+
+Read:
+
+- `BOOT.md`
+- `CONTEXT_INDEX.md`
+- `FIRST_WINDOW_PROTOCOL.md`
+- `COORDINATION_GRAPH.md`
+- `roles/PROJECT_GOVERNOR.md`
+- `PROJECT_INTAKE.md`
+- `PROJECT_STATE.md`
+- `handoff/CURRENT.md`
+
+If existing roles, old prompts, `AGENTS.md`, AI rules, or role-specific user
+preferences or working habits that define role behavior are found, continue
+with:
+
+- `ROLE_INTEGRATION_PROTOCOL.md`
+- `ROLE_CREATION_PROTOCOL.md`
+- `CONTEXT_IMPORT_PROTOCOL.md`
+- `roles/*`
+- role-specific files under `user_preferences/*`
+- `memory/*`
+- `decisions/*`
+- `anti_patterns/*`
+
+Use when the first GPT window starts RepoMind OS for a new or existing project.
+
+### Coordination Graph / State Transition
+
+Read:
+
+- `BOOT.md`
+- `COORDINATION_GRAPH.md`
+- `FIRST_WINDOW_PROTOCOL.md`, if in bootstrap
+- `PROJECT_STATE.md`
+- `handoff/CURRENT.md`
+- relevant role files
+
+Use when deciding whether the system may move from foundation work to execution,
+testing, Codex, role routing, or writeback.
 
 ### Project Intake
 
@@ -37,6 +82,7 @@ Read:
 
 - `BOOT.md`
 - `CONTEXT_IMPORT_PROTOCOL.md`
+- `ROLE_INTEGRATION_PROTOCOL.md`, if roles or prompts are being imported
 - `PROJECT_STATE.md`
 - `handoff/CURRENT.md`
 - `memory/INDEX.md`
@@ -45,6 +91,24 @@ Read:
 
 Use when the user provides prior GPT summaries, old prompts, old roles, Codex
 reports, project plans, README files, PR records, or similar sources.
+
+### Role Integration
+
+Read:
+
+- `BOOT.md`
+- `ROLE_INTEGRATION_PROTOCOL.md`
+- `ROLE_CREATION_PROTOCOL.md`
+- `PROJECT_STATE.md`
+- `PROJECT_INTAKE.md`
+- existing `roles/*`
+- `AGENTS.md`, if present
+- role-specific files under `user_preferences/*`
+- `handoff/CURRENT.md`
+
+Use when existing roles, legacy prompts, AI rules, agent instructions,
+role-specific user preferences, or working habits that define role behavior must
+be preserved, wrapped, merged, or deprecated before execution.
 
 ### Daily Role Communication
 
@@ -172,6 +236,21 @@ Read:
 
 Use when recording reusable lessons, recurring risks, project patterns, or
 anti-patterns.
+
+### Failure / Repeated Problem
+
+Read first:
+
+- `handoff/CURRENT.md`
+- `memory/*`
+- `decisions/*`
+- `anti_patterns/*`
+- `PROJECT_STATE.md`
+
+Then read source files or project files needed to verify the issue.
+
+Use when the same failure, confusion, regression, or process problem appears
+again.
 
 ## Escalation
 
