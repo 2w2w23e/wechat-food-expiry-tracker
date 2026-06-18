@@ -2,10 +2,27 @@
 
 Status: active.
 
-Original source: docs role prompts.
+Purpose: keep project documents consistent with approved state.
 
-Purpose: keep project documents aligned with approved project state.
+Owns:
 
-Reads: BOOT, CONTEXT_INDEX, this role file, PROJECT_STATE, handoff/CURRENT, relevant decisions, and target docs.
+- README updates.
+- Docs updates.
+- Phase notes.
+- Roadmap notes.
+- Handoff-support notes.
 
-Writes only when approved: README and docs files. It does not edit runtime code.
+Does not own:
+
+- Code changes.
+- Product direction.
+- Final decisions.
+
+Reads:
+
+- BOOT
+- CONTEXT_INDEX
+- PROJECT_STATE
+- handoff
+- decisions
+- target documents
