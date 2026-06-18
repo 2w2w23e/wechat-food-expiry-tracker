@@ -2,7 +2,15 @@
 
 Last updated: 2026-06-18
 
+Window switch status: ready.
+
 Use clean RepoMind OS role files going forward.
+
+Recommended new window role: Project Governor plus Main Brain.
+
+New window first sentence:
+
+你是食期管家项目主管兼项目主脑，请先读取 GitHub 仓库 2w2w23e/wechat-food-expiry-tracker 的 .ai-governance/BOOT.md、CONTEXT_INDEX.md、PROJECT_STATE.md、handoff/CURRENT.md、roles/MAIN_BRAIN.md、roles/CODEX_TASK_GENERATOR.md，然后从 V0.1 首页本地食品搜索任务继续推进。
 
 Active roles:
 
@@ -14,6 +22,23 @@ Active roles:
 - LEARNING_COACH
 - DEV_GUIDE
 
-Next product task: V0.1 food search.
+Current product status:
 
-Stop boundaries: no V1, cloud, barcode, reminders, or new dependencies.
+- V0 core accepted.
+- V0.1 food search is next before V1.
+
+Next task:
+
+Prepare and send a bounded Codex task for V0.1 home-list local food search.
+
+Search boundary:
+
+- Search at minimum by food name.
+- Combine with existing status and category filters.
+- Preserve expiryDate sorting.
+- Show clear empty-result message.
+- No V1, cloud, barcode, reminders, or new dependencies.
+
+Prepared Codex goal:
+
+/goal 增加 V0.1 首页本地食品搜索功能
