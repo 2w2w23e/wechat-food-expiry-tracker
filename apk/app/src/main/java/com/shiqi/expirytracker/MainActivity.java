@@ -2,6 +2,7 @@ package com.shiqi.expirytracker;
 
 import android.app.Activity;
 import android.app.AlertDialog;
+import android.app.DatePickerDialog;
 import android.content.DialogInterface;
 import android.content.res.ColorStateList;
 import android.graphics.Color;
@@ -15,6 +16,7 @@ import android.view.Window;
 import android.widget.AdapterView;
 import android.widget.ArrayAdapter;
 import android.widget.Button;
+import android.widget.DatePicker;
 import android.widget.EditText;
 import android.widget.LinearLayout;
 import android.widget.ScrollView;
@@ -25,8 +27,11 @@ import android.widget.Toast;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.Comparator;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Locale;
+import java.util.Set;
+import java.util.TimeZone;
 
 public final class MainActivity extends Activity {
     private static final int COLOR_BG = Color.rgb(246, 247, 242);
@@ -49,6 +54,7 @@ public final class MainActivity extends Activity {
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
+        TimeZone.setDefault(TimeZone.getTimeZone("Asia/Shanghai"));
 
         Window window = getWindow();
         window.setStatusBarColor(COLOR_BG);
@@ -365,15 +371,32 @@ public final class MainActivity extends Activity {
     }
 
     private void loadSampleFoods() {
-        if (!foods.isEmpty()) {
-            toast("已有食品记录，示例数据不会覆盖");
+        Set<String> existingIds = new HashSet<String>();
+        for (FoodItem food : foods) {
+            if (food.id != null && food.id.length() > 0) {
+                existingIds.add(food.id);
+            }
+        }
+
+        int added = 0;
+        List<FoodItem> mergedFoods = new ArrayList<FoodItem>(foods);
+        for (FoodItem sample : FoodData.sampleFoods()) {
+            if (!existingIds.contains(sample.id)) {
+                mergedFoods.add(sample.copy());
+                existingIds.add(sample.id);
+                added++;
+            }
+        }
+
+        if (added == 0) {
+            toast("示例数据已存在，未覆盖已有数据");
             return;
         }
 
-        foods = FoodData.sampleFoods();
+        foods = mergedFoods;
         store.saveFoods(foods);
         renderFoods();
-        toast("已加载示例数据");
+        toast("已合并 " + added + " 条示例数据");
     }
 
     private void showFoodDetail(final FoodItem food) {
@@ -432,44 +455,48 @@ public final class MainActivity extends Activity {
         final Spinner storageInput = spinner(FoodData.STORAGE_METHODS);
         storageInput.setSelection(indexOf(FoodData.STORAGE_METHODS, draft.storageMethod, "room_temp"));
 
-        final EditText productionDateInput = input(draft.productionDate, "生产日期 YYYY-MM-DD", InputType.TYPE_CLASS_DATETIME);
+        final EditText productionDateInput = dateInput(validDateOrEmpty(draft.productionDate), "点击选择生产日期");
         final EditText shelfLifeInput = input(draft.shelfLifeValue == null ? "" : String.valueOf(draft.shelfLifeValue), "保质期数值", InputType.TYPE_CLASS_NUMBER);
         final Spinner shelfLifeUnitInput = spinner(FoodData.SHELF_LIFE_UNITS);
         shelfLifeUnitInput.setSelection(indexOf(FoodData.SHELF_LIFE_UNITS, draft.shelfLifeUnit, "day"));
 
-        final EditText expiryDateInput = input(draft.expiryDate, "最终可食用日期 YYYY-MM-DD", InputType.TYPE_CLASS_DATETIME);
+        String manualExpiryValue = "manual".equals(draft.dateSource) ? validDateOrEmpty(draft.expiryDate) : "";
+        final EditText expiryDateInput = dateInput(manualExpiryValue, "点击选择最终可食用日期");
         final EditText notesInput = input(draft.notes, "备注", InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_FLAG_MULTI_LINE);
         notesInput.setMinLines(2);
+        notesInput.setGravity(android.view.Gravity.TOP);
 
         LinearLayout form = new LinearLayout(this);
         form.setOrientation(LinearLayout.VERTICAL);
-        form.setPadding(dp(4), dp(4), dp(4), dp(4));
-        form.addView(label("食品名称"), matchWrap());
-        form.addView(nameInput, matchWrap());
-        form.addView(label("分类"), matchWrap());
-        form.addView(categoryInput, matchWrap());
-        form.addView(label("数量"), matchWrap());
-        form.addView(quantityInput, matchWrap());
-        form.addView(label("剩余数量"), matchWrap());
-        form.addView(remainingInput, matchWrap());
-        form.addView(label("单位"), matchWrap());
-        form.addView(unitInput, matchWrap());
-        form.addView(label("保存方式"), matchWrap());
-        form.addView(storageInput, matchWrap());
-        form.addView(label("生产日期 + 保质期"), matchWrap());
-        form.addView(productionDateInput, matchWrap());
-        form.addView(shelfLifeInput, matchWrap());
-        form.addView(shelfLifeUnitInput, matchWrap());
-        form.addView(label("最终可食用日期"), matchWrap());
-        form.addView(expiryDateInput, matchWrap());
-        form.addView(label("备注"), matchWrap());
-        form.addView(notesInput, matchWrap());
+        form.setPadding(dp(16), dp(12), dp(16), dp(16));
+        form.setBackgroundColor(COLOR_BG);
 
-        TextView hint = text("可直接填写最终可食用日期；如果不填写，则使用生产日期 + 保质期计算。", 13, COLOR_MUTED, Typeface.NORMAL);
-        hint.setPadding(0, dp(8), 0, 0);
-        form.addView(hint, matchWrap());
+        form.addView(sectionTitle("基础信息"), matchWrap());
+        addFormField(form, "食品名称", nameInput);
+        addFormField(form, "分类", categoryInput);
+        addFormField(form, "保存方式", storageInput);
+
+        form.addView(sectionTitle("库存数量"), withMargins(matchWrap(), 0, dp(10), 0, 0));
+        addFormField(form, "数量", quantityInput);
+        addFormField(form, "剩余数量", remainingInput);
+        addFormField(form, "单位", unitInput);
+
+        form.addView(sectionTitle("日期"), withMargins(matchWrap(), 0, dp(10), 0, 0));
+        addFormField(form, "生产日期", datePickerRow(productionDateInput));
+        addFormField(form, "保质期数值", shelfLifeInput);
+        addFormField(form, "保质期单位", shelfLifeUnitInput);
+        addFormField(form, "手动最终可食用日期（可选）", datePickerRow(expiryDateInput));
+
+        TextView hint = text("不选择手动最终日期时，保存会使用生产日期 + 保质期计算。", 13, COLOR_MUTED, Typeface.NORMAL);
+        hint.setPadding(dp(12), dp(10), dp(12), dp(10));
+        hint.setBackground(rounded(Color.rgb(239, 244, 235), dp(8), 0));
+        form.addView(hint, withMargins(matchWrap(), 0, dp(8), 0, dp(6)));
+
+        form.addView(sectionTitle("备注"), withMargins(matchWrap(), 0, dp(10), 0, 0));
+        addFormField(form, "备注", notesInput);
 
         ScrollView scrollView = new ScrollView(this);
+        scrollView.setBackgroundColor(COLOR_BG);
         scrollView.addView(form);
 
         final AlertDialog dialog = new AlertDialog.Builder(this)
@@ -520,6 +547,13 @@ public final class MainActivity extends Activity {
         });
 
         dialog.show();
+        dialog.getButton(AlertDialog.BUTTON_POSITIVE).setTextColor(COLOR_PRIMARY);
+        dialog.getButton(AlertDialog.BUTTON_NEGATIVE).setTextColor(COLOR_MUTED);
+        Window dialogWindow = dialog.getWindow();
+        if (dialogWindow != null) {
+            int dialogWidth = getResources().getDisplayMetrics().widthPixels - dp(24);
+            dialogWindow.setLayout(dialogWidth, ViewGroup.LayoutParams.WRAP_CONTENT);
+        }
     }
 
     private FoodItem buildFoodFromForm(
@@ -572,7 +606,7 @@ public final class MainActivity extends Activity {
 
         if (manualExpiryDate.length() > 0) {
             if (!DateRules.isValidDateString(manualExpiryDate)) {
-                toast("最终可食用日期格式不正确，请使用 YYYY-MM-DD");
+                toast("最终可食用日期异常，请重新选择");
                 return null;
             }
             expiryDate = manualExpiryDate;
@@ -580,7 +614,7 @@ public final class MainActivity extends Activity {
         } else {
             expiryDate = DateRules.addShelfLife(productionDate, shelfLifeValue, shelfLifeUnit);
             if (expiryDate.length() == 0) {
-                toast("请填写最终可食用日期，或填写生产日期和保质期");
+                toast("请选择最终可食用日期，或选择生产日期并填写保质期");
                 return null;
             }
             dateSource = "calculated";
@@ -593,7 +627,7 @@ public final class MainActivity extends Activity {
         item.category = selectedOption(FoodData.CATEGORIES, categoryInput);
         item.quantity = quantity.doubleValue();
         item.remainingQuantity = remaining.doubleValue();
-        item.unit = clean(unitInput).length() > 0 ? clean(unitInput) : "piece";
+        item.unit = clean(unitInput).length() > 0 ? clean(unitInput) : "件";
         item.storageMethod = selectedOption(FoodData.STORAGE_METHODS, storageInput);
         item.productionDate = productionDate;
         item.shelfLifeValue = shelfLifeValue;
@@ -654,7 +688,13 @@ public final class MainActivity extends Activity {
 
     private TextView label(String value) {
         TextView view = text(value, 13, COLOR_MUTED, Typeface.BOLD);
-        view.setPadding(0, dp(10), 0, dp(4));
+        view.setPadding(0, dp(8), 0, dp(4));
+        return view;
+    }
+
+    private TextView sectionTitle(String value) {
+        TextView view = text(value, 16, COLOR_TEXT, Typeface.BOLD);
+        view.setPadding(0, dp(4), 0, dp(4));
         return view;
     }
 
@@ -684,6 +724,28 @@ public final class MainActivity extends Activity {
         editText.setHint(hint);
         editText.setSingleLine((inputType & InputType.TYPE_TEXT_FLAG_MULTI_LINE) == 0);
         editText.setInputType(inputType);
+        editText.setTextSize(15);
+        editText.setTextColor(COLOR_TEXT);
+        editText.setHintTextColor(Color.rgb(128, 139, 128));
+        editText.setMinHeight(dp(48));
+        editText.setPadding(dp(12), 0, dp(12), 0);
+        editText.setBackground(rounded(COLOR_CARD, dp(8), COLOR_LINE));
+        return editText;
+    }
+
+    private EditText dateInput(String value, String hint) {
+        final EditText editText = input(value, hint, InputType.TYPE_NULL);
+        editText.setFocusable(false);
+        editText.setFocusableInTouchMode(false);
+        editText.setCursorVisible(false);
+        editText.setCompoundDrawablesWithIntrinsicBounds(0, 0, android.R.drawable.ic_menu_my_calendar, 0);
+        editText.setCompoundDrawablePadding(dp(8));
+        editText.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View view) {
+                showDatePicker(editText);
+            }
+        });
         return editText;
     }
 
@@ -696,7 +758,55 @@ public final class MainActivity extends Activity {
         adapter.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item);
         Spinner spinner = new Spinner(this);
         spinner.setAdapter(adapter);
+        spinner.setMinimumHeight(dp(48));
+        spinner.setPadding(dp(8), 0, dp(8), 0);
+        spinner.setBackground(rounded(COLOR_CARD, dp(8), COLOR_LINE));
         return spinner;
+    }
+
+    private void addFormField(LinearLayout form, String label, View field) {
+        form.addView(label(label), matchWrap());
+        form.addView(field, matchWrap());
+    }
+
+    private LinearLayout datePickerRow(final EditText dateField) {
+        LinearLayout row = new LinearLayout(this);
+        row.setOrientation(LinearLayout.HORIZONTAL);
+        row.setGravity(android.view.Gravity.CENTER_VERTICAL);
+        row.addView(dateField, withMargins(weightWrap(1), 0, 0, dp(8), 0));
+
+        Button clear = outlineButton("清除");
+        clear.setMinWidth(dp(72));
+        clear.setMinHeight(dp(48));
+        clear.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View view) {
+                dateField.setText("");
+            }
+        });
+        row.addView(clear, wrapWrap());
+        return row;
+    }
+
+    private void showDatePicker(final EditText target) {
+        DateParts selected = parseDateForPicker(clean(target));
+        if (selected == null) {
+            selected = parseDateForPicker(DateRules.getTodayString());
+        }
+
+        DatePickerDialog picker = new DatePickerDialog(
+                this,
+                new DatePickerDialog.OnDateSetListener() {
+                    @Override
+                    public void onDateSet(DatePicker datePicker, int year, int monthOfYear, int dayOfMonth) {
+                        target.setText(String.format(Locale.US, "%04d-%02d-%02d", year, monthOfYear + 1, dayOfMonth));
+                    }
+                },
+                selected.year,
+                selected.month - 1,
+                selected.day
+        );
+        picker.show();
     }
 
     private List<String> labels(List<Option> options) {
@@ -762,7 +872,11 @@ public final class MainActivity extends Activity {
         }
 
         try {
-            return Double.valueOf(value);
+            Double parsed = Double.valueOf(value);
+            if (parsed.isNaN() || parsed.isInfinite()) {
+                return null;
+            }
+            return parsed;
         } catch (NumberFormatException ignored) {
             return null;
         }
@@ -800,6 +914,23 @@ public final class MainActivity extends Activity {
         return text.length() == 0 ? fallback : text;
     }
 
+    private String validDateOrEmpty(String value) {
+        String text = FoodItem.cleanText(value);
+        return DateRules.isValidDateString(text) ? text : "";
+    }
+
+    private DateParts parseDateForPicker(String value) {
+        if (!DateRules.isValidDateString(value)) {
+            return null;
+        }
+
+        return new DateParts(
+                Integer.parseInt(value.substring(0, 4)),
+                Integer.parseInt(value.substring(5, 7)),
+                Integer.parseInt(value.substring(8, 10))
+        );
+    }
+
     private String formatNumber(double value) {
         if (Math.rint(value) == value) {
             return String.format(Locale.US, "%.0f", value);
@@ -809,5 +940,17 @@ public final class MainActivity extends Activity {
 
     private void toast(String message) {
         Toast.makeText(this, message, Toast.LENGTH_SHORT).show();
+    }
+
+    private static final class DateParts {
+        final int year;
+        final int month;
+        final int day;
+
+        DateParts(int year, int month, int day) {
+            this.year = year;
+            this.month = month;
+            this.day = day;
+        }
     }
 }
