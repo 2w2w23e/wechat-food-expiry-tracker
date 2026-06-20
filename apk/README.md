@@ -21,12 +21,12 @@ apk/build/outputs/apk/shiqi-android-debug.apk
 - 食品列表展示
 - 新增、编辑、删除食品
 - 生产日期 + 保质期计算 `expiryDate`（最终可食用日期字段）
-- 直接手动填写 `expiryDate`
+- 通过日期选择器手动选择 `expiryDate`
 - 按 `expiryDate` 排序
 - 到期状态显示
 - 状态筛选和分类筛选
-- 主动加载示例数据
-- Android 本地存储
+- 主动合并示例数据，不覆盖已有记录
+- Android 本地存储，保存时同步写入本机 SharedPreferences
 
 ## 当前不做
 

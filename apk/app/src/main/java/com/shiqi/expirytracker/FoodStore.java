@@ -34,6 +34,7 @@ final class FoodStore {
                 JSONObject object = array.optJSONObject(index);
                 if (object != null) {
                     FoodItem item = FoodItem.fromJson(object);
+                    normalizeLoadedItem(item);
                     if (item.id.length() > 0 && item.name.length() > 0) {
                         foods.add(item);
                     }
@@ -50,6 +51,9 @@ final class FoodStore {
         JSONArray array = new JSONArray();
 
         for (FoodItem item : foods) {
+            if (item == null) {
+                continue;
+            }
             try {
                 array.put(item.toJson());
             } catch (JSONException ignored) {
@@ -57,6 +61,30 @@ final class FoodStore {
             }
         }
 
-        preferences.edit().putString(STORAGE_KEY, array.toString()).apply();
+        preferences.edit().putString(STORAGE_KEY, array.toString()).commit();
+    }
+
+    private void normalizeLoadedItem(FoodItem item) {
+        if (item.quantity < 0 || Double.isNaN(item.quantity) || Double.isInfinite(item.quantity)) {
+            item.quantity = 1;
+        }
+
+        if (item.remainingQuantity < 0
+                || Double.isNaN(item.remainingQuantity)
+                || Double.isInfinite(item.remainingQuantity)) {
+            item.remainingQuantity = item.quantity;
+        }
+
+        if (item.remainingQuantity > item.quantity) {
+            item.remainingQuantity = item.quantity;
+        }
+
+        if (item.unit.length() == 0 || "piece".equals(item.unit)) {
+            item.unit = "件";
+        }
+
+        if (item.storageMethod.length() == 0) {
+            item.storageMethod = "room_temp";
+        }
     }
 }
