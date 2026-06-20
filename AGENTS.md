@@ -2,7 +2,7 @@
 
 ## Project
 
-This repository contains a WeChat Mini Program named “食期管家”, a food expiry tracker for recording food production date, shelf life, final edible date, storage method, quantity, category, notes, sorting, reminders, and future OCR recognition.
+This repository contains “食期管家”, a food expiry tracker for recording food production date, shelf life, final edible date, storage method, quantity, category, notes, sorting, reminders, and future OCR recognition. The project is temporarily focused on Android APK development under `apk/`; the previously accepted WeChat Mini Program is archived under `miniprogram/`.
 
 ## Product principles
 
@@ -19,10 +19,11 @@ This repository contains a WeChat Mini Program named “食期管家”, a food 
 
 ## Tech assumptions
 
-- Mini Program frontend: WXML, WXSS, JavaScript or TypeScript.
-- Recommended backend: WeChat Cloud Development / CloudBase.
+- Current active APK client: native Android Java under `apk/`.
+- Archived Mini Program frontend: WXML, WXSS, JavaScript or TypeScript under `miniprogram/`.
+- Recommended backend, if reopened later: WeChat Cloud Development / CloudBase or server-side services.
 - Data storage: cloud database or local mock data during early MVP.
-- Sensitive secrets such as OCR API keys, OpenAI keys, or cloud service credentials must never be stored in Mini Program client code.
+- Sensitive secrets such as OCR API keys, OpenAI keys, or cloud service credentials must never be stored in Mini Program or Android client code.
 - OCR, AI extraction, and secret-dependent logic should be implemented in cloud functions or server-side services.
 
 ## Expected repository structure
@@ -39,7 +40,9 @@ This repository contains a WeChat Mini Program named “食期管家”, a food 
 
 -`.agents/skills/miniapp-food-expiry/SKILL.md`: repository-level Codex skill.
 
--`miniprogram/`: Mini Program source code, when initialized.
+-`apk/`: active Android APK source code and build script.
+
+-`miniprogram/`: archived Mini Program source code.
 
 -`cloudfunctions/`: cloud functions, when initialized.
 
@@ -48,6 +51,8 @@ This repository contains a WeChat Mini Program named “食期管家”, a food 
 - Keep changes small and reviewable.
 - Do not perform large refactors unless explicitly requested.
 - Prefer adding or updating documentation when behavior changes.
+- Treat `apk/` as the active client unless the user explicitly reopens Mini Program development.
+- Treat `miniprogram/` as archived; do not modify it unless the user explicitly requests Mini Program work.
 - Keep date calculation logic isolated in a utility module when the Mini Program code is initialized.
 - Keep OCR parsing logic separate from UI code.
 - Keep cloud-function-only logic out of the Mini Program frontend.

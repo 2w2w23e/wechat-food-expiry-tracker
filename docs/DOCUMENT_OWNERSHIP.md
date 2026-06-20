@@ -58,14 +58,15 @@
 
 包括但不限于：
 
-- `app.js`
-- `app.json`
-- `app.wxss`
-- `project.config.json`
-- `pages/**`
-- `components/**`
-- `utils/**`
-- `services/**`
+- `apk/**`
+- `miniprogram/app.js`
+- `miniprogram/app.json`
+- `miniprogram/app.wxss`
+- `miniprogram/project.config.json`
+- `miniprogram/pages/**`
+- `miniprogram/components/**`
+- `miniprogram/utils/**`
+- `miniprogram/services/**`
 - `cloudfunctions/**`
 
 修改权限：
@@ -74,7 +75,7 @@
 - 必须有明确的 `/goal + require.txt`。
 - `require.txt` 必须写明允许修改的具体文件或目录。
 - 代码修改后必须创建 PR，并由 code-reviewer 审核。
-- 当前治理同步期间，不应修改运行时代码。
+- 当前 APK 开发期间，默认只修改 `apk/**`；`miniprogram/**` 已封存，除非用户明确要求恢复小程序端，否则不应修改。
 
 ### 2.3 关键保护文档
 

@@ -7,7 +7,9 @@ description: Use this skill when working on the 食期管家 WeChat Mini Program
 
 ## Purpose
 
-Guide Codex when working on the “食期管家” WeChat Mini Program.
+Guide Codex when working on “食期管家”.
+
+Current repository state: Android APK development is temporarily active under `apk/`; the accepted WeChat Mini Program V0 source is archived under `miniprogram/`. Do not modify `miniprogram/` unless the user explicitly reopens Mini Program work.
 
 This project records food production date, shelf life, final edible date, storage method, notes, sorting, reminders, and future OCR recognition. Keep the MVP small and reliable before adding OCR or AI automation.
 
@@ -32,7 +34,7 @@ This project records food production date, shelf life, final edible date, storag
    - `README.md`
    - `AGENTS.md`
    - `docs/project-brief.md`
-   - relevant implementation files
+   - relevant implementation files under `apk/` or `miniprogram/`, depending on the requested platform
 
 3. If these files exist, also read them when relevant:
    - `docs/PRD.md`
@@ -54,7 +56,7 @@ This project records food production date, shelf life, final edible date, storag
   - calculated mode: production date + shelf life
   - manual mode: user directly enters final edible date
 - OCR and AI recognition results must go through a user confirmation screen before saving.
-- Secrets must not be placed in Mini Program client code.
+- Secrets must not be placed in Mini Program or Android client code.
 - The app manages label information and reminders. It must not claim that food is medically or absolutely safe.
 
 ## Date calculation checklist

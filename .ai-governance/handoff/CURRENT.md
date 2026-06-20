@@ -1,9 +1,9 @@
 # Current Handoff
 
-Last updated: 2026-06-18
+Last updated: 2026-06-20
 
 Window switch status: ready.
 
 Next role: PROJECT_GOVERNOR.
 
-Next work: prepare a medium task for MAIN_BRAIN about V0.1 home search.
+Next work: continue Android APK development under `apk/`; `miniprogram/` is archived unless the user explicitly reopens Mini Program work.
