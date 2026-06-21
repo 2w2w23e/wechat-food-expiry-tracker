@@ -1,3 +1,7 @@
 require.txt
 apk/build/
 apk/debug.keystore
+
+# Local IDE metadata
+.idea/
+*.iml
