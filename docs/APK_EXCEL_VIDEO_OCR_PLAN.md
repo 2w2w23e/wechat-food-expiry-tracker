@@ -280,3 +280,18 @@ Excel：
 - 用大模型直接判断食品安全或保质期。
 - 在客户端内置任何密钥。
 - 跳过用户确认直接保存 OCR 结果。
+
+## 9. 2026-07-05 OCR-002 落地更新
+
+本轮已把 `OCR-002` 从方案推进到 APK POC：
+
+- 新增 `DateOcrScanActivity`，使用 CameraX `Preview` + `ImageAnalysis`，并显式使用 `STRATEGY_KEEP_ONLY_LATEST`，避免实时识别积压帧。
+- 新增 ML Kit Text Recognition v2 Chinese 本地识别依赖，使用 `InputImage.fromMediaImage(..., imageProxy.getImageInfo().getRotationDegrees())` 处理 CameraX 帧。
+- 新增 `DateOcrResultPayload`，把稳定候选转换为可编辑 `FoodItem` 草稿；不写入 `FoodStore`，不写入 notes，不保存 raw OCR。
+- 主页面新增“视频识别日期”入口；稳定候选返回后先弹出用户确认，再进入新增表单预填，最终保存仍复用原表单“保存”按钮。
+- `apk/build-apk.ps1` 的 debug 路径改为委托 Gradle 构建并复制到原输出路径，因为 CameraX / ML Kit 是 AAR/Maven 依赖，不适合继续由手工 `javac + d8` 打包。
+
+仍未声明完成的内容：
+
+- 真实食品包装上的准确率评估仍需要使用 `video/` 样本和真机/模拟器摄像头继续回归。
+- 当前 POC 不做自动选择冲突候选，不做云端 OCR，不引入 API key，不上传视频或图片。

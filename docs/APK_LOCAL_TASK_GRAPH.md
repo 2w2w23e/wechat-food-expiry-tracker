@@ -199,3 +199,10 @@ VERIFY-ALL -> UPLOAD-001
 - `OCR-005`：ML Kit 准确率不足时，做 PaddleOCR Mobile / Paddle Lite 对比实验。
 
 这些节点暂不并入当前可合并范围；在 `VERIFY-ALL` 视觉门禁和条码剩余 QA 完成前，不应继续扩大当前 PR 的 UI 风险面。
+
+## 12. 2026-07-05 OCR-002 / OCR-004 状态更新
+
+- `OCR-002`：已接入 CameraX + ML Kit Text Recognition v2 Chinese POC 页面，包含相机权限、实时预览、识别框、原始 OCR 片段、候选摘要和“使用候选”按钮。
+- `OCR-004`：已从纯 Java 投票逻辑推进到用户确认流。稳定候选先返回主页面弹窗，用户确认后只预填新增食品表单；表单保存前不写入本地食品数据。
+- `VERIFY-ALL`：仍不能标记为全量 PASS。需要继续用真实 Android 设备或可用模拟器截图验证首页入口、OCR 页面、权限态、候选态、确认弹窗和预填表单；准确率还要基于 `video/` 样本继续回归。
+- 构建路线：debug APK 现在以 Gradle 为主，`apk/build-apk.ps1` 仅作为兼容入口委托 Gradle 并复制 APK 到旧输出路径。

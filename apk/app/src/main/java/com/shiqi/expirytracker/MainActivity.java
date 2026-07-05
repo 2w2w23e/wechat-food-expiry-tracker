@@ -55,6 +55,7 @@ public final class MainActivity extends Activity {
     private static final int REQUEST_BARCODE_SCAN = 4302;
     private static final int REQUEST_EXCEL_EXPORT = 4303;
     private static final int REQUEST_EXCEL_IMPORT = 4304;
+    private static final int REQUEST_DATE_OCR = 4305;
     private static final String PREFS_NAME = "shiqi_android_v0";
     private static final String PREF_NOTIFICATION_PERMISSION_PROMPTED = "notification_permission_prompted_v0";
     private static final String FOOD_ACTION_EDIT = "edit";
@@ -245,6 +246,16 @@ public final class MainActivity extends Activity {
             }
         });
         actionRow.addView(scanButton, weightWrap(1));
+
+        Button dateOcrButton = outlineButton("视频识别日期");
+        dateOcrButton.setTextColor(COLOR_PRIMARY);
+        dateOcrButton.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View view) {
+                startDateOcrScanner();
+            }
+        });
+        content.addView(dateOcrButton, withMargins(matchWrap(), 0, dp(10), 0, 0));
 
         LinearLayout excelRow = new LinearLayout(this);
         excelRow.setOrientation(LinearLayout.HORIZONTAL);
@@ -566,12 +577,19 @@ public final class MainActivity extends Activity {
             writeExcelExport(data == null ? null : data.getData());
         } else if (requestCode == REQUEST_EXCEL_IMPORT) {
             readExcelImport(data == null ? null : data.getData());
+        } else if (requestCode == REQUEST_DATE_OCR) {
+            handleDateOcrResult(data);
         }
     }
 
     private void startBarcodeScanner() {
         Intent intent = new Intent(this, BarcodeScanActivity.class);
         startActivityForResult(intent, REQUEST_BARCODE_SCAN);
+    }
+
+    private void startDateOcrScanner() {
+        Intent intent = new Intent(this, DateOcrScanActivity.class);
+        startActivityForResult(intent, REQUEST_DATE_OCR);
     }
 
     private void startExcelExport() {
@@ -841,6 +859,74 @@ public final class MainActivity extends Activity {
                     }
                 })
                 .show();
+    }
+
+    private void handleDateOcrResult(Intent data) {
+        if (data == null) {
+            toast("未收到日期候选");
+            return;
+        }
+
+        Integer shelfLifeValue = data.hasExtra(DateOcrResultPayload.EXTRA_SHELF_LIFE_VALUE)
+                ? Integer.valueOf(data.getIntExtra(DateOcrResultPayload.EXTRA_SHELF_LIFE_VALUE, 0))
+                : null;
+        final FoodItem draft = DateOcrResultPayload.toDraft(
+                data.getStringExtra(DateOcrResultPayload.EXTRA_PRODUCTION_DATE),
+                data.getStringExtra(DateOcrResultPayload.EXTRA_EXPIRY_DATE),
+                data.getBooleanExtra(DateOcrResultPayload.EXTRA_EXPIRY_CALCULATED, false),
+                shelfLifeValue,
+                data.getStringExtra(DateOcrResultPayload.EXTRA_SHELF_LIFE_UNIT)
+        );
+        if (!DateOcrResultPayload.hasUsableDraft(draft)) {
+            toast("日期候选不足，请手动新增");
+            return;
+        }
+
+        String summary = FoodItem.cleanText(data.getStringExtra(DateOcrResultPayload.EXTRA_SUMMARY));
+        String rawText = dateOcrSnippet(data.getStringExtra(DateOcrResultPayload.EXTRA_RAW_TEXT), 260);
+        String message = "识别结果只会填入新增表单，确认前不会保存到食品列表。\n\n"
+                + "候选：\n" + (summary.length() == 0 ? dateOcrDraftSummary(draft) : summary)
+                + "\n\n原始 OCR 片段：\n" + rawText;
+
+        new AlertDialog.Builder(this)
+                .setTitle("识别到日期候选")
+                .setMessage(message)
+                .setNegativeButton("取消", null)
+                .setPositiveButton("填入新增表单", new DialogInterface.OnClickListener() {
+                    @Override
+                    public void onClick(DialogInterface dialogInterface, int which) {
+                        showFoodForm(draft, false);
+                    }
+                })
+                .show();
+    }
+
+    private String dateOcrDraftSummary(FoodItem draft) {
+        StringBuilder builder = new StringBuilder();
+        if (draft.productionDate.length() > 0) {
+            builder.append("生产日期：").append(draft.productionDate).append('\n');
+        }
+        if (draft.shelfLifeValue != null) {
+            builder.append("保质期：")
+                    .append(draft.shelfLifeValue)
+                    .append(FoodData.shelfLifeUnitLabel(draft.shelfLifeUnit))
+                    .append('\n');
+        }
+        if (draft.expiryDate.length() > 0) {
+            builder.append("最终日期：").append(draft.expiryDate).append('\n');
+        }
+        return builder.toString().trim();
+    }
+
+    private String dateOcrSnippet(String value, int maxLength) {
+        String text = FoodItem.cleanText(value).replace('\n', ' ');
+        if (text.length() == 0) {
+            return "暂无";
+        }
+        if (text.length() <= maxLength) {
+            return text;
+        }
+        return text.substring(0, maxLength) + "...";
     }
 
     private void renderDailyBriefing() {

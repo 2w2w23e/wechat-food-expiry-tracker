@@ -58,6 +58,7 @@ $MainSources = @(
   'ReminderPolicy.java',
   'DateOcrParser.java',
   'DateOcrFrameVoter.java',
+  'DateOcrResultPayload.java',
   'BarcodeUtils.java',
   'BarcodeHistoryItem.java',
   'FoodExcelExporter.java',

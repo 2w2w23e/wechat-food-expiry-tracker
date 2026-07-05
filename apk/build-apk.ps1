@@ -12,6 +12,7 @@ $LibRoot = Join-Path $AppRoot 'libs'
 $BuildRoot = Join-Path $AndroidRoot 'build'
 $OutputDir = Join-Path $BuildRoot 'outputs\apk'
 $FinalApk = Join-Path $OutputDir "shiqi-android-$Variant.apk"
+$GradleWrapper = Join-Path $ProjectRoot 'gradlew.bat'
 
 function Invoke-Checked {
   param(
@@ -84,6 +85,34 @@ foreach ($tool in @($AndroidJar, $Aapt2, $D8, $Zipalign, $Apksigner)) {
   if (-not (Test-Path $tool)) {
     throw "Required Android build tool missing: $tool"
   }
+}
+
+if ($Variant -eq 'debug' -and (Test-Path $GradleWrapper)) {
+  if (Test-Path $BuildRoot) {
+    Remove-Item -LiteralPath $BuildRoot -Recurse -Force
+  }
+  New-Item -ItemType Directory -Force $OutputDir | Out-Null
+
+  Push-Location $ProjectRoot
+  try {
+    Invoke-Checked $GradleWrapper @(':apk:app:assembleDebug')
+  } finally {
+    Pop-Location
+  }
+
+  $GradleApk = Join-Path $AppRoot 'build\outputs\apk\debug\app-debug.apk'
+  if (-not (Test-Path $GradleApk)) {
+    throw "Gradle debug APK not found: $GradleApk"
+  }
+
+  Copy-Item -LiteralPath $GradleApk -Destination $FinalApk -Force
+  Invoke-Checked $Apksigner @('verify', '--verbose', $FinalApk)
+  Write-Host "APK built: $FinalApk"
+  return
+}
+
+if ($Variant -eq 'release') {
+  throw 'Release APK builds need a Gradle release signing path now that APK runtime dependencies include AndroidX CameraX and ML Kit AARs.'
 }
 
 $CompiledRes = Join-Path $BuildRoot 'compiled-res'

@@ -498,6 +498,7 @@ public final class LocalLogicTest {
         runFoodExcelImporterTests();
         runDateOcrParserTests();
         runDateOcrFrameVoterTests();
+        runDateOcrResultPayloadTests();
 
         System.out.println("Local logic tests: " + passed + " passed, " + failed + " failed.");
         if (failed > 0) {
@@ -824,6 +825,85 @@ public final class LocalLogicTest {
                 assertTrue(result.hasConflict, "repeated conflicting candidates should be flagged");
                 assertFalse(result.readyForUserConfirmation(), "conflict must require manual confirmation");
                 assertEquals(null, result.productionDate);
+            }
+        });
+    }
+
+    private void runDateOcrResultPayloadTests() {
+        test("DateOcrResultPayload builds calculated draft without saving raw OCR text", new TestCase() {
+            public void run() {
+                FoodItem draft = DateOcrResultPayload.toDraft(
+                        "2026-07-01",
+                        "2026-07-08",
+                        true,
+                        Integer.valueOf(7),
+                        "day"
+                );
+
+                assertEquals("2026-07-01", draft.productionDate);
+                assertEquals(Integer.valueOf(7), draft.shelfLifeValue);
+                assertEquals("day", draft.shelfLifeUnit);
+                assertEquals("2026-07-08", draft.expiryDate);
+                assertEquals("calculated", draft.dateSource);
+                assertEquals("", draft.notes);
+                assertTrue(DateOcrResultPayload.hasUsableDraft(draft), "draft should be usable for confirmation form");
+            }
+        });
+
+        test("DateOcrResultPayload preserves explicit expiry as manual draft candidate", new TestCase() {
+            public void run() {
+                FoodItem draft = DateOcrResultPayload.toDraft(
+                        "",
+                        "2026-12-31",
+                        false,
+                        null,
+                        ""
+                );
+
+                assertEquals("", draft.productionDate);
+                assertEquals(null, draft.shelfLifeValue);
+                assertEquals("", draft.shelfLifeUnit);
+                assertEquals("2026-12-31", draft.expiryDate);
+                assertEquals("manual", draft.dateSource);
+                assertEquals("", draft.notes);
+                assertTrue(DateOcrResultPayload.hasUsableDraft(draft), "manual expiry draft should be usable");
+            }
+        });
+
+        test("DateOcrResultPayload ignores invalid dates and shelf life units", new TestCase() {
+            public void run() {
+                FoodItem draft = DateOcrResultPayload.toDraft(
+                        "2026-02-30",
+                        "bad",
+                        true,
+                        Integer.valueOf(7),
+                        "week"
+                );
+
+                assertEquals("", draft.productionDate);
+                assertEquals("", draft.expiryDate);
+                assertEquals(Integer.valueOf(7), draft.shelfLifeValue);
+                assertEquals("", draft.shelfLifeUnit);
+                assertEquals("unknown", draft.dateSource);
+                assertTrue(DateOcrResultPayload.hasUsableDraft(draft), "shelf life alone still needs user confirmation");
+            }
+        });
+
+        test("DateOcrResultPayload maps stable frame vote to editable draft", new TestCase() {
+            public void run() {
+                List<DateOcrParser.Result> frames = new ArrayList<DateOcrParser.Result>();
+                frames.add(DateOcrParser.parse("prod date 2026-07-01 shelf life 7 days"));
+                frames.add(DateOcrParser.parse("production date 2026/07/01 shelf life 7 days"));
+
+                DateOcrFrameVoter.VoteResult vote = DateOcrFrameVoter.vote(frames);
+                FoodItem draft = DateOcrResultPayload.toDraft(vote);
+
+                assertTrue(vote.readyForUserConfirmation(), "vote should be stable before draft mapping");
+                assertEquals("2026-07-01", draft.productionDate);
+                assertEquals(Integer.valueOf(7), draft.shelfLifeValue);
+                assertEquals("day", draft.shelfLifeUnit);
+                assertEquals("2026-07-08", draft.expiryDate);
+                assertEquals("calculated", draft.dateSource);
             }
         });
     }
