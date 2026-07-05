@@ -183,3 +183,19 @@ VERIFY-ALL -> UPLOAD-001
 - NoWaste：https://play.google.com/store/apps/details?id=com.khcreations.nowaste ，冰箱 / 冷冻 / 储藏列表、条码添加、按过期日期排序、分类和位置筛选。
 - Pantry Check：https://pantrycheck.com/ ，按单品跟踪到期日、到期提醒、条码、位置和商品照片。
 - KitchenPal：https://play.google.com/store/apps/details?id=fr.icuisto.icuisto ，位置分区、数量、到期日、提醒、条码和导出能力；其中云同步、家庭共享、营养 / 饮食建议不纳入当前本地 APK。
+
+## 11. 新增需求池：Excel 与视频 OCR
+
+2026-07-05 新增需求已经固化在 `docs/APK_EXCEL_VIDEO_OCR_PLAN.md`：
+
+- `BUILD-002`：新增 Gradle 构建基线，用于管理 ML Kit、CameraX、Fastexcel 等现代 Android / Maven 依赖。
+- `XLSX-001`：Excel `.xlsx` 模板和导出。
+- `XLSX-002`：Excel `.xlsx` 导入预览和行级校验。
+- `XLSX-003`：Excel 确认导入、追加 / 覆盖、备份和失败回滚。
+- `OCR-001`：基于 `video/` 的离线样本评测工具。
+- `OCR-002`：CameraX + ML Kit Text Recognition v2 Chinese 实时视频 OCR POC。
+- `OCR-003`：生产日期 / 保质期候选提取器。
+- `OCR-004`：多帧投票和用户确认页。
+- `OCR-005`：ML Kit 准确率不足时，做 PaddleOCR Mobile / Paddle Lite 对比实验。
+
+这些节点暂不并入当前可合并范围；在 `VERIFY-ALL` 视觉门禁和条码剩余 QA 完成前，不应继续扩大当前 PR 的 UI 风险面。
