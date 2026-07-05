@@ -495,6 +495,7 @@ public final class LocalLogicTest {
         runFoodStoreMigrationTestsIfAvailable();
         runBarcodeHistoryTestsIfAvailable();
         runFoodExcelExporterTests();
+        runFoodExcelImporterTests();
 
         System.out.println("Local logic tests: " + passed + " passed, " + failed + " failed.");
         if (failed > 0) {
@@ -624,6 +625,95 @@ public final class LocalLogicTest {
                             "README sheet should preserve OCR confirmation rule");
                 } catch (Exception error) {
                     throw new AssertionError("xlsx export failed: " + error.getMessage());
+                }
+            }
+        });
+    }
+
+    private void runFoodExcelImporterTests() {
+        test("FoodExcelImporter previews exported workbook without saving", new TestCase() {
+            public void run() {
+                FoodItem item = food("Import milk", "dairy", "refrigerated", "2026-07-01", "2026-07-08", 2);
+                item.id = "import-1";
+                item.shelfLifeValue = Integer.valueOf(7);
+                item.shelfLifeUnit = "day";
+                item.openedDate = "2026-07-02";
+                item.afterOpenShelfLifeValue = Integer.valueOf(3);
+                item.afterOpenShelfLifeUnit = "day";
+                item.location = "fridge";
+                item.unit = "box";
+                item.notes = "keep cold";
+                item.createdAt = "2026-07-05T08:30:00+0800";
+                item.updatedAt = item.createdAt;
+
+                FoodExcelImporter.ImportPreview preview = readWorkbookPreview(Arrays.asList(item));
+
+                assertEquals(1, preview.totalRows);
+                assertEquals(1, preview.importableRows);
+                assertEquals(0, preview.errorRows);
+                assertEquals(1, preview.importableFoods().size());
+
+                FoodItem imported = preview.importableFoods().get(0);
+                assertEquals("Import milk", imported.name);
+                assertEquals("dairy", imported.category);
+                assertEquals("refrigerated", imported.storageMethod);
+                assertEquals("fridge", imported.location);
+                assertEquals("2026-07-08", imported.expiryDate);
+                assertEquals("manual", imported.dateSource);
+                assertEquals(Integer.valueOf(7), imported.shelfLifeValue);
+                assertEquals("day", imported.shelfLifeUnit);
+                assertEquals("2026-07-02", imported.openedDate);
+                assertEquals(Integer.valueOf(3), imported.afterOpenShelfLifeValue);
+                assertEquals("day", imported.afterOpenShelfLifeUnit);
+                assertEquals(Double.valueOf(2), Double.valueOf(imported.remainingQuantity));
+                assertEquals("keep cold", imported.notes);
+            }
+        });
+
+        test("FoodExcelImporter calculates missing expiryDate from shelf life", new TestCase() {
+            public void run() {
+                FoodItem item = food("Calculated import", "staple", "room_temp", "2026-01-31", "", 1);
+                item.shelfLifeValue = Integer.valueOf(1);
+                item.shelfLifeUnit = "month";
+                item.dateSource = "unknown";
+
+                FoodExcelImporter.ImportPreview preview = readWorkbookPreview(Arrays.asList(item));
+
+                assertEquals(1, preview.totalRows);
+                assertEquals(1, preview.importableRows);
+                FoodItem imported = preview.importableFoods().get(0);
+                assertEquals("2026-02-28", imported.expiryDate);
+                assertEquals("calculated", imported.dateSource);
+            }
+        });
+
+        test("FoodExcelImporter reports invalid rows instead of importing them", new TestCase() {
+            public void run() {
+                FoodItem missingName = food("", "other", "room_temp", "2026-07-01", "2026-07-08", 1);
+                FoodItem badDate = food("Bad date", "other", "room_temp", "2026-02-30", "", 1);
+                badDate.shelfLifeValue = Integer.valueOf(1);
+                badDate.shelfLifeUnit = "month";
+
+                FoodExcelImporter.ImportPreview preview = readWorkbookPreview(Arrays.asList(missingName, badDate));
+
+                assertEquals(2, preview.totalRows);
+                assertEquals(0, preview.importableRows);
+                assertEquals(2, preview.errorRows);
+                assertEquals(0, preview.importableFoods().size());
+                assertFalse(preview.rows.get(0).canImport(), "missing name row should not import");
+                assertFalse(preview.rows.get(1).canImport(), "bad date row should not import");
+                assertTrue(preview.rows.get(0).errors.size() > 0, "missing name should explain error");
+                assertTrue(preview.rows.get(1).errors.size() > 0, "bad date should explain error");
+            }
+        });
+
+        test("FoodExcelImporter rejects non-xlsx content", new TestCase() {
+            public void run() {
+                try {
+                    FoodExcelImporter.readWorkbook(new ByteArrayInputStream("not a zip".getBytes(StandardCharsets.UTF_8)));
+                    throw new AssertionError("bad xlsx should throw");
+                } catch (Exception expected) {
+                    assertTrue(expected.getMessage().length() > 0, "bad xlsx error should be visible");
                 }
             }
         });
@@ -902,6 +992,16 @@ public final class LocalLogicTest {
             zip.close();
         }
         return entries;
+    }
+
+    private static FoodExcelImporter.ImportPreview readWorkbookPreview(List<FoodItem> foods) {
+        try {
+            ByteArrayOutputStream output = new ByteArrayOutputStream();
+            FoodExcelExporter.writeWorkbook(output, foods);
+            return FoodExcelImporter.readWorkbook(new ByteArrayInputStream(output.toByteArray()));
+        } catch (Exception error) {
+            throw new AssertionError("failed to read workbook preview: " + error.getMessage());
+        }
     }
 
     private static Object newBarcodeHistoryItem(

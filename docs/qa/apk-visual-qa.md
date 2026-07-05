@@ -13,11 +13,13 @@
 - 已从干净 PR worktree 构建并安装 `shiqi-android-debug.apk`。
 - 编辑食品表单已取得稳定截图证据，保存后可回到列表。
 - 条码流程已取得手动输入、查询结果、手动新增表单和条码备注预填证据。
+- Excel 导入已取得首页入口、系统文件选择器、导入预览、确认追加和导入后食品卡片证据。
 
 仍未完成：
 
 - 真实摄像头扫码识别仍需真机或稳定摄像头模拟器复测；本轮只验证到权限弹窗、拒绝相机权限后的手动输入兜底路径。
 - 条码图库识别和完整新增保存仍需后续真机 / 样本图片场景 QA。
+- Excel 覆盖导入和错误行视觉预览仍是后续任务；当前已验证追加导入。
 
 说明：本文件只记录视觉检验状态。代码编译、单元逻辑测试和 APK 构建通过不等于视觉 QA 通过。
 
@@ -34,6 +36,7 @@
 | VIS-007 | 条码流程 | 相机扫码、图库识别、手动输入、查询结果、用户确认后保存 | PARTIAL | `docs/qa/screenshots/2026-07-05-vis-007-after-scan-tap.png`, `docs/qa/screenshots/2026-07-05-vis-007-camera-denied-manual-available.png`, `docs/qa/screenshots/2026-07-05-vis-007-manual-input-filled.png`, `docs/qa/screenshots/2026-07-05-vis-007-manual-query-result.png`, `docs/qa/screenshots/2026-07-05-vis-007-manual-add-notes-barcode.png`; 手动输入、查询失败兜底、手动新增表单和条码备注预填可见，真实相机扫码 / 图库识别 / 完整保存未完成 |
 | VIS-008 | 升级回归 | 安装覆盖升级后旧食品数据仍在、旧 JSON 字段兼容、新字段默认值正确 | PARTIAL | 覆盖安装后 `QA_Milk` 仍显示；Gradle 覆盖安装 smoke 见 `docs/qa/screenshots/gradle-build-home-smoke.png`；旧 schema 迁移由 JVM 测试覆盖，未做视觉旧数据注入 |
 | VIS-009 | Excel 导出 | 首页导出按钮、系统文件保存器、导出完成提示、导出文件包含 foods / README sheet | PASS | `docs/qa/screenshots/2026-07-05-xlsx-001-home-export-button.png`, `docs/qa/screenshots/2026-07-05-xlsx-001-system-save-picker.png`, `docs/qa/screenshots/2026-07-05-xlsx-001-export-complete.png`; 实际导出的 `.xlsx` 拉到 `.local/qa/` 后确认包含 `QA_Milk`、`expiryDate` header 和 README sheet |
+| VIS-010 | Excel 导入 | 首页导入按钮、系统文件选择器、导入预览、确认前不写入、确认后追加到列表 | PASS | `docs/qa/screenshots/2026-07-05-xlsx-002-home-import-button.png`, `docs/qa/screenshots/2026-07-05-xlsx-002-picker-file-visible.png`, `docs/qa/screenshots/2026-07-05-xlsx-002-import-preview-ascii-confirm.png`, `docs/qa/screenshots/2026-07-05-xlsx-002-import-complete-ascii.png`, `docs/qa/screenshots/2026-07-05-xlsx-002-imported-food-card-ascii.png`; `Import_Banana` 通过预览后追加导入，列表统计从 2 件变 3 件 |
 
 ## 3. 本轮视觉发现与修复
 

@@ -162,7 +162,7 @@ VERIFY-ALL -> UPLOAD-001
 当前执行环境状态：
 
 - 已创建并启动 `Medium_Phone` AVD，`adb devices` 可识别 `emulator-5554`。
-- 2026-07-05 已完成首页、食品卡片、新增表单、编辑表单保存回列表、日期选择、详情、更多操作、提醒设置、Excel 导出和 Gradle 覆盖安装首页 smoke 截图。
+- 2026-07-05 已完成首页、食品卡片、新增表单、编辑表单保存回列表、日期选择、详情、更多操作、提醒设置、Excel 导出、Excel 追加导入和 Gradle 覆盖安装首页 smoke 截图。
 - 视觉 QA 仍为 `PARTIAL`：摄像头真实扫码、图库识别和条码完整保存仍需真机或稳定模拟器复测；手动条码输入、未查询到商品后的手动新增表单和条码备注预填已取得截图证据。
 - 因此 `VERIFY-ALL` 仍不能标记为全量 PASS；涉及 UI 的后续任务必须继续补截图或录屏。
 
@@ -190,8 +190,8 @@ VERIFY-ALL -> UPLOAD-001
 
 - `BUILD-002`：新增 Gradle 构建基线，用于管理 ML Kit、CameraX、Fastexcel 等现代 Android / Maven 依赖。
 - `XLSX-001`：Excel `.xlsx` 模板和导出。状态：已完成，使用内置 OOXML writer，无新增运行时依赖。
-- `XLSX-002`：Excel `.xlsx` 导入预览和行级校验。
-- `XLSX-003`：Excel 确认导入、追加 / 覆盖、备份和失败回滚。
+- `XLSX-002`：Excel `.xlsx` 导入预览和行级校验。状态：已完成，当前先支持本应用 `foods` sheet 模板，不新增第三方运行时依赖。
+- `XLSX-003`：Excel 确认导入、追加 / 覆盖、备份和失败回滚。状态：部分完成，追加导入确认已完成并复用保存前备份；覆盖导入、错误行详情和失败回滚视觉用例仍待后续。
 - `OCR-001`：基于 `video/` 的离线样本评测工具。状态：dev-only 工具骨架已完成；真实样本评测还需要本机安装 FFmpeg / OCR 引擎后执行。
 - `OCR-002`：CameraX + ML Kit Text Recognition v2 Chinese 实时视频 OCR POC。
 - `OCR-003`：生产日期 / 保质期候选提取器。

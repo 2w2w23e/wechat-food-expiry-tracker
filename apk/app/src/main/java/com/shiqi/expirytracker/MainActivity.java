@@ -39,6 +39,7 @@ import android.widget.TextView;
 import android.widget.Toast;
 
 import java.io.IOException;
+import java.io.InputStream;
 import java.io.OutputStream;
 import java.text.SimpleDateFormat;
 import java.util.ArrayList;
@@ -53,6 +54,7 @@ public final class MainActivity extends Activity {
     private static final int REQUEST_NOTIFICATION_PERMISSION = 4301;
     private static final int REQUEST_BARCODE_SCAN = 4302;
     private static final int REQUEST_EXCEL_EXPORT = 4303;
+    private static final int REQUEST_EXCEL_IMPORT = 4304;
     private static final String PREFS_NAME = "shiqi_android_v0";
     private static final String PREF_NOTIFICATION_PERMISSION_PROMPTED = "notification_permission_prompted_v0";
     private static final String FOOD_ACTION_EDIT = "edit";
@@ -244,6 +246,20 @@ public final class MainActivity extends Activity {
         });
         actionRow.addView(scanButton, weightWrap(1));
 
+        LinearLayout excelRow = new LinearLayout(this);
+        excelRow.setOrientation(LinearLayout.HORIZONTAL);
+        excelRow.setGravity(android.view.Gravity.CENTER_VERTICAL);
+
+        Button importExcelButton = outlineButton("导入 Excel");
+        importExcelButton.setTextColor(COLOR_PRIMARY);
+        importExcelButton.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View view) {
+                startExcelImport();
+            }
+        });
+        excelRow.addView(importExcelButton, withMargins(weightWrap(1), 0, 0, dp(8), 0));
+
         Button exportExcelButton = outlineButton("导出 Excel");
         exportExcelButton.setTextColor(COLOR_PRIMARY);
         exportExcelButton.setOnClickListener(new View.OnClickListener() {
@@ -252,7 +268,8 @@ public final class MainActivity extends Activity {
                 startExcelExport();
             }
         });
-        content.addView(exportExcelButton, withMargins(matchWrap(), 0, dp(10), 0, 0));
+        excelRow.addView(exportExcelButton, weightWrap(1));
+        content.addView(excelRow, withMargins(matchWrap(), 0, dp(10), 0, 0));
 
         statsText = text("", 15, COLOR_TEXT, Typeface.BOLD);
         statsText.setPadding(0, dp(16), 0, dp(8));
@@ -547,6 +564,8 @@ public final class MainActivity extends Activity {
             handleBarcodeValue(barcode);
         } else if (requestCode == REQUEST_EXCEL_EXPORT) {
             writeExcelExport(data == null ? null : data.getData());
+        } else if (requestCode == REQUEST_EXCEL_IMPORT) {
+            readExcelImport(data == null ? null : data.getData());
         }
     }
 
@@ -564,6 +583,24 @@ public final class MainActivity extends Activity {
             startActivityForResult(intent, REQUEST_EXCEL_EXPORT);
         } catch (ActivityNotFoundException error) {
             toast("当前设备没有可用的文件保存器");
+        }
+    }
+
+    private void startExcelImport() {
+        Intent intent = new Intent(Intent.ACTION_OPEN_DOCUMENT);
+        intent.addCategory(Intent.CATEGORY_OPENABLE);
+        intent.setType(FoodExcelExporter.mimeType());
+        try {
+            startActivityForResult(intent, REQUEST_EXCEL_IMPORT);
+        } catch (ActivityNotFoundException error) {
+            Intent fallback = new Intent(Intent.ACTION_GET_CONTENT);
+            fallback.addCategory(Intent.CATEGORY_OPENABLE);
+            fallback.setType("*/*");
+            try {
+                startActivityForResult(Intent.createChooser(fallback, "选择 Excel 文件"), REQUEST_EXCEL_IMPORT);
+            } catch (ActivityNotFoundException ignored) {
+                toast("当前设备没有可用的文件选择器");
+            }
         }
     }
 
@@ -592,6 +629,112 @@ public final class MainActivity extends Activity {
                 }
             }
         }
+    }
+
+    private void readExcelImport(Uri uri) {
+        if (uri == null) {
+            toast("未选择导入文件");
+            return;
+        }
+
+        InputStream inputStream = null;
+        try {
+            inputStream = getContentResolver().openInputStream(uri);
+            if (inputStream == null) {
+                toast("无法打开导入文件");
+                return;
+            }
+            FoodExcelImporter.ImportPreview preview = FoodExcelImporter.readWorkbook(inputStream);
+            showExcelImportPreview(preview);
+        } catch (IOException error) {
+            toast("Excel 导入失败：" + FoodItem.cleanText(error.getMessage()));
+        } finally {
+            if (inputStream != null) {
+                try {
+                    inputStream.close();
+                } catch (IOException ignored) {
+                }
+            }
+        }
+    }
+
+    private void showExcelImportPreview(final FoodExcelImporter.ImportPreview preview) {
+        if (preview == null) {
+            toast("Excel 导入预览失败");
+            return;
+        }
+
+        StringBuilder message = new StringBuilder();
+        message.append("总行数：").append(preview.totalRows).append('\n');
+        message.append("可导入：").append(preview.importableRows).append('\n');
+        message.append("错误行：").append(preview.errorRows).append('\n');
+        message.append("警告行：").append(preview.warningRows).append('\n');
+        if (preview.errorRows > 0) {
+            message.append("\n错误行不会导入：");
+            appendImportMessages(message, preview, true);
+        }
+        if (preview.warningRows > 0) {
+            message.append("\n警告：");
+            appendImportMessages(message, preview, false);
+        }
+        message.append("\n\n导入会追加到当前本地数据，确认前不会写入。");
+
+        AlertDialog.Builder builder = new AlertDialog.Builder(this)
+                .setTitle("Excel 导入预览")
+                .setMessage(message.toString())
+                .setNegativeButton("取消", null);
+
+        if (preview.importableRows > 0) {
+            builder.setPositiveButton("追加导入", new DialogInterface.OnClickListener() {
+                @Override
+                public void onClick(DialogInterface dialogInterface, int which) {
+                    applyExcelImport(preview);
+                }
+            });
+        } else {
+            builder.setPositiveButton("知道了", null);
+        }
+
+        builder.show();
+    }
+
+    private void appendImportMessages(StringBuilder message, FoodExcelImporter.ImportPreview preview, boolean errors) {
+        int appended = 0;
+        for (FoodExcelImporter.RowResult row : preview.rows) {
+            List<String> items = errors ? row.errors : row.warnings;
+            if (items.isEmpty()) {
+                continue;
+            }
+            if (appended >= 5) {
+                message.append("\n- 还有更多行，请修正后重试");
+                return;
+            }
+            message.append("\n- 第 ").append(row.rowNumber).append(" 行：").append(joinTexts(items, "；"));
+            appended++;
+        }
+    }
+
+    private void applyExcelImport(FoodExcelImporter.ImportPreview preview) {
+        List<FoodItem> imported = preview.importableFoods();
+        if (imported.isEmpty()) {
+            toast("没有可导入的食品");
+            return;
+        }
+
+        String now = DateRules.nowIsoLike();
+        for (int index = imported.size() - 1; index >= 0; index--) {
+            FoodItem item = imported.get(index).copy();
+            item.id = newFoodId();
+            if (item.createdAt.length() == 0) {
+                item.createdAt = now;
+            }
+            item.updatedAt = now;
+            item.normalizeQuantityBounds();
+            foods.add(0, item);
+        }
+
+        saveFoodsRefreshReminders();
+        toast("已导入 " + imported.size() + " 条食品");
     }
 
     private String exportTimestamp() {
