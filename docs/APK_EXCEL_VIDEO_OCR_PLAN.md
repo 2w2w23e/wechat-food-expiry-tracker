@@ -167,7 +167,8 @@
 
 ### XLSX-001：Excel 模板和导出
 
-- 引入 Fastexcel writer。
+状态：已完成。当前导出使用内置最小 OOXML writer 生成 `.xlsx`，不新增第三方运行时依赖；如果后续导入复杂度升高，再评估 Fastexcel。
+
 - 导出 `.xlsx`，包含 `foods` 和 `README` 两个 sheet。
 - 本地测试覆盖字段映射、日期格式、中文枚举。
 - 视觉 QA 覆盖系统文件保存器和导出完成提示。

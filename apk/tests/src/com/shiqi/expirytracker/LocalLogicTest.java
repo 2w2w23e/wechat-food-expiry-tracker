@@ -1,9 +1,16 @@
 package com.shiqi.expirytracker;
 
+import java.io.ByteArrayInputStream;
+import java.io.ByteArrayOutputStream;
+import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Locale;
+import java.util.Map;
+import java.util.zip.ZipEntry;
+import java.util.zip.ZipInputStream;
 
 public final class LocalLogicTest {
     private int passed = 0;
@@ -487,6 +494,7 @@ public final class LocalLogicTest {
 
         runFoodStoreMigrationTestsIfAvailable();
         runBarcodeHistoryTestsIfAvailable();
+        runFoodExcelExporterTests();
 
         System.out.println("Local logic tests: " + passed + " passed, " + failed + " failed.");
         if (failed > 0) {
@@ -566,6 +574,57 @@ public final class LocalLogicTest {
                 assertTrue(booleanField(result, "primaryHasFutureSchema"), "future schema should be identified");
                 assertFalse(booleanField(result, "restoredFromBackup"), "older backup must not replace future primary");
                 assertFalse(booleanField(result, "needsPrimaryWriteBack"), "future primary must not be overwritten");
+            }
+        });
+    }
+
+    private void runFoodExcelExporterTests() {
+        test("FoodExcelExporter writes xlsx workbook and escapes fields", new TestCase() {
+            public void run() {
+                FoodItem item = food("QA Milk & <Fresh>", "dairy", "refrigerated", "2026-07-01", "2026-07-08", 2);
+                item.id = "xlsx-1";
+                item.shelfLifeValue = Integer.valueOf(7);
+                item.shelfLifeUnit = "day";
+                item.openedDate = "2026-07-02";
+                item.afterOpenShelfLifeValue = Integer.valueOf(3);
+                item.afterOpenShelfLifeUnit = "day";
+                item.location = "fridge";
+                item.unit = "box";
+                item.notes = "line 1 & line 2";
+                item.createdAt = "2026-07-05T08:30:00+0800";
+                item.updatedAt = item.createdAt;
+
+                List<FoodItem> foods = new ArrayList<FoodItem>();
+                foods.add(item);
+
+                try {
+                    ByteArrayOutputStream output = new ByteArrayOutputStream();
+                    FoodExcelExporter.writeWorkbook(output, foods);
+                    byte[] bytes = output.toByteArray();
+                    assertTrue(bytes.length > 1000, "xlsx should have meaningful content");
+
+                    Map<String, String> entries = unzipUtf8Entries(bytes);
+                    assertTrue(entries.containsKey("[Content_Types].xml"), "xlsx should include content types");
+                    assertTrue(entries.containsKey("xl/workbook.xml"), "xlsx should include workbook");
+                    assertTrue(entries.containsKey("xl/worksheets/sheet1.xml"), "xlsx should include foods sheet");
+                    assertTrue(entries.containsKey("xl/worksheets/sheet2.xml"), "xlsx should include README sheet");
+
+                    String workbook = entries.get("xl/workbook.xml");
+                    assertTrue(workbook.indexOf("name=\"foods\"") >= 0, "workbook should include foods sheet");
+                    assertTrue(workbook.indexOf("name=\"README\"") >= 0, "workbook should include README sheet");
+
+                    String foodsSheet = entries.get("xl/worksheets/sheet1.xml");
+                    assertTrue(foodsSheet.indexOf("<t>expiryDate</t>") >= 0, "foods sheet should include expiryDate header");
+                    assertTrue(foodsSheet.indexOf("<t>2026-07-08</t>") >= 0, "foods sheet should include expiryDate value");
+                    assertTrue(foodsSheet.indexOf("QA Milk &amp; &lt;Fresh&gt;") >= 0, "foods sheet should escape XML text");
+                    assertTrue(foodsSheet.indexOf("<t>xlsx-1</t>") >= 0, "foods sheet should include item id");
+
+                    String readmeSheet = entries.get("xl/worksheets/sheet2.xml");
+                    assertTrue(readmeSheet.indexOf("OCR or AI results must never be auto-saved") >= 0,
+                            "README sheet should preserve OCR confirmation rule");
+                } catch (Exception error) {
+                    throw new AssertionError("xlsx export failed: " + error.getMessage());
+                }
             }
         });
     }
@@ -822,6 +881,27 @@ public final class LocalLogicTest {
         } catch (ClassNotFoundException ignored) {
             return null;
         }
+    }
+
+    private static Map<String, String> unzipUtf8Entries(byte[] bytes) throws Exception {
+        Map<String, String> entries = new HashMap<String, String>();
+        ZipInputStream zip = new ZipInputStream(new ByteArrayInputStream(bytes));
+        try {
+            ZipEntry entry;
+            while ((entry = zip.getNextEntry()) != null) {
+                ByteArrayOutputStream output = new ByteArrayOutputStream();
+                byte[] buffer = new byte[4096];
+                int read;
+                while ((read = zip.read(buffer)) >= 0) {
+                    output.write(buffer, 0, read);
+                }
+                entries.put(entry.getName(), new String(output.toByteArray(), StandardCharsets.UTF_8));
+                zip.closeEntry();
+            }
+        } finally {
+            zip.close();
+        }
+        return entries;
     }
 
     private static Object newBarcodeHistoryItem(

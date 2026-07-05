@@ -1,6 +1,8 @@
 require.txt
 .gradle/
 build/
+.local/
+video/
 apk/build/
 apk/debug.keystore
 

@@ -32,6 +32,7 @@
 | VIS-006 | 提醒设置 | 全局提醒开关、提前天数、今日提醒时间段、关闭提醒后的文案 | PASS | `docs/qa/screenshots/2026-07-05-vis-006-reminder-settings.png` |
 | VIS-007 | 条码流程 | 相机扫码、图库识别、手动输入、查询结果、用户确认后保存 | PARTIAL | `docs/qa/screenshots/2026-07-05-vis-007-camera-permission.png`; 入口和权限弹窗可见，真实扫码 / 图库 / 手动输入未完成 |
 | VIS-008 | 升级回归 | 安装覆盖升级后旧食品数据仍在、旧 JSON 字段兼容、新字段默认值正确 | PARTIAL | 覆盖安装后 `QA_Milk` 仍显示；Gradle 覆盖安装 smoke 见 `docs/qa/screenshots/gradle-build-home-smoke.png`；旧 schema 迁移由 JVM 测试覆盖，未做视觉旧数据注入 |
+| VIS-009 | Excel 导出 | 首页导出按钮、系统文件保存器、导出完成提示、导出文件包含 foods / README sheet | PASS | `docs/qa/screenshots/2026-07-05-xlsx-001-home-export-button.png`, `docs/qa/screenshots/2026-07-05-xlsx-001-system-save-picker.png`, `docs/qa/screenshots/2026-07-05-xlsx-001-export-complete.png`; 实际导出的 `.xlsx` 拉到 `.local/qa/` 后确认包含 `QA_Milk`、`expiryDate` header 和 README sheet |
 
 ## 3. 本轮视觉发现与修复
 
@@ -54,6 +55,7 @@ adb shell am start -n com.shiqi.expirytracker/.MainActivity
 
 .\gradlew.bat :apk:app:assembleDebug
 adb install -r apk/app/build/outputs/apk/debug/app-debug.apk
+adb shell input tap 540 1267
 ```
 
 截图证据建议保存到 `docs/qa/screenshots/`，文件名使用：

@@ -70,6 +70,7 @@ apk/build/outputs/apk/shiqi-android-release.apk
 - 今日到期小时提醒展示
 - Android 本地系统通知
 - 已用完归档和恢复
+- Excel `.xlsx` 导出，包含 `foods` 和 `README` 两个工作表
 - Android 本地存储
 
 ## 本地交付整理
@@ -79,6 +80,7 @@ apk/build/outputs/apk/shiqi-android-release.apk
 - 已移除测试定时系统提醒按钮和测试通知 action。
 - APK 包不会写入 API Key、OCR Key、OpenAI Key 或其他密钥。
 - 条码、二维码实时预览帧和图库图片解码使用 ZXing core；商品信息查询使用网络请求，不在客户端内置密钥。
+- Excel 导出使用项目内置的最小 OOXML writer，不新增三方运行时依赖；导入仍需后续预览、校验和确认流程。
 
 ## 当前不做
 

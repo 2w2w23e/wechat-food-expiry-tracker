@@ -2,6 +2,7 @@ package com.shiqi.expirytracker;
 
 import android.app.Activity;
 import android.app.AlertDialog;
+import android.content.ActivityNotFoundException;
 import android.content.Context;
 import android.content.DialogInterface;
 import android.content.Intent;
@@ -11,6 +12,7 @@ import android.content.res.ColorStateList;
 import android.graphics.Color;
 import android.graphics.Typeface;
 import android.graphics.drawable.GradientDrawable;
+import android.net.Uri;
 import android.os.Build;
 import android.os.Bundle;
 import android.text.Editable;
@@ -36,16 +38,21 @@ import android.widget.Spinner;
 import android.widget.TextView;
 import android.widget.Toast;
 
+import java.io.IOException;
+import java.io.OutputStream;
+import java.text.SimpleDateFormat;
 import java.util.ArrayList;
 import java.util.Calendar;
 import java.util.Collections;
 import java.util.Comparator;
+import java.util.Date;
 import java.util.List;
 import java.util.Locale;
 
 public final class MainActivity extends Activity {
     private static final int REQUEST_NOTIFICATION_PERMISSION = 4301;
     private static final int REQUEST_BARCODE_SCAN = 4302;
+    private static final int REQUEST_EXCEL_EXPORT = 4303;
     private static final String PREFS_NAME = "shiqi_android_v0";
     private static final String PREF_NOTIFICATION_PERMISSION_PROMPTED = "notification_permission_prompted_v0";
     private static final String FOOD_ACTION_EDIT = "edit";
@@ -236,6 +243,16 @@ public final class MainActivity extends Activity {
             }
         });
         actionRow.addView(scanButton, weightWrap(1));
+
+        Button exportExcelButton = outlineButton("导出 Excel");
+        exportExcelButton.setTextColor(COLOR_PRIMARY);
+        exportExcelButton.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View view) {
+                startExcelExport();
+            }
+        });
+        content.addView(exportExcelButton, withMargins(matchWrap(), 0, dp(10), 0, 0));
 
         statsText = text("", 15, COLOR_TEXT, Typeface.BOLD);
         statsText.setPadding(0, dp(16), 0, dp(8));
@@ -528,12 +545,57 @@ public final class MainActivity extends Activity {
         if (requestCode == REQUEST_BARCODE_SCAN) {
             String barcode = data == null ? "" : data.getStringExtra("SCAN_RESULT");
             handleBarcodeValue(barcode);
+        } else if (requestCode == REQUEST_EXCEL_EXPORT) {
+            writeExcelExport(data == null ? null : data.getData());
         }
     }
 
     private void startBarcodeScanner() {
         Intent intent = new Intent(this, BarcodeScanActivity.class);
         startActivityForResult(intent, REQUEST_BARCODE_SCAN);
+    }
+
+    private void startExcelExport() {
+        Intent intent = new Intent(Intent.ACTION_CREATE_DOCUMENT);
+        intent.addCategory(Intent.CATEGORY_OPENABLE);
+        intent.setType(FoodExcelExporter.mimeType());
+        intent.putExtra(Intent.EXTRA_TITLE, "shiqi-foods-" + exportTimestamp() + ".xlsx");
+        try {
+            startActivityForResult(intent, REQUEST_EXCEL_EXPORT);
+        } catch (ActivityNotFoundException error) {
+            toast("当前设备没有可用的文件保存器");
+        }
+    }
+
+    private void writeExcelExport(Uri uri) {
+        if (uri == null) {
+            toast("未选择导出位置");
+            return;
+        }
+
+        OutputStream outputStream = null;
+        try {
+            outputStream = getContentResolver().openOutputStream(uri);
+            if (outputStream == null) {
+                toast("无法打开导出文件");
+                return;
+            }
+            FoodExcelExporter.writeWorkbook(outputStream, foods);
+            toast("Excel 已导出");
+        } catch (IOException error) {
+            toast("Excel 导出失败：" + FoodItem.cleanText(error.getMessage()));
+        } finally {
+            if (outputStream != null) {
+                try {
+                    outputStream.close();
+                } catch (IOException ignored) {
+                }
+            }
+        }
+    }
+
+    private String exportTimestamp() {
+        return new SimpleDateFormat("yyyyMMdd-HHmm", Locale.US).format(new Date());
     }
 
     private void handleBarcodeValue(String value) {

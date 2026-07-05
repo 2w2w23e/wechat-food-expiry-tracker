@@ -58,6 +58,7 @@ $MainSources = @(
   'ReminderPolicy.java',
   'BarcodeUtils.java',
   'BarcodeHistoryItem.java',
+  'FoodExcelExporter.java',
   'FoodStoreMigration.java'
 ) | ForEach-Object { Join-Path $MainSourceRoot $_ }
 

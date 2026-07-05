@@ -189,7 +189,7 @@ VERIFY-ALL -> UPLOAD-001
 2026-07-05 新增需求已经固化在 `docs/APK_EXCEL_VIDEO_OCR_PLAN.md`：
 
 - `BUILD-002`：新增 Gradle 构建基线，用于管理 ML Kit、CameraX、Fastexcel 等现代 Android / Maven 依赖。
-- `XLSX-001`：Excel `.xlsx` 模板和导出。
+- `XLSX-001`：Excel `.xlsx` 模板和导出。状态：已完成，使用内置 OOXML writer，无新增运行时依赖。
 - `XLSX-002`：Excel `.xlsx` 导入预览和行级校验。
 - `XLSX-003`：Excel 确认导入、追加 / 覆盖、备份和失败回滚。
 - `OCR-001`：基于 `video/` 的离线样本评测工具。
