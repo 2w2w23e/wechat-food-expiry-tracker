@@ -12,6 +12,7 @@ final class DateRules {
     static final String STATUS_SOON = "soon";
     static final String STATUS_NORMAL = "normal";
     static final String STATUS_UNKNOWN = "unknown";
+    static final String STATUS_FINISHED = "finished";
 
     private static final long DAY_MS = 24L * 60L * 60L * 1000L;
     private static final int DEFAULT_SOON_DAYS = 7;
@@ -72,6 +73,89 @@ final class DateRules {
 
     static String getTodayString() {
         return new SimpleDateFormat("yyyy-MM-dd", Locale.US).format(new java.util.Date());
+    }
+
+    static String todayString() {
+        return getTodayString();
+    }
+
+    static int daysBetween(String startDate, String endDate) {
+        DateParts start = parseDateParts(startDate);
+        DateParts end = parseDateParts(endDate);
+        if (start == null || end == null) {
+            return Integer.MIN_VALUE;
+        }
+        return (int) ((toUtcMillis(end) - toUtcMillis(start)) / DAY_MS);
+    }
+
+    static int daysUntil(String date) {
+        return daysBetween(getTodayString(), date);
+    }
+
+    static String addDaysString(String date, int delta) {
+        DateParts parts = parseDateParts(date);
+        if (parts == null) {
+            return "";
+        }
+        return format(addDays(parts, delta));
+    }
+
+    static boolean isYesterday(String date) {
+        return daysUntil(date) == -1;
+    }
+
+    static boolean isToday(String date) {
+        return daysUntil(date) == 0;
+    }
+
+    static boolean isTomorrow(String date) {
+        return daysUntil(date) == 1;
+    }
+
+    static String productionAgeLabel(String productionDate) {
+        DateParts production = parseDateParts(productionDate);
+        DateParts today = parseDateParts(getTodayString());
+
+        if (production == null || today == null) {
+            return "生产日期未填写";
+        }
+
+        long diffDays = (toUtcMillis(today) - toUtcMillis(production)) / DAY_MS;
+        if (diffDays < 0) {
+            return "尚未到生产日期";
+        }
+
+        int years = today.year - production.year;
+        int months = today.month - production.month;
+        int days = today.day - production.day;
+
+        if (days < 0) {
+            months--;
+            int previousMonth = today.month - 1;
+            int previousYear = today.year;
+            if (previousMonth < 1) {
+                previousMonth = 12;
+                previousYear--;
+            }
+            days += getDaysInMonth(previousYear, previousMonth);
+        }
+
+        if (months < 0) {
+            years--;
+            months += 12;
+        }
+
+        StringBuilder builder = new StringBuilder();
+        if (years > 0) {
+            builder.append(years).append("年");
+        }
+        if (months > 0) {
+            builder.append(months).append("月");
+        }
+        if (days > 0 || builder.length() == 0) {
+            builder.append(days).append("日");
+        }
+        return builder.toString();
     }
 
     static String nowIsoLike() {

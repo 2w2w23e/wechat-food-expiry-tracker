@@ -1,23 +1,27 @@
 package com.shiqi.expirytracker;
 
+import java.lang.reflect.Method;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Locale;
+import java.util.Map;
 
 final class FoodData {
     static final String ALL = "all";
 
     static final List<Option> CATEGORIES = Arrays.asList(
-            new Option("dairy", "乳制品"),
-            new Option("staple", "主食"),
-            new Option("frozen", "冷冻食品"),
-            new Option("beverage", "饮品"),
-            new Option("snack", "零食"),
-            new Option("condiment", "调味品"),
-            new Option("produce", "蔬果"),
-            new Option("meat_egg_seafood", "肉蛋水产"),
-            new Option("cooked", "熟食/剩菜"),
-            new Option("other", "其他")
+            new Option("dairy", "乳制品", "ruzhipin", "rzp"),
+            new Option("staple", "主食", "zhushi", "zs"),
+            new Option("frozen", "冷冻食品", "lengdongshipin", "ldsp"),
+            new Option("beverage", "饮品", "yinpin", "yp"),
+            new Option("snack", "零食", "lingshi", "ls"),
+            new Option("condiment", "调味品", "tiaoweipin", "twp"),
+            new Option("produce", "蔬果", "shuguo", "sg"),
+            new Option("meat_egg_seafood", "肉蛋水产", "roudanshuichan", "rdsc"),
+            new Option("cooked", "熟食/剩菜", "shushishengcai", "sssc"),
+            new Option("other", "其他", "qita", "qt")
     );
 
     static final List<Option> STORAGE_METHODS = Arrays.asList(
@@ -39,8 +43,14 @@ final class FoodData {
             new Option(DateRules.STATUS_EXPIRED, "已过期"),
             new Option(DateRules.STATUS_TODAY, "今日到期"),
             new Option(DateRules.STATUS_SOON, "即将到期"),
-            new Option(DateRules.STATUS_NORMAL, "正常")
+            new Option(DateRules.STATUS_NORMAL, "正常"),
+            new Option(DateRules.STATUS_UNKNOWN, "暂无到期日"),
+            new Option(DateRules.STATUS_FINISHED, "已用完")
     );
+
+    private static boolean pinyinAttempted = false;
+    private static Object pinyinTransliterator = null;
+    private static Method transliterateMethod = null;
 
     private FoodData() {}
 
@@ -97,73 +107,373 @@ final class FoodData {
         if (DateRules.STATUS_NORMAL.equals(value)) {
             return "正常";
         }
+        if (DateRules.STATUS_FINISHED.equals(value)) {
+            return "已用完";
+        }
         return "暂无到期日";
     }
 
+    static List<String> statusFilterValues() {
+        List<String> values = new ArrayList<String>();
+        for (Option option : STATUS_FILTERS) {
+            if (!ALL.equals(option.value)) {
+                values.add(option.value);
+            }
+        }
+        return values;
+    }
+
     static List<Option> categoryFilterOptions() {
+        return categoryFilterOptions(null);
+    }
+
+    static List<Option> categoryFilterOptions(List<FoodItem> foods) {
         List<Option> options = new ArrayList<Option>();
         options.add(new Option(ALL, "全部分类"));
         options.addAll(CATEGORIES);
+
+        if (foods == null) {
+            return options;
+        }
+
+        Map<String, Option> standardCategories = new LinkedHashMap<String, Option>();
+        for (Option option : CATEGORIES) {
+            standardCategories.put(option.value, option);
+        }
+
+        Map<String, Option> customCategories = new LinkedHashMap<String, Option>();
+        for (FoodItem food : foods) {
+            String value = normalizeCategoryValue(food.category);
+            if (value.length() == 0 || ALL.equals(value) || standardCategories.containsKey(value) || customCategories.containsKey(value)) {
+                continue;
+            }
+            customCategories.put(value, new Option(value, value));
+        }
+
+        options.addAll(customCategories.values());
         return options;
     }
 
-    static List<FoodItem> sampleFoods() {
-        List<FoodItem> foods = new ArrayList<FoodItem>();
-        foods.add(food("food_001", "纯牛奶", "dairy", "2026-06-01", 30, "day", "2026-07-01", "calculated", 6, 4, "盒", "refrigerated", "正常未来到期示例", "2026-06-01T09:00:00+0800"));
-        foods.add(food("food_002", "酸奶", "dairy", "2026-05-25", 15, "day", "2026-06-09", "calculated", 3, 1, "瓶", "refrigerated", "今日到期示例", "2026-05-25T08:30:00+0800"));
-        foods.add(food("food_003", "全麦面包", "staple", "2026-06-05", 7, "day", "2026-06-12", "calculated", 1, 1, "袋", "room_temp", "早餐面包，临期示例", "2026-06-05T10:00:00+0800"));
-        foods.add(food("food_004", "挂面", "staple", "2025-12-15", 18, "month", "2027-06-15", "calculated", 2, 2, "包", "cool_dry", "放在橱柜干燥处", "2026-05-28T11:30:00+0800"));
-        foods.add(food("food_005", "冷冻水饺", "frozen", "2025-12-01", 6, "month", "2026-06-01", "calculated", 1000, 250, "克", "frozen", "已过期示例", "2026-01-10T18:00:00+0800"));
-        foods.add(food("food_006", "冷冻虾仁", "frozen", "2026-01-10", 12, "month", "2027-01-10", "calculated", 500, 300, "克", "frozen", "密封冷冻保存", "2026-05-21T17:00:00+0800"));
-        foods.add(food("food_007", "橙汁", "beverage", "", null, "", "2026-06-20", "manual", 1, 1, "瓶", "avoid_light", "手动填写最终可食用日期", "2026-06-07T14:00:00+0800"));
-        foods.add(food("food_008", "气泡水", "beverage", "2026-04-01", 6, "month", "2026-10-01", "calculated", 6, 5, "罐", "avoid_light", "常温避光保存", "2026-06-03T16:10:00+0800"));
-        foods.add(food("food_009", "薯片", "snack", "2026-03-01", 9, "month", "2026-12-01", "calculated", 3, 2, "袋", "room_temp", "零食柜上层", "2026-05-18T13:20:00+0800"));
-        foods.add(food("food_010", "夹心饼干", "snack", "", null, "", "2026-06-07", "manual", 2, 1, "盒", "room_temp", "手动日期，已过期示例", "2026-06-01T15:00:00+0800"));
-        foods.add(food("food_011", "酱油", "condiment", "2025-06-01", 1, "year", "2026-06-01", "calculated", 1, 0.5, "瓶", "cool_dry", "年份保质期示例", "2026-05-01T12:00:00+0800"));
-        foods.add(food("food_012", "辣椒酱", "condiment", "", null, "", "2026-06-13", "manual", 1, 1, "瓶", "refrigerated", "开封后冷藏，临期示例", "2026-06-04T12:00:00+0800"));
-        foods.add(food("food_013", "苹果", "produce", "", null, "", "2026-06-15", "manual", 6, 4, "个", "refrigerated", "冷藏抽屉里", "2026-06-06T08:00:00+0800"));
-        foods.add(food("food_014", "青菜", "produce", "", null, "", "2026-06-08", "manual", 1, 1, "把", "refrigerated", "手动日期，已过期示例", "2026-06-06T18:00:00+0800"));
-        foods.add(food("food_015", "鸡蛋", "meat_egg_seafood", "2026-06-01", 21, "day", "2026-06-22", "calculated", 12, 8, "个", "refrigerated", "冰箱门架", "2026-06-01T07:50:00+0800"));
-        foods.add(food("food_016", "猪肉片", "meat_egg_seafood", "2026-06-06", 3, "day", "2026-06-09", "calculated", 500, 200, "克", "refrigerated", "今日到期示例", "2026-06-06T18:30:00+0800"));
-        foods.add(food("food_017", "昨晚米饭", "cooked", "", null, "", "2026-06-10", "manual", 1, 1, "盒", "refrigerated", "剩饭，手动填写最终可食用日期", "2026-06-08T20:30:00+0800"));
-        foods.add(food("food_018", "红烧肉剩菜", "cooked", "", null, "", "2026-06-09", "manual", 1, 0.5, "盒", "refrigerated", "今日到期示例", "2026-06-08T13:00:00+0800"));
-        foods.add(food("food_019", "豆腐", "other", "", null, "", "2026-06-11", "manual", 1, 1, "盒", "refrigerated", "无法确定细分类时归入其他", "2026-06-08T10:20:00+0800"));
-        foods.add(food("food_020", "蜂蜜", "other", "2025-05-01", 2, "year", "2027-05-01", "calculated", 1, 1, "瓶", "cool_dry", "阴凉干燥处保存", "2026-05-03T09:10:00+0800"));
-        return foods;
+    static boolean isKnownStatusFilter(String value) {
+        for (String status : statusFilterValues()) {
+            if (status.equals(value)) {
+                return true;
+            }
+        }
+        return false;
     }
 
-    private static FoodItem food(
-            String id,
-            String name,
-            String category,
-            String productionDate,
-            Integer shelfLifeValue,
-            String shelfLifeUnit,
-            String expiryDate,
-            String dateSource,
-            double quantity,
-            double remainingQuantity,
-            String unit,
-            String storageMethod,
-            String notes,
-            String timestamp
-    ) {
-        FoodItem item = new FoodItem();
-        item.id = id;
-        item.name = name;
-        item.category = category;
-        item.productionDate = productionDate;
-        item.shelfLifeValue = shelfLifeValue;
-        item.shelfLifeUnit = shelfLifeUnit;
-        item.expiryDate = expiryDate;
-        item.dateSource = dateSource;
-        item.quantity = quantity;
-        item.remainingQuantity = remainingQuantity;
-        item.unit = unit;
-        item.storageMethod = storageMethod;
-        item.notes = notes;
-        item.createdAt = timestamp;
-        item.updatedAt = timestamp;
-        return item;
+    static boolean isKnownCategoryFilter(String value, List<Option> categoryOptions) {
+        if (ALL.equals(value)) {
+            return true;
+        }
+
+        for (Option option : categoryOptions) {
+            if (option.value.equals(value)) {
+                return true;
+            }
+        }
+        return false;
     }
+
+    static boolean matchesFoodSearch(FoodItem food, String searchText) {
+        return foodSearchRank(food, searchText) >= 0;
+    }
+
+    static int foodSearchRank(FoodItem food, String searchText) {
+        String query = normalizeSearchText(searchText);
+        if (query.length() == 0) {
+            return 0;
+        }
+
+        if (food == null) {
+            return -1;
+        }
+
+        String name = normalizeSearchText(food.name);
+        int nameIndex = name.indexOf(query);
+        if (nameIndex >= 0) {
+            return nameIndex * 100;
+        }
+
+        String pinyinText = pinyinText(food.name);
+        int syllableIndex = pinyinSyllablePrefixIndex(pinyinText, query);
+        if (syllableIndex >= 0) {
+            return syllableIndex * 100 + 10;
+        }
+
+        int initialsIndex = initialsPrefixIndex(pinyinText, query);
+        if (initialsIndex >= 0) {
+            return initialsIndex * 100 + 20;
+        }
+
+        return -1;
+    }
+
+    static boolean matchesCategorySearch(Option option, String searchText) {
+        String query = normalizeSearchText(searchText);
+        if (query.length() == 0) {
+            return true;
+        }
+
+        if (option == null) {
+            return false;
+        }
+
+        String label = normalizeSearchText(option.label);
+        if (label.contains(query)) {
+            return true;
+        }
+
+        String optionPinyin = normalizeSearchText(option.pinyin);
+        String optionInitials = normalizeSearchText(option.initials);
+        if (optionPinyin.startsWith(query) || optionInitials.startsWith(query)) {
+            return true;
+        }
+
+        String pinyinText = pinyinText(option.label);
+        return normalizeSearchText(pinyinText).startsWith(query) || initialsFromPinyinText(pinyinText).startsWith(query);
+    }
+
+    private static String normalizeSearchText(String value) {
+        String text = FoodItem.cleanText(value);
+        return text.toLowerCase(Locale.US).replaceAll("\\s+", "");
+    }
+
+    private static String pinyinText(String value) {
+        String text = FoodItem.cleanText(value);
+        if (text.length() == 0) {
+            return "";
+        }
+
+        String icuText = pinyinTextFromIcu(text);
+        if (icuText.length() > 0) {
+            return icuText;
+        }
+
+        StringBuilder builder = new StringBuilder();
+        for (int index = 0; index < text.length(); index++) {
+            String syllable = fallbackPinyin(text.charAt(index));
+            if (syllable.length() > 0) {
+                if (builder.length() > 0) {
+                    builder.append(' ');
+                }
+                builder.append(syllable);
+            } else {
+                builder.append(text.charAt(index));
+            }
+        }
+        return builder.toString();
+    }
+
+    private static String pinyinTextFromIcu(String value) {
+        try {
+            ensurePinyinTransliterator();
+            if (pinyinTransliterator == null || transliterateMethod == null) {
+                return "";
+            }
+            Object result = transliterateMethod.invoke(pinyinTransliterator, value);
+            return result == null ? "" : result.toString();
+        } catch (Exception ignored) {
+            return "";
+        }
+    }
+
+    private static void ensurePinyinTransliterator() {
+        if (pinyinAttempted) {
+            return;
+        }
+
+        pinyinAttempted = true;
+        try {
+            Class<?> transliteratorClass = Class.forName("android.icu.text.Transliterator");
+            Method getInstance = transliteratorClass.getMethod("getInstance", String.class);
+            try {
+                pinyinTransliterator = getInstance.invoke(null, "Han-Latin/Names; Latin-ASCII; Lower()");
+            } catch (Exception ignored) {
+                pinyinTransliterator = getInstance.invoke(null, "Han-Latin; Latin-ASCII; Lower()");
+            }
+            transliterateMethod = transliteratorClass.getMethod("transliterate", String.class);
+        } catch (Exception ignored) {
+            pinyinTransliterator = null;
+            transliterateMethod = null;
+        }
+    }
+
+    private static String initialsFromPinyinText(String value) {
+        String text = FoodItem.cleanText(value).toLowerCase(Locale.US).replaceAll("[^a-z0-9]+", " ").trim();
+        if (text.length() == 0) {
+            return "";
+        }
+
+        StringBuilder builder = new StringBuilder();
+        String[] parts = text.split("\\s+");
+        for (String part : parts) {
+            if (part.length() > 0) {
+                builder.append(part.charAt(0));
+            }
+        }
+        return builder.toString();
+    }
+
+    private static int pinyinSyllablePrefixIndex(String pinyinText, String query) {
+        String text = FoodItem.cleanText(pinyinText).toLowerCase(Locale.US).replaceAll("[^a-z0-9]+", " ").trim();
+        if (text.length() == 0 || query.length() == 0) {
+            return -1;
+        }
+
+        String[] parts = text.split("\\s+");
+        for (int index = 0; index < parts.length; index++) {
+            if (parts[index].startsWith(query)) {
+                return index;
+            }
+        }
+        return -1;
+    }
+
+    private static int initialsPrefixIndex(String pinyinText, String query) {
+        String initials = initialsFromPinyinText(pinyinText);
+        if (initials.length() == 0 || query.length() == 0) {
+            return -1;
+        }
+
+        for (int index = 0; index < initials.length(); index++) {
+            if (initials.substring(index).startsWith(query)) {
+                return index;
+            }
+        }
+        return -1;
+    }
+
+    private static String fallbackPinyin(char value) {
+        switch (value) {
+            case '乳':
+                return "ru";
+            case '制':
+                return "zhi";
+            case '品':
+                return "pin";
+            case '主':
+                return "zhu";
+            case '食':
+                return "shi";
+            case '冷':
+                return "leng";
+            case '冻':
+                return "dong";
+            case '饮':
+                return "yin";
+            case '零':
+                return "ling";
+            case '调':
+                return "tiao";
+            case '味':
+                return "wei";
+            case '蔬':
+                return "shu";
+            case '果':
+                return "guo";
+            case '肉':
+                return "rou";
+            case '蛋':
+                return "dan";
+            case '水':
+                return "shui";
+            case '产':
+                return "chan";
+            case '熟':
+                return "shu";
+            case '剩':
+                return "sheng";
+            case '菜':
+                return "cai";
+            case '其':
+                return "qi";
+            case '他':
+                return "ta";
+            case '纯':
+                return "chun";
+            case '牛':
+                return "niu";
+            case '奶':
+                return "nai";
+            case '酸':
+                return "suan";
+            case '全':
+                return "quan";
+            case '麦':
+                return "mai";
+            case '面':
+                return "mian";
+            case '包':
+                return "bao";
+            case '挂':
+                return "gua";
+            case '饺':
+                return "jiao";
+            case '虾':
+                return "xia";
+            case '仁':
+                return "ren";
+            case '橙':
+                return "cheng";
+            case '汁':
+                return "zhi";
+            case '气':
+                return "qi";
+            case '泡':
+                return "pao";
+            case '薯':
+                return "shu";
+            case '片':
+                return "pian";
+            case '夹':
+                return "jia";
+            case '心':
+                return "xin";
+            case '饼':
+                return "bing";
+            case '干':
+                return "gan";
+            case '酱':
+                return "jiang";
+            case '油':
+                return "you";
+            case '辣':
+                return "la";
+            case '椒':
+                return "jiao";
+            case '苹':
+                return "ping";
+            case '青':
+                return "qing";
+            case '鸡':
+                return "ji";
+            case '猪':
+                return "zhu";
+            case '昨':
+                return "zuo";
+            case '晚':
+                return "wan";
+            case '米':
+                return "mi";
+            case '饭':
+                return "fan";
+            case '红':
+                return "hong";
+            case '烧':
+                return "shao";
+            case '豆':
+                return "dou";
+            case '腐':
+                return "fu";
+            case '蜂':
+                return "feng";
+            case '蜜':
+                return "mi";
+            default:
+                return "";
+        }
+    }
+
 }

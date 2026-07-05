@@ -1,11 +1,17 @@
+param(
+  [ValidateSet('debug', 'release')]
+  [string] $Variant = 'debug'
+)
+
 $ErrorActionPreference = 'Stop'
 
 $ProjectRoot = Split-Path -Parent $PSScriptRoot
 $AndroidRoot = $PSScriptRoot
 $AppRoot = Join-Path $AndroidRoot 'app'
+$LibRoot = Join-Path $AppRoot 'libs'
 $BuildRoot = Join-Path $AndroidRoot 'build'
 $OutputDir = Join-Path $BuildRoot 'outputs\apk'
-$FinalApk = Join-Path $OutputDir 'shiqi-android-debug.apk'
+$FinalApk = Join-Path $OutputDir "shiqi-android-$Variant.apk"
 
 function Invoke-Checked {
   param(
@@ -57,10 +63,6 @@ foreach ($tool in @($AndroidJar, $Aapt2, $D8, $Zipalign, $Apksigner)) {
   }
 }
 
-if (Test-Path $BuildRoot) {
-  Remove-Item -LiteralPath $BuildRoot -Recurse -Force
-}
-
 $CompiledRes = Join-Path $BuildRoot 'compiled-res'
 $Generated = Join-Path $BuildRoot 'generated'
 $Classes = Join-Path $BuildRoot 'classes'
@@ -68,9 +70,48 @@ $Dex = Join-Path $BuildRoot 'dex'
 $UnsignedApk = Join-Path $BuildRoot 'app-unsigned.apk'
 $DexApk = Join-Path $BuildRoot 'app-unsigned-dex.apk'
 $AlignedApk = Join-Path $BuildRoot 'app-aligned.apk'
+$CompiledClassesJar = Join-Path $BuildRoot 'classes.jar'
 $Keystore = Join-Path $AndroidRoot 'debug.keystore'
+$KeyAlias = 'androiddebugkey'
+$KeyStorePass = 'android'
+$KeyPass = 'android'
+
+if ($Variant -eq 'release') {
+  $Keystore = $env:SHIQI_RELEASE_KEYSTORE
+  $KeyAlias = $env:SHIQI_RELEASE_KEY_ALIAS
+  $KeyStorePass = $env:SHIQI_RELEASE_STORE_PASSWORD
+  if (-not $KeyStorePass) {
+    $KeyStorePass = $env:SHIQI_RELEASE_KEYSTORE_PASSWORD
+  }
+  $KeyPass = $env:SHIQI_RELEASE_KEY_PASSWORD
+  if (-not $KeyPass) {
+    $KeyPass = $KeyStorePass
+  }
+
+  if (-not $Keystore -or -not (Test-Path $Keystore)) {
+    throw 'Release keystore not found. Set SHIQI_RELEASE_KEYSTORE to a keystore path outside the repository.'
+  }
+  if (-not $KeyAlias) {
+    throw 'Release key alias missing. Set SHIQI_RELEASE_KEY_ALIAS.'
+  }
+  if (-not $KeyStorePass) {
+    throw 'Release keystore password missing. Set SHIQI_RELEASE_STORE_PASSWORD or SHIQI_RELEASE_KEYSTORE_PASSWORD.'
+  }
+  if (-not $KeyPass) {
+    throw 'Release key password missing. Set SHIQI_RELEASE_KEY_PASSWORD, or use the same password as the keystore.'
+  }
+}
+
+if (Test-Path $BuildRoot) {
+  Remove-Item -LiteralPath $BuildRoot -Recurse -Force
+}
 
 New-Item -ItemType Directory -Force $CompiledRes, $Generated, $Classes, $Dex, $OutputDir | Out-Null
+
+$LibJars = @()
+if (Test-Path $LibRoot) {
+  $LibJars = @(Get-ChildItem $LibRoot -Filter *.jar | ForEach-Object { $_.FullName })
+}
 
 $CompileArgs = @('compile', '--dir', (Join-Path $AppRoot 'src\main\res'), '-o', $CompiledRes)
 Invoke-Checked $Aapt2 $CompileArgs
@@ -96,11 +137,18 @@ $JavaFiles = @()
 $JavaFiles += Get-ChildItem (Join-Path $AppRoot 'src\main\java') -Recurse -Filter *.java | ForEach-Object { $_.FullName }
 $JavaFiles += Get-ChildItem $Generated -Recurse -Filter *.java | ForEach-Object { $_.FullName }
 
-$JavacArgs = @('-encoding', 'UTF-8', '--release', '8', '-classpath', $AndroidJar, '-d', $Classes) + $JavaFiles
+$JavacClasspath = (@($AndroidJar) + $LibJars) -join [IO.Path]::PathSeparator
+$JavacArgs = @('-encoding', 'UTF-8', '--release', '8', '-classpath', $JavacClasspath, '-d', $Classes) + $JavaFiles
 Invoke-Checked 'javac' $JavacArgs
 
-$ClassFiles = @(Get-ChildItem $Classes -Recurse -Filter *.class | ForEach-Object { $_.FullName })
-$D8Args = @('--min-api', '23', '--lib', $AndroidJar, '--output', $Dex) + $ClassFiles
+Push-Location $Classes
+try {
+  Invoke-Checked 'jar' @('cf', $CompiledClassesJar, '.')
+} finally {
+  Pop-Location
+}
+
+$D8Args = @('--min-api', '23', '--lib', $AndroidJar, '--output', $Dex, $CompiledClassesJar) + $LibJars
 Invoke-Checked $D8 $D8Args
 
 Copy-Item -LiteralPath $UnsignedApk -Destination $DexApk -Force
@@ -111,7 +159,7 @@ try {
   Pop-Location
 }
 
-if (-not (Test-Path $Keystore)) {
+if ($Variant -eq 'debug' -and -not (Test-Path $Keystore)) {
   $KeytoolArgs = @(
     '-genkeypair',
     '-keystore', $Keystore,
@@ -131,8 +179,9 @@ Invoke-Checked $Zipalign @('-f', '4', $DexApk, $AlignedApk)
 $SignArgs = @(
   'sign',
   '--ks', $Keystore,
-  '--ks-pass', 'pass:android',
-  '--key-pass', 'pass:android',
+  '--ks-pass', "pass:$KeyStorePass",
+  '--key-pass', "pass:$KeyPass",
+  '--ks-key-alias', $KeyAlias,
   '--out', $FinalApk,
   $AlignedApk
 )

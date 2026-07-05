@@ -14,11 +14,13 @@ final class FoodItem {
     String dateSource = "unknown";
     double quantity = 1;
     double remainingQuantity = 1;
-    String unit = "piece";
+    String unit = "件";
     String storageMethod = "room_temp";
     String notes = "";
     String createdAt = "";
     String updatedAt = "";
+    boolean isFinished = false;
+    String finishedAt = "";
 
     static FoodItem fromJson(JSONObject json) {
         FoodItem item = new FoodItem();
@@ -34,19 +36,29 @@ final class FoodItem {
         item.dateSource = optCleanString(json, "dateSource");
         item.quantity = json.optDouble("quantity", 1);
         item.remainingQuantity = Math.min(json.optDouble("remainingQuantity", item.quantity), item.quantity);
-        item.unit = optFallback(json.optString("unit", "piece"), "piece");
+        item.unit = optFallback(json.optString("unit", "件"), "件");
         item.storageMethod = optFallback(json.optString("storageMethod", "room_temp"), "room_temp");
         item.notes = optCleanString(json, "notes");
         item.createdAt = optCleanString(json, "createdAt");
         item.updatedAt = optCleanString(json, "updatedAt");
+        item.isFinished = json.optBoolean("isFinished", false);
+        item.finishedAt = optCleanString(json, "finishedAt");
 
         if (!DateRules.isValidDateString(item.expiryDate)) {
             item.expiryDate = "";
-            item.dateSource = "unknown";
+            if (!"none".equals(item.dateSource)) {
+                item.dateSource = "unknown";
+            }
         }
 
-        if (!"calculated".equals(item.dateSource) && !"manual".equals(item.dateSource)) {
+        if (!"calculated".equals(item.dateSource) && !"manual".equals(item.dateSource) && !"none".equals(item.dateSource)) {
             item.dateSource = item.expiryDate.length() > 0 ? "manual" : "unknown";
+        }
+
+        if ("none".equals(item.dateSource)) {
+            item.expiryDate = "";
+            item.shelfLifeValue = null;
+            item.shelfLifeUnit = "";
         }
 
         return item;
@@ -73,6 +85,8 @@ final class FoodItem {
         json.put("notes", notes);
         json.put("createdAt", createdAt);
         json.put("updatedAt", updatedAt);
+        json.put("isFinished", isFinished);
+        putNullableString(json, "finishedAt", finishedAt);
         return json;
     }
 
@@ -93,6 +107,8 @@ final class FoodItem {
         item.notes = notes;
         item.createdAt = createdAt;
         item.updatedAt = updatedAt;
+        item.isFinished = isFinished;
+        item.finishedAt = finishedAt;
         return item;
     }
 
