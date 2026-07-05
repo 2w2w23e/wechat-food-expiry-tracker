@@ -81,7 +81,19 @@ apk/
 
 它用于生成 Android 本地安装包。当前安卓端支持食品列表、新增、编辑、删除、本地存储、`expiryDate` 排序、状态筛选、分类筛选、内置实时商品码扫码、图库条码/二维码图片识别与商品信息查询、智能提醒计划、每日简报、系统通知和已用完归档。当前本地版已移除示例数据加载和测试提醒入口。
 
-构建命令：
+推荐 Gradle 构建命令：
+
+```powershell
+.\gradlew.bat :apk:app:assembleDebug
+```
+
+构建产物：
+
+```text
+apk/app/build/outputs/apk/debug/app-debug.apk
+```
+
+保留 Android SDK 手工构建脚本作为 fallback：
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File apk/build-apk.ps1

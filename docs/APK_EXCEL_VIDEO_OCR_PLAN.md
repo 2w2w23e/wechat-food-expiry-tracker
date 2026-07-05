@@ -157,11 +157,13 @@
 
 ### BUILD-002：APK Gradle 构建基线
 
+状态：已完成。PR 当前新增 Gradle Wrapper、Android Gradle Plugin 8.13.0 基线和 `:apk:app` 模块，保留原 `apk/build-apk.ps1` fallback。
+
 - 新增 Android Gradle 项目文件。
 - 保留现有 `apk/build-apk.ps1` 作为包装脚本或 fallback。
 - 当前 ZXing jar 继续可用。
 - 新依赖必须记录在 `apk/THIRD_PARTY_NOTICES.md`。
-- 验收：Gradle 构建出的 APK 与现有脚本功能一致，已安装视觉 smoke 通过。
+- 验收：Gradle build、原手工 build、本地 Java 测试均已通过；Gradle APK 已用覆盖安装验证，首页视觉 smoke 见 `docs/qa/screenshots/gradle-build-home-smoke.png`。
 
 ### XLSX-001：Excel 模板和导出
 

@@ -161,10 +161,10 @@ VERIFY-ALL -> UPLOAD-001
 
 当前执行环境状态：
 
-- `adb devices` 未发现已连接设备。
-- `emulator -list-avds` 未发现可启动 AVD。
-- SDK 目录缺少 `cmdline-tools`、`avdmanager` 和系统镜像，当前不能本机创建并启动模拟器。
-- 因此 `VERIFY-ALL` 的视觉部分当前为 `BLOCKED`，不能把 UI 任务标记为视觉通过，也不能在该状态下合并 PR。
+- 已创建并启动 `Medium_Phone` AVD，`adb devices` 可识别 `emulator-5554`。
+- 2026-07-05 已完成首页、食品卡片、新增表单、日期选择、详情、更多操作、提醒设置和 Gradle 覆盖安装首页 smoke 截图。
+- 视觉 QA 仍为 `PARTIAL`：摄像头扫码、图库识别、手动条码输入、商品查询确认保存和编辑表单截图仍需真机或稳定模拟器复测。
+- 因此 `VERIFY-ALL` 仍不能标记为全量 PASS；涉及 UI 的后续任务必须继续补截图或录屏。
 
 视觉验证解除阻塞后，最少要覆盖：
 

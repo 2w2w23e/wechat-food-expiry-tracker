@@ -26,6 +26,29 @@ function Invoke-Checked {
   }
 }
 
+function Resolve-JavaTool {
+  param(
+    [Parameter(Mandatory = $true)]
+    [string] $Name
+  )
+
+  $exeName = if ($IsWindows -or $env:OS -eq 'Windows_NT') { "$Name.exe" } else { $Name }
+
+  if ($env:JAVA_HOME) {
+    $fromJavaHome = Join-Path (Join-Path $env:JAVA_HOME 'bin') $exeName
+    if (Test-Path $fromJavaHome) {
+      return $fromJavaHome
+    }
+  }
+
+  $command = Get-Command $Name -ErrorAction SilentlyContinue
+  if ($command) {
+    return $command.Source
+  }
+
+  throw "JDK tool '$Name' was not found. Install a JDK and put $Name on PATH, or set JAVA_HOME."
+}
+
 $SdkRoot = $env:ANDROID_HOME
 if (-not $SdkRoot) {
   $SdkRoot = $env:ANDROID_SDK_ROOT
@@ -75,6 +98,9 @@ $Keystore = Join-Path $AndroidRoot 'debug.keystore'
 $KeyAlias = 'androiddebugkey'
 $KeyStorePass = 'android'
 $KeyPass = 'android'
+$Javac = Resolve-JavaTool 'javac'
+$Jar = Resolve-JavaTool 'jar'
+$Keytool = Resolve-JavaTool 'keytool'
 
 if ($Variant -eq 'release') {
   $Keystore = $env:SHIQI_RELEASE_KEYSTORE
@@ -139,11 +165,11 @@ $JavaFiles += Get-ChildItem $Generated -Recurse -Filter *.java | ForEach-Object 
 
 $JavacClasspath = (@($AndroidJar) + $LibJars) -join [IO.Path]::PathSeparator
 $JavacArgs = @('-encoding', 'UTF-8', '--release', '8', '-classpath', $JavacClasspath, '-d', $Classes) + $JavaFiles
-Invoke-Checked 'javac' $JavacArgs
+Invoke-Checked $Javac $JavacArgs
 
 Push-Location $Classes
 try {
-  Invoke-Checked 'jar' @('cf', $CompiledClassesJar, '.')
+  Invoke-Checked $Jar @('cf', $CompiledClassesJar, '.')
 } finally {
   Pop-Location
 }
@@ -154,7 +180,7 @@ Invoke-Checked $D8 $D8Args
 Copy-Item -LiteralPath $UnsignedApk -Destination $DexApk -Force
 Push-Location $Dex
 try {
-  Invoke-Checked 'jar' @('uf', $DexApk, 'classes.dex')
+  Invoke-Checked $Jar @('uf', $DexApk, 'classes.dex')
 } finally {
   Pop-Location
 }
@@ -171,7 +197,7 @@ if ($Variant -eq 'debug' -and -not (Test-Path $Keystore)) {
     '-keysize', '2048',
     '-validity', '10000'
   )
-  Invoke-Checked 'keytool' $KeytoolArgs | Out-Null
+  Invoke-Checked $Keytool $KeytoolArgs | Out-Null
 }
 
 Invoke-Checked $Zipalign @('-f', '4', $DexApk, $AlignedApk)

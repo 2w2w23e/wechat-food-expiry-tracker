@@ -31,7 +31,7 @@
 | VIS-005 | 食品详情 | 详情展示、更多操作、剩余归 0、补货、复制食品、标记已用完 | PASS | `docs/qa/screenshots/2026-07-05-vis-005-detail-actions.png`, `docs/qa/screenshots/2026-07-05-vis-005-more-actions.png` |
 | VIS-006 | 提醒设置 | 全局提醒开关、提前天数、今日提醒时间段、关闭提醒后的文案 | PASS | `docs/qa/screenshots/2026-07-05-vis-006-reminder-settings.png` |
 | VIS-007 | 条码流程 | 相机扫码、图库识别、手动输入、查询结果、用户确认后保存 | PARTIAL | `docs/qa/screenshots/2026-07-05-vis-007-camera-permission.png`; 入口和权限弹窗可见，真实扫码 / 图库 / 手动输入未完成 |
-| VIS-008 | 升级回归 | 安装覆盖升级后旧食品数据仍在、旧 JSON 字段兼容、新字段默认值正确 | PARTIAL | 覆盖安装后 `QA_Milk` 仍显示；旧 schema 迁移由 JVM 测试覆盖，未做视觉旧数据注入 |
+| VIS-008 | 升级回归 | 安装覆盖升级后旧食品数据仍在、旧 JSON 字段兼容、新字段默认值正确 | PARTIAL | 覆盖安装后 `QA_Milk` 仍显示；Gradle 覆盖安装 smoke 见 `docs/qa/screenshots/gradle-build-home-smoke.png`；旧 schema 迁移由 JVM 测试覆盖，未做视觉旧数据注入 |
 
 ## 3. 本轮视觉发现与修复
 
@@ -51,6 +51,9 @@ powershell -ExecutionPolicy Bypass -File apk/build-apk.ps1
 adb devices
 adb install -r apk/build/outputs/apk/shiqi-android-debug.apk
 adb shell am start -n com.shiqi.expirytracker/.MainActivity
+
+.\gradlew.bat :apk:app:assembleDebug
+adb install -r apk/app/build/outputs/apk/debug/app-debug.apk
 ```
 
 截图证据建议保存到 `docs/qa/screenshots/`，文件名使用：

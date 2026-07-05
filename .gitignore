@@ -1,4 +1,6 @@
 require.txt
+.gradle/
+build/
 apk/build/
 apk/debug.keystore
 

@@ -6,11 +6,23 @@
 
 ## 构建
 
-当前 APK 版本号：`versionName 0.3.1`，`versionCode 4`。每次生成新的可交付 APK 时，都需要同步提升 `AndroidManifest.xml` 里的 `versionName` 和 `versionCode`。
+当前 APK 版本号：`versionName 0.3.1`，`versionCode 4`。每次生成新的可交付 APK 时，都需要同步提升 `AndroidManifest.xml` 和 `apk/app/build.gradle` 里的 `versionName` 和 `versionCode`。
 
 构建脚本依赖本机 Android SDK 命令行工具。若当前机器缺少 Android SDK，APK 构建应标记为环境阻塞，待补齐环境后再验证。
 
-默认构建本地调试安装包：
+推荐 Gradle 构建本地调试安装包，便于后续接入 CameraX、ML Kit、Fastexcel 等 Maven 依赖：
+
+```powershell
+.\gradlew.bat :apk:app:assembleDebug
+```
+
+输出：
+
+```text
+apk/app/build/outputs/apk/debug/app-debug.apk
+```
+
+保留原 Android SDK 手工构建脚本作为 fallback：
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File apk/build-apk.ps1
