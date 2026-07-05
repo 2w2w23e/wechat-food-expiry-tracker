@@ -12,6 +12,7 @@ import csv
 import datetime as dt
 import html
 import json
+import math
 import os
 import re
 import shutil
@@ -34,6 +35,7 @@ def parse_args(argv: Sequence[str]) -> argparse.Namespace:
     parser.add_argument("--input", default="video", help="Video file or directory. Defaults to ignored ./video.")
     parser.add_argument("--out", default=".local/ocr-eval/OCR-001", help="Ignored output directory.")
     parser.add_argument("--engine", choices=["none", "tesseract"], default="none", help="OCR engine to run.")
+    parser.add_argument("--frame-backend", choices=["auto", "ffmpeg", "opencv"], default="auto", help="Frame extraction backend.")
     parser.add_argument("--frame-interval", type=float, default=1.0, help="Seconds between extracted frames.")
     parser.add_argument("--max-frames", type=int, default=80, help="Maximum frames per video.")
     parser.add_argument("--ffmpeg", default="ffmpeg", help="Path to ffmpeg executable.")
@@ -63,7 +65,7 @@ def main(argv: Sequence[str]) -> int:
     metric_rows: List[Dict[str, object]] = []
 
     for video in videos:
-        frames = extract_frames(args.ffmpeg, video, out_dir, args.frame_interval, args.max_frames)
+        frames = extract_frames(args, video, out_dir)
         frame_records.extend(frames)
         for frame in frames:
             raw_text = run_ocr(args, Path(frame["path"]))
@@ -88,6 +90,10 @@ def main(argv: Sequence[str]) -> int:
                 "productionDateCandidates": len(candidates["productionDate"]),
                 "expiryDateCandidates": len(candidates["expiryDate"]),
                 "shelfLifeCandidates": len(candidates["shelfLife"]),
+                "frameBackend": frame.get("backend", ""),
+                "frameTimeSeconds": frame.get("timeSeconds", ""),
+                "frameSharpness": frame.get("sharpness", ""),
+                "frameBrightness": frame.get("brightness", ""),
             }
             raw_records.append(raw_record)
             candidate_records.append(candidate_record)
@@ -124,11 +130,13 @@ def build_manifest(args: argparse.Namespace, videos: Sequence[Path]) -> Dict[str
         "createdAt": dt.datetime.now(dt.timezone.utc).isoformat(),
         "input": str(Path(args.input)),
         "engine": args.engine,
+        "frameBackend": args.frame_backend,
         "frameIntervalSeconds": args.frame_interval,
         "maxFramesPerVideo": args.max_frames,
         "videos": [str(path) for path in videos],
         "externalTools": {
             "ffmpeg": tool_version(args.ffmpeg),
+            "opencv": opencv_version(),
             "tesseract": tool_version(args.tesseract) if args.engine == "tesseract" else "not used",
         },
         "safety": {
@@ -139,7 +147,15 @@ def build_manifest(args: argparse.Namespace, videos: Sequence[Path]) -> Dict[str
     }
 
 
-def extract_frames(ffmpeg: str, video: Path, out_dir: Path, frame_interval: float, max_frames: int) -> List[Dict[str, str]]:
+def extract_frames(args: argparse.Namespace, video: Path, out_dir: Path) -> List[Dict[str, object]]:
+    if args.frame_backend in {"auto", "ffmpeg"} and is_tool_available(args.ffmpeg):
+        return extract_frames_with_ffmpeg(args.ffmpeg, video, out_dir, args.frame_interval, args.max_frames)
+    if args.frame_backend == "ffmpeg":
+        raise SystemExit(f"Required external tool not found: {args.ffmpeg}")
+    return extract_frames_with_opencv(video, out_dir, args.frame_interval, args.max_frames)
+
+
+def extract_frames_with_ffmpeg(ffmpeg: str, video: Path, out_dir: Path, frame_interval: float, max_frames: int) -> List[Dict[str, object]]:
     video_slug = slugify(video.stem)
     frame_dir = out_dir / "frames" / video_slug
     frame_dir.mkdir(parents=True, exist_ok=True)
@@ -167,9 +183,67 @@ def extract_frames(ffmpeg: str, video: Path, out_dir: Path, frame_interval: floa
             "frame": frame.name,
             "path": str(frame),
             "relativePath": str(frame.relative_to(out_dir)).replace(os.sep, "/"),
+            "backend": "ffmpeg",
+            "timeSeconds": round((index - 1) * frame_interval, 3),
         }
-        for frame in frames
+        for index, frame in enumerate(frames, start=1)
     ]
+
+
+def extract_frames_with_opencv(video: Path, out_dir: Path, frame_interval: float, max_frames: int) -> List[Dict[str, object]]:
+    try:
+        import cv2  # type: ignore
+    except ImportError as error:
+        raise SystemExit("OpenCV Python package is required when FFmpeg is unavailable. Install cv2 or pass --ffmpeg.") from error
+
+    video_slug = slugify(video.stem)
+    frame_dir = out_dir / "frames" / video_slug
+    frame_dir.mkdir(parents=True, exist_ok=True)
+    capture = cv2.VideoCapture(str(video))
+    if not capture.isOpened():
+        raise SystemExit(f"Cannot open video: {video}")
+
+    try:
+        fps = capture.get(cv2.CAP_PROP_FPS) or 0.0
+        frame_count = int(capture.get(cv2.CAP_PROP_FRAME_COUNT) or 0)
+        if fps <= 0 or frame_count <= 0:
+            raise SystemExit(f"Cannot read video timing metadata: {video}")
+
+        step = max(1, int(round(frame_interval * fps)))
+        frame_indexes = list(range(0, frame_count, step))[:max_frames]
+        records: List[Dict[str, object]] = []
+        for output_index, frame_index in enumerate(frame_indexes, start=1):
+            capture.set(cv2.CAP_PROP_POS_FRAMES, frame_index)
+            ok, frame = capture.read()
+            if not ok:
+                continue
+            output_path = frame_dir / f"frame_{output_index:05d}.jpg"
+            cv2.imwrite(str(output_path), frame)
+            quality = frame_quality(cv2, frame)
+            records.append({
+                "video": str(video),
+                "frame": output_path.name,
+                "path": str(output_path),
+                "relativePath": str(output_path.relative_to(out_dir)).replace(os.sep, "/"),
+                "backend": "opencv",
+                "sourceFrameIndex": frame_index,
+                "timeSeconds": round(frame_index / fps, 3),
+                "sharpness": quality["sharpness"],
+                "brightness": quality["brightness"],
+            })
+        return records
+    finally:
+        capture.release()
+
+
+def frame_quality(cv2, frame) -> Dict[str, float]:
+    gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+    sharpness = float(cv2.Laplacian(gray, cv2.CV_64F).var())
+    brightness = float(gray.mean())
+    return {
+        "sharpness": round(sharpness, 2) if math.isfinite(sharpness) else 0.0,
+        "brightness": round(brightness, 2) if math.isfinite(brightness) else 0.0,
+    }
 
 
 def run_ocr(args: argparse.Namespace, frame_path: Path) -> str:
@@ -304,9 +378,16 @@ def write_report(
         key = (frame["video"], frame["frame"])
         raw = raw_by_key.get(key, {})
         candidates = candidates_by_key.get(key, {})
+        metadata = {
+            "backend": frame.get("backend", ""),
+            "timeSeconds": frame.get("timeSeconds", ""),
+            "sharpness": frame.get("sharpness", ""),
+            "brightness": frame.get("brightness", ""),
+        }
         rows.append(
             "<section>"
             f"<h2>{html.escape(frame['video'])} / {html.escape(frame['frame'])}</h2>"
+            f"<p>Frame metadata: {html.escape(json.dumps(metadata, ensure_ascii=False))}</p>"
             f"<img src=\"{html.escape(frame['relativePath'])}\" loading=\"lazy\" />"
             f"<h3>Raw OCR</h3><pre>{html.escape(str(raw.get('text', '')))}</pre>"
             f"<h3>Candidate fields</h3><pre>{html.escape(json.dumps(candidates.get('candidates', {}), ensure_ascii=False, indent=2))}</pre>"
@@ -343,6 +424,10 @@ def write_metrics(path: Path, rows: Sequence[Dict[str, object]]) -> None:
         "productionDateCandidates",
         "expiryDateCandidates",
         "shelfLifeCandidates",
+        "frameBackend",
+        "frameTimeSeconds",
+        "frameSharpness",
+        "frameBrightness",
     ]
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("w", encoding="utf-8", newline="") as handle:
@@ -399,6 +484,18 @@ def tool_version(tool: str) -> str:
         return first_line[0] if first_line else "unknown"
     except OSError:
         return "not found"
+
+
+def is_tool_available(tool: str) -> bool:
+    return shutil.which(tool) is not None or Path(tool).exists()
+
+
+def opencv_version() -> str:
+    try:
+        import cv2  # type: ignore
+        return str(getattr(cv2, "__version__", "installed"))
+    except ImportError:
+        return "not installed"
 
 
 def slugify(value: str) -> str:

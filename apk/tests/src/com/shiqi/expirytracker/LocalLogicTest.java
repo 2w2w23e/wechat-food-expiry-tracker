@@ -496,6 +496,7 @@ public final class LocalLogicTest {
         runBarcodeHistoryTestsIfAvailable();
         runFoodExcelExporterTests();
         runFoodExcelImporterTests();
+        runDateOcrParserTests();
 
         System.out.println("Local logic tests: " + passed + " passed, " + failed + " failed.");
         if (failed > 0) {
@@ -715,6 +716,61 @@ public final class LocalLogicTest {
                 } catch (Exception expected) {
                     assertTrue(expected.getMessage().length() > 0, "bad xlsx error should be visible");
                 }
+            }
+        });
+    }
+
+    private void runDateOcrParserTests() {
+        test("DateOcrParser extracts production date shelf life and calculated expiry", new TestCase() {
+            public void run() {
+                DateOcrParser.Result result = DateOcrParser.parse(
+                        "生产日期：2026年7月1日\n保质期 7 天\nEXP 2026-07-08"
+                );
+
+                assertTrue(result.candidateOnly, "result must stay candidate-only");
+                assertEquals("2026-07-01", result.productionDates.get(0).normalized);
+                assertEquals("2026-07-08", result.expiryDates.get(0).normalized);
+                assertEquals(7, result.shelfLives.get(0).value);
+                assertEquals("day", result.shelfLives.get(0).unit);
+                assertEquals("2026-07-08", result.calculatedExpiryDates.get(0).normalized);
+                assertTrue(result.productionDates.get(0).candidateOnly, "production candidate must not be saved directly");
+                assertTrue(result.shelfLives.get(0).candidateOnly, "shelf life candidate must not be saved directly");
+                assertTrue(result.calculatedExpiryDates.get(0).calculated, "calculated expiry should be marked");
+            }
+        });
+
+        test("DateOcrParser normalizes compact and full-width date text", new TestCase() {
+            public void run() {
+                DateOcrParser.Result result = DateOcrParser.parse(
+                        "包装日期：２０２６／０７／０５ 喷码 260706 常温180天"
+                );
+
+                assertEquals("2026-07-05", result.productionDates.get(0).normalized);
+                assertEquals("2026-07-06", result.productionDates.get(1).normalized);
+                assertEquals(180, result.shelfLives.get(0).value);
+                assertEquals("day", result.shelfLives.get(0).unit);
+                assertTrue(result.calculatedExpiryDates.size() >= 2, "both production candidates should calculate expiry candidates");
+                assertTrue(result.hasDateConflict(), "multiple production dates should require user confirmation");
+            }
+        });
+
+        test("DateOcrParser marks unhinted dates as weak conflicting candidates", new TestCase() {
+            public void run() {
+                DateOcrParser.Result result = DateOcrParser.parse("画面里看到 20260705 和 20260706");
+
+                assertEquals(2, result.productionDates.size());
+                assertEquals(2, result.expiryDates.size());
+                assertTrue(result.productionDates.get(0).weakHint, "unhinted production date should be weak");
+                assertTrue(result.expiryDates.get(0).weakHint, "unhinted expiry date should be weak");
+                assertTrue(result.hasDateConflict(), "different dates should be a conflict");
+            }
+        });
+
+        test("DateOcrParser ignores barcodes zero shelf life and invalid dates", new TestCase() {
+            public void run() {
+                DateOcrParser.Result result = DateOcrParser.parse("条码 6936832557442 保质期0天 日期 2026-02-30");
+
+                assertFalse(result.hasAnyCandidate(), "barcode-like and invalid data should not create candidates");
             }
         });
     }

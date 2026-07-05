@@ -56,6 +56,7 @@ $MainSources = @(
   'ReminderEvent.java',
   'ReminderPlan.java',
   'ReminderPolicy.java',
+  'DateOcrParser.java',
   'BarcodeUtils.java',
   'BarcodeHistoryItem.java',
   'FoodExcelExporter.java',

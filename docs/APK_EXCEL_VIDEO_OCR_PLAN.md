@@ -28,6 +28,19 @@
 
 ## 2. 参考资料结论
 
+2026-07-05 复核官方资料后，技术路线保持不变：
+
+- ML Kit Text Recognition v2 官方 Android 文档支持中文脚本识别器 `ChineseTextRecognizerOptions`，并支持从 CameraX `ImageAnalysis.Analyzer` 的 `media.Image` 构造 `InputImage`。
+- ML Kit 官方性能建议包括：实时场景丢弃积压帧、完成后关闭 `ImageProxy`、保证文字在图像中有足够像素、让文字尽量占据画面有效区域。
+- CameraX ImageAnalysis 官方文档说明非阻塞模式会保留最新帧并丢弃积压帧；本项目应显式使用 `STRATEGY_KEEP_ONLY_LATEST`。
+- PaddleOCR Mobile / Paddle Lite 官方路径需要 Android arm 库、模型优化和 native/Java 接入，适合做第二阶段对比实验，不适合在首个 APK POC 中抢先引入。
+
+参考链接：
+
+- ML Kit Text Recognition v2 Android: https://developers.google.com/ml-kit/vision/text-recognition/v2/android
+- CameraX ImageAnalysis: https://developer.android.com/media/camera/camerax/analyze
+- PaddleOCR Paddle-Lite mobile deployment: https://github.com/PaddlePaddle/PaddleOCR/blob/main/deploy/lite/readme.md
+
 ### 2.1 Excel
 
 候选方案：
@@ -194,10 +207,12 @@
 
 ### OCR-001：视频样本离线评测工具
 
-状态：工具骨架已完成，位置为 `tools/ocr_eval/`；真实样本评测待用户把视频放入本地 `video/` 后执行。
+状态：样本评测已完成第一轮。工具位置为 `tools/ocr_eval/`，已支持 FFmpeg 抽帧和 OpenCV Python 兜底抽帧；本机未安装 Tesseract，因此本轮只完成帧级视觉/质量评估，不声称已完成 OCR 文字识别。
 
 - 不进 APK，先在开发机对 `video/` 抽帧。
-- 输出关键帧、清晰度分数、疑似文字区域、人工标注字段。
+- 输出关键帧、清晰度分数、亮度指标、raw OCR 和 `candidateOnly` 候选字段。
+- 用户本地 5 个视频已生成 `.local/ocr-eval/OCR-001-samples/report.html` 和 `metrics.csv`；这些输出保持 ignored，不提交真实视频、抽帧或 OCR 结果。
+- 样本结论：文字小、曲面/反光/手指遮挡明显，且“最清晰帧”可能是 logo 或条码而不是日期；后续 APK 必须用识别框引导、多帧采样、候选投票和确认页。
 - 目标是建立测试集，不直接做产品功能。
 
 ### OCR-002：CameraX + ML Kit POC
@@ -210,10 +225,13 @@
 
 ### OCR-003：生产日期 / 保质期候选提取
 
-- 新增独立 `DateOcrParser`。
-- 输入 raw OCR text 和文字框位置。
-- 输出候选字段、来源文本、置信度、冲突原因。
-- JVM 测试覆盖中文、数字、喷码、模糊字符替换、多个候选冲突。
+状态：纯 Java 解析器已完成，位置为 `apk/app/src/main/java/com/shiqi/expirytracker/DateOcrParser.java`；当前输入 raw OCR text，输出候选字段、来源文本、置信度、冲突标记和 `candidateOnly` 标记，不写入 `FoodItem`。
+
+- 支持中文提示词、英文 `EXP`、`yyyy-MM-dd` / `yyyy/MM/dd` / `yyyy.MM.dd` / `yyyy年M月d日` / `yyyyMMdd` / `yyMMdd`。
+- 支持全角数字和常见全角分隔符归一化。
+- 支持 `保质期 7 天`、`常温180天`、英文 shelf life 单位归一化。
+- 生产日期 + 保质期可计算候选 `calculatedExpiryDate`，但仍只作为候选给确认页使用。
+- JVM 测试覆盖候选不自动保存、中文/英文提示、紧凑数字日期、全角字符、多个候选冲突、条码和非法日期不误识别。
 
 ### OCR-004：多帧投票和确认页
 
