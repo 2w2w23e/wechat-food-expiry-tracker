@@ -1,8 +1,12 @@
 require.txt
+__pycache__/
 .gradle/
 build/
 .local/
 video/
+tools/ocr_eval/.venv/
+tools/ocr_eval/models/
+tools/ocr_eval/out/
 apk/build/
 apk/debug.keystore
 

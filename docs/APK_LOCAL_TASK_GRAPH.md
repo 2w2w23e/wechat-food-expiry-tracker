@@ -192,7 +192,7 @@ VERIFY-ALL -> UPLOAD-001
 - `XLSX-001`：Excel `.xlsx` 模板和导出。状态：已完成，使用内置 OOXML writer，无新增运行时依赖。
 - `XLSX-002`：Excel `.xlsx` 导入预览和行级校验。
 - `XLSX-003`：Excel 确认导入、追加 / 覆盖、备份和失败回滚。
-- `OCR-001`：基于 `video/` 的离线样本评测工具。
+- `OCR-001`：基于 `video/` 的离线样本评测工具。状态：dev-only 工具骨架已完成，真实样本评测待本地视频和 OCR 引擎。
 - `OCR-002`：CameraX + ML Kit Text Recognition v2 Chinese 实时视频 OCR POC。
 - `OCR-003`：生产日期 / 保质期候选提取器。
 - `OCR-004`：多帧投票和用户确认页。
