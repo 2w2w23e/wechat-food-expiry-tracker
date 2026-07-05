@@ -235,10 +235,13 @@
 
 ### OCR-004：多帧投票和确认页
 
-- 对连续帧候选做投票。
-- 只在候选稳定后提示确认。
-- 进入食品表单时只预填字段。
-- 用户确认后才保存。
+状态：多帧投票纯 Java 逻辑已完成，位置为 `apk/app/src/main/java/com/shiqi/expirytracker/DateOcrFrameVoter.java`；确认页 UI 和表单预填仍留给 `OCR-002` / 后续 UI 节点。
+
+- 对连续帧候选做投票，默认至少 2 帧命中同一候选才算稳定。
+- 候选冲突时不进入 ready 状态，必须要求用户人工确认。
+- 输出 `productionDate`、`shelfLife`、`expiryDate`、`calculatedExpiryDate` 的稳定候选，但仍全部标记为 `candidateOnly`。
+- JVM 测试覆盖重复候选进入确认、单帧不足不确认、重复冲突不确认。
+- 后续 UI 节点：只在候选稳定后提示确认；进入食品表单时只预填字段；用户在表单保存前不写食品数据。
 
 ### OCR-005：PaddleOCR 对比实验
 

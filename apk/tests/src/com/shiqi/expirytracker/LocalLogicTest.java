@@ -497,6 +497,7 @@ public final class LocalLogicTest {
         runFoodExcelExporterTests();
         runFoodExcelImporterTests();
         runDateOcrParserTests();
+        runDateOcrFrameVoterTests();
 
         System.out.println("Local logic tests: " + passed + " passed, " + failed + " failed.");
         if (failed > 0) {
@@ -771,6 +772,58 @@ public final class LocalLogicTest {
                 DateOcrParser.Result result = DateOcrParser.parse("条码 6936832557442 保质期0天 日期 2026-02-30");
 
                 assertFalse(result.hasAnyCandidate(), "barcode-like and invalid data should not create candidates");
+            }
+        });
+    }
+
+    private void runDateOcrFrameVoterTests() {
+        test("DateOcrFrameVoter promotes repeated candidates to confirmation", new TestCase() {
+            public void run() {
+                List<DateOcrParser.Result> frames = new ArrayList<DateOcrParser.Result>();
+                frames.add(DateOcrParser.parse("生产日期：2026年7月1日 保质期 7 天"));
+                frames.add(DateOcrParser.parse("生产日期 2026/07/01 保质期7天"));
+                frames.add(DateOcrParser.parse("生产日期 2026-07-01 其他说明"));
+
+                DateOcrFrameVoter.VoteResult result = DateOcrFrameVoter.vote(frames);
+
+                assertTrue(result.candidateOnly, "vote result must stay candidate-only");
+                assertTrue(result.readyForUserConfirmation(), "repeated candidates should be ready for confirmation");
+                assertEquals(3, result.frameCount);
+                assertEquals(3, result.framesWithCandidates);
+                assertEquals("2026-07-01", result.productionDate.value);
+                assertTrue(result.productionDate.votes >= 2, "production date should have repeated votes");
+                assertEquals(7, result.shelfLife.value);
+                assertEquals("day", result.shelfLife.unit);
+                assertEquals("2026-07-08", result.calculatedExpiryDate.value);
+                assertTrue(result.calculatedExpiryDate.candidateOnly, "calculated expiry must not be saved directly");
+            }
+        });
+
+        test("DateOcrFrameVoter keeps single-frame candidates below confirmation threshold", new TestCase() {
+            public void run() {
+                List<DateOcrParser.Result> frames = new ArrayList<DateOcrParser.Result>();
+                frames.add(DateOcrParser.parse("生产日期：2026年7月1日 保质期 7 天"));
+
+                DateOcrFrameVoter.VoteResult result = DateOcrFrameVoter.vote(frames);
+
+                assertFalse(result.readyForUserConfirmation(), "single frame should not be considered stable");
+                assertEquals(null, result.productionDate);
+                assertEquals(null, result.shelfLife);
+                assertEquals(null, result.calculatedExpiryDate);
+            }
+        });
+
+        test("DateOcrFrameVoter blocks confirmation when repeated dates conflict", new TestCase() {
+            public void run() {
+                List<DateOcrParser.Result> frames = new ArrayList<DateOcrParser.Result>();
+                frames.add(DateOcrParser.parse("画面里看到 20260705 和 20260706"));
+                frames.add(DateOcrParser.parse("画面里看到 20260705 和 20260706"));
+
+                DateOcrFrameVoter.VoteResult result = DateOcrFrameVoter.vote(frames);
+
+                assertTrue(result.hasConflict, "repeated conflicting candidates should be flagged");
+                assertFalse(result.readyForUserConfirmation(), "conflict must require manual confirmation");
+                assertEquals(null, result.productionDate);
             }
         });
     }

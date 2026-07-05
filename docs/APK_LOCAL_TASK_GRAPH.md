@@ -195,7 +195,7 @@ VERIFY-ALL -> UPLOAD-001
 - `OCR-001`：基于 `video/` 的离线样本评测工具。状态：已完成第一轮样本抽帧和视觉/质量评估；工具已支持 FFmpeg 和 OpenCV Python 抽帧兜底。本机未安装 Tesseract，所以文字 OCR baseline 仍留给后续依赖齐备后执行。
 - `OCR-002`：CameraX + ML Kit Text Recognition v2 Chinese 实时视频 OCR POC。
 - `OCR-003`：生产日期 / 保质期候选提取器。状态：已完成纯 Java `DateOcrParser` 和 JVM 测试；结果只标记为候选，不写入食品数据。
-- `OCR-004`：多帧投票和用户确认页。
+- `OCR-004`：多帧投票和用户确认页。状态：多帧投票纯 Java 逻辑已完成并有 JVM 测试；用户确认页 UI、表单预填和视觉 QA 仍待后续。
 - `OCR-005`：ML Kit 准确率不足时，做 PaddleOCR Mobile / Paddle Lite 对比实验。
 
 这些节点暂不并入当前可合并范围；在 `VERIFY-ALL` 视觉门禁和条码剩余 QA 完成前，不应继续扩大当前 PR 的 UI 风险面。
