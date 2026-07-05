@@ -2916,7 +2916,8 @@ public final class MainActivity extends Activity {
         if (backToTopButton == null) {
             return;
         }
-        backToTopButton.setVisibility(scrollY > dp(320) ? View.VISIBLE : View.GONE);
+        // Keep the floating shortcut hidden: visual QA showed it can cover food-card actions.
+        backToTopButton.setVisibility(View.GONE);
     }
 
     private void updateStickyFilterVisibility(int scrollY) {
