@@ -10,6 +10,7 @@ import java.util.Map;
 
 final class FoodData {
     static final String ALL = "all";
+    static final String LOCATION_UNSPECIFIED = "unspecified";
 
     static final List<Option> CATEGORIES = Arrays.asList(
             new Option("dairy", "乳制品", "ruzhipin", "rzp"),
@@ -30,6 +31,16 @@ final class FoodData {
             new Option("frozen", "冷冻"),
             new Option("avoid_light", "避光"),
             new Option("cool_dry", "阴凉干燥")
+    );
+
+    static final List<Option> LOCATION_OPTIONS = Arrays.asList(
+            new Option(LOCATION_UNSPECIFIED, "未指定", "weizhiding", "wzd"),
+            new Option("fridge", "冰箱", "bingxiang", "bx"),
+            new Option("freezer", "冷冻", "lengdong", "ld"),
+            new Option("pantry", "常温柜", "changwengui", "cwg"),
+            new Option("snack_cabinet", "零食柜", "lingshigui", "lsg"),
+            new Option("kitchen", "厨房", "chufang", "cf"),
+            new Option("other", "其他", "qita", "qt")
     );
 
     static final List<Option> SHELF_LIFE_UNITS = Arrays.asList(
@@ -88,6 +99,43 @@ final class FoodData {
 
     static String storageLabel(String value) {
         return labelFor(STORAGE_METHODS, value, value == null || value.length() == 0 ? "常温" : value);
+    }
+
+    static String normalizeLocationValue(String value) {
+        String text = FoodItem.cleanText(value);
+        if (text.length() == 0) {
+            return LOCATION_UNSPECIFIED;
+        }
+
+        for (Option option : LOCATION_OPTIONS) {
+            if (option.value.equals(text) || option.label.equals(text)) {
+                return option.value;
+            }
+        }
+        return text;
+    }
+
+    static String locationLabel(String value) {
+        String normalized = normalizeLocationValue(value);
+        return labelFor(LOCATION_OPTIONS, normalized, normalized);
+    }
+
+    static boolean isKnownLocationValue(String value) {
+        String normalized = normalizeLocationValue(value);
+        for (Option option : LOCATION_OPTIONS) {
+            if (option.value.equals(normalized)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    static String resolveLocationValue(String selectedValue, String customValue) {
+        String custom = FoodItem.cleanText(customValue);
+        if (custom.length() > 0) {
+            return custom;
+        }
+        return normalizeLocationValue(selectedValue);
     }
 
     static String shelfLifeUnitLabel(String value) {
@@ -154,6 +202,33 @@ final class FoodData {
         return options;
     }
 
+    static List<Option> locationFilterOptions(List<FoodItem> foods) {
+        List<Option> options = new ArrayList<Option>();
+        options.add(new Option(ALL, "全部位置"));
+        options.addAll(LOCATION_OPTIONS);
+
+        if (foods == null) {
+            return options;
+        }
+
+        Map<String, Option> standardLocations = new LinkedHashMap<String, Option>();
+        for (Option option : LOCATION_OPTIONS) {
+            standardLocations.put(option.value, option);
+        }
+
+        Map<String, Option> customLocations = new LinkedHashMap<String, Option>();
+        for (FoodItem food : foods) {
+            String value = normalizeLocationValue(food.location);
+            if (value.length() == 0 || ALL.equals(value) || standardLocations.containsKey(value) || customLocations.containsKey(value)) {
+                continue;
+            }
+            customLocations.put(value, new Option(value, value));
+        }
+
+        options.addAll(customLocations.values());
+        return options;
+    }
+
     static boolean isKnownStatusFilter(String value) {
         for (String status : statusFilterValues()) {
             if (status.equals(value)) {
@@ -169,6 +244,19 @@ final class FoodData {
         }
 
         for (Option option : categoryOptions) {
+            if (option.value.equals(value)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    static boolean isKnownLocationFilter(String value, List<Option> locationOptions) {
+        if (ALL.equals(value)) {
+            return true;
+        }
+
+        for (Option option : locationOptions) {
             if (option.value.equals(value)) {
                 return true;
             }

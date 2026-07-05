@@ -10,11 +10,28 @@ final class ReminderPolicy {
     private static final String RISK_HIGH = "A";
     private static final String RISK_MEDIUM = "B";
     private static final String RISK_LOW = "C";
+    private static ReminderSettings defaultSettings = ReminderSettings.defaults();
 
     private ReminderPolicy() {}
 
+    static void useSettings(ReminderSettings settings) {
+        defaultSettings = ReminderSettings.validOrDefault(settings);
+    }
+
     static ReminderPlan planFor(FoodItem food) {
+        return planFor(food, defaultSettings);
+    }
+
+    static ReminderPlan planFor(FoodItem food, ReminderSettings settings) {
+        ReminderSettings effectiveSettings = ReminderSettings.validOrDefault(settings);
         ReminderPlan plan = new ReminderPlan();
+        if (!effectiveSettings.enabled) {
+            plan.disabledReason = "提醒已关闭：全局设置不提醒";
+            plan.cardHint = plan.disabledReason;
+            plan.detailAdvice = "提醒：已在全局设置关闭，不会删除食品数据";
+            return plan;
+        }
+
         if (food == null) {
             plan.disabledReason = "提醒：暂无食品信息";
             plan.cardHint = plan.disabledReason;
@@ -35,7 +52,17 @@ final class ReminderPolicy {
             return plan;
         }
 
-        int daysLeft = DateRules.daysUntil(food.expiryDate);
+        int expiryDaysLeft = DateRules.daysUntil(food.expiryDate);
+        String afterOpenRecommendedDate = DateRules.addAfterOpenShelfLife(
+                food.openedDate,
+                food.afterOpenShelfLifeValue,
+                food.afterOpenShelfLifeUnit
+        );
+        boolean hasAfterOpenRecommendedDate = DateRules.isValidDateString(afterOpenRecommendedDate);
+        boolean usesAfterOpenDate = hasAfterOpenRecommendedDate
+                && afterOpenRecommendedDate.compareTo(food.expiryDate) < 0;
+        String effectiveReminderDate = usesAfterOpenDate ? afterOpenRecommendedDate : food.expiryDate;
+        int daysLeft = DateRules.daysUntil(effectiveReminderDate);
         if (daysLeft == INVALID_DAYS) {
             plan.disabledReason = "提醒：暂无有效到期日";
             plan.cardHint = plan.disabledReason;
@@ -43,12 +70,19 @@ final class ReminderPolicy {
             return plan;
         }
 
-        int totalShelfLifeDays = totalShelfLifeDays(food, daysLeft);
+        int totalShelfLifeDays = usesAfterOpenDate
+                ? afterOpenShelfLifeDays(food, daysLeft)
+                : totalShelfLifeDays(food, expiryDaysLeft);
         String riskLevel = riskLevel(food, totalShelfLifeDays);
         String storage = normalizedStorage(food.storageMethod);
 
         plan.enabled = true;
+        plan.expiryDaysLeft = expiryDaysLeft;
         plan.daysLeft = daysLeft;
+        plan.afterOpenRecommendedDate = hasAfterOpenRecommendedDate ? afterOpenRecommendedDate : "";
+        plan.afterOpenDaysLeft = hasAfterOpenRecommendedDate ? DateRules.daysUntil(afterOpenRecommendedDate) : INVALID_DAYS;
+        plan.effectiveReminderDate = effectiveReminderDate;
+        plan.usesAfterOpenDate = usesAfterOpenDate;
         plan.totalShelfLifeDays = totalShelfLifeDays;
         plan.riskLevel = riskLevel;
         plan.riskLabel = riskLabel(riskLevel);
@@ -56,17 +90,20 @@ final class ReminderPolicy {
         plan.priorityScore = priorityScore(daysLeft, riskLevel, storage, food.remainingQuantity);
         plan.priorityBand = priorityBand(plan.priorityScore);
 
-        List<Integer> offsets = adjustedOffsets(food, totalShelfLifeDays, riskLevel, storage);
+        List<Integer> offsets = effectiveSettings.offsetsFor(
+                adjustedOffsets(food, totalShelfLifeDays, riskLevel, storage),
+                totalShelfLifeDays
+        );
         plan.offsets.addAll(offsets);
         for (Integer offset : offsets) {
-            String reminderDate = DateRules.addDaysString(food.expiryDate, -offset.intValue());
+            String reminderDate = DateRules.addDaysString(plan.effectiveReminderDate, -offset.intValue());
             if (reminderDate.length() > 0) {
                 plan.events.add(new ReminderEvent(
                         offset.intValue(),
                         reminderDate,
                         food.expiryDate,
                         false,
-                        offset.intValue() == 0 ? "到期日提醒" : "提前 " + offset + " 天提醒"
+                        reminderEventLabel(offset.intValue(), plan.usesAfterOpenDate)
                 ));
             }
         }
@@ -80,8 +117,8 @@ final class ReminderPolicy {
 
         sortEventsByDate(plan.events);
 
-        if (daysLeft == 0) {
-            plan.dueDayHours.addAll(dueDayHours(riskLevel));
+        if (daysLeft == 0 && offsets.contains(Integer.valueOf(0))) {
+            plan.dueDayHours.addAll(dueDayHours(riskLevel, effectiveSettings));
         }
 
         plan.nextReminderSummary = nextReminderSummary(food, plan);
@@ -91,8 +128,13 @@ final class ReminderPolicy {
     }
 
     static DailyBriefing dailyBriefing(List<FoodItem> foods) {
+        return dailyBriefing(foods, defaultSettings);
+    }
+
+    static DailyBriefing dailyBriefing(List<FoodItem> foods, ReminderSettings settings) {
+        ReminderSettings effectiveSettings = ReminderSettings.validOrDefault(settings);
         DailyBriefing briefing = new DailyBriefing();
-        if (foods == null) {
+        if (foods == null || !effectiveSettings.enabled) {
             return briefing;
         }
 
@@ -101,21 +143,29 @@ final class ReminderPolicy {
                 continue;
             }
 
-            ReminderPlan plan = planFor(food);
+            ReminderPlan plan = planFor(food, effectiveSettings);
             if (!plan.enabled) {
                 continue;
             }
 
             if (DateRules.isYesterday(food.expiryDate)) {
                 briefing.yesterdayExpired.add(new DailyBriefing.Entry(food, plan, food.name));
-            } else if (DateRules.isToday(food.expiryDate)) {
+            } else if (DateRules.isToday(food.expiryDate) && !plan.dueDayHours.isEmpty()) {
                 briefing.todayDue.add(new DailyBriefing.Entry(
                         food,
                         plan,
                         food.name + "（" + join(plan.dueDayHours, "、") + "）"
                 ));
+            } else if (plan.usesAfterOpenDate
+                    && DateRules.isToday(plan.effectiveReminderDate)
+                    && !plan.dueDayHours.isEmpty()) {
+                briefing.todayDue.add(new DailyBriefing.Entry(
+                        food,
+                        plan,
+                        food.name + "：开封后建议今天处理"
+                ));
             } else if (plan.daysLeft > 0 && plan.hasReminderInNextDays(7)) {
-                briefing.upcoming.add(new DailyBriefing.Entry(food, plan, upcomingText(food, plan.daysLeft)));
+                briefing.upcoming.add(new DailyBriefing.Entry(food, plan, upcomingText(food, plan)));
             }
         }
 
@@ -135,6 +185,24 @@ final class ReminderPolicy {
         return new ArrayList<String>(Arrays.asList("09:00", "18:00"));
     }
 
+    static List<String> dueDayHours(String riskLevel, ReminderSettings settings) {
+        ReminderSettings effectiveSettings = ReminderSettings.validOrDefault(settings);
+        if (!effectiveSettings.enabled) {
+            return new ArrayList<String>();
+        }
+        if (effectiveSettings.usesDefaultTodaySlots()) {
+            return dueDayHours(riskLevel);
+        }
+        return effectiveSettings.todayReminderSlots();
+    }
+
+    private static String reminderEventLabel(int offset, boolean usesAfterOpenDate) {
+        if (usesAfterOpenDate) {
+            return offset == 0 ? "开封后建议处理日提醒" : "开封后提前 " + offset + " 天提醒";
+        }
+        return offset == 0 ? "到期日提醒" : "提前 " + offset + " 天提醒";
+    }
+
     private static int totalShelfLifeDays(FoodItem food, int daysLeft) {
         int dateSpan = DateRules.daysBetween(food.productionDate, food.expiryDate);
         if (dateSpan != INVALID_DAYS && dateSpan >= 1) {
@@ -150,6 +218,33 @@ final class ReminderPolicy {
                 return value * 30;
             }
             if ("year".equals(food.shelfLifeUnit)) {
+                return value * 365;
+            }
+        }
+
+        return Math.max(daysLeft, 1);
+    }
+
+    private static int afterOpenShelfLifeDays(FoodItem food, int daysLeft) {
+        String afterOpenRecommendedDate = DateRules.addAfterOpenShelfLife(
+                food.openedDate,
+                food.afterOpenShelfLifeValue,
+                food.afterOpenShelfLifeUnit
+        );
+        int dateSpan = DateRules.daysBetween(food.openedDate, afterOpenRecommendedDate);
+        if (dateSpan != INVALID_DAYS && dateSpan >= 1) {
+            return dateSpan;
+        }
+
+        if (food.afterOpenShelfLifeValue != null && food.afterOpenShelfLifeValue.intValue() > 0) {
+            int value = food.afterOpenShelfLifeValue.intValue();
+            if ("day".equals(food.afterOpenShelfLifeUnit)) {
+                return value;
+            }
+            if ("month".equals(food.afterOpenShelfLifeUnit)) {
+                return value * 30;
+            }
+            if ("year".equals(food.afterOpenShelfLifeUnit)) {
                 return value * 365;
             }
         }
@@ -430,26 +525,35 @@ final class ReminderPolicy {
     }
 
     private static String cardHint(FoodItem food, ReminderPlan plan) {
+        if (plan.usesAfterOpenDate) {
+            return afterOpenCardHint(food, plan);
+        }
+
+        String afterOpenSuffix = afterOpenSuffix(plan);
         if (plan.daysLeft < 0) {
-            return expiredCopy(food) + zeroQuantitySuffix(food);
+            return expiredCopy(food) + afterOpenSuffix + zeroQuantitySuffix(food);
         }
         if (plan.daysLeft == 0) {
-            return "今日提醒：" + join(plan.dueDayHours, "、") + " · " + plan.priorityBand + zeroQuantitySuffix(food);
+            return "今日提醒：" + join(plan.dueDayHours, "、") + " · " + plan.priorityBand + afterOpenSuffix + zeroQuantitySuffix(food);
         }
 
         ReminderEvent next = plan.nextFutureEvent();
         if (next != null) {
             int daysToReminder = DateRules.daysBetween(DateRules.todayString(), next.reminderDate);
             if (daysToReminder == 0) {
-                return "今日提醒：还有 " + plan.daysLeft + " 天到期 · " + plan.priorityBand + zeroQuantitySuffix(food);
+                return "今日提醒：还有 " + plan.daysLeft + " 天到期 · " + plan.priorityBand + afterOpenSuffix + zeroQuantitySuffix(food);
             }
-            return "提醒：" + daysToReminder + " 天后提醒 · " + plan.priorityBand + zeroQuantitySuffix(food);
+            return "提醒：" + daysToReminder + " 天后提醒 · " + plan.priorityBand + afterOpenSuffix + zeroQuantitySuffix(food);
         }
 
-        return "提醒：还有 " + plan.daysLeft + " 天到期 · " + plan.priorityBand + zeroQuantitySuffix(food);
+        return "提醒：还有 " + plan.daysLeft + " 天到期 · " + plan.priorityBand + afterOpenSuffix + zeroQuantitySuffix(food);
     }
 
     private static String nextReminderSummary(FoodItem food, ReminderPlan plan) {
+        if (plan.usesAfterOpenDate) {
+            return afterOpenNextReminderSummary(plan);
+        }
+
         if (plan.daysLeft < 0) {
             return expiredCopy(food);
         }
@@ -474,10 +578,77 @@ final class ReminderPolicy {
 
     private static String detailAdvice(FoodItem food, ReminderPlan plan) {
         String advice = plan.nextReminderSummary;
+        if (plan.usesAfterOpenDate) {
+            advice += "；最终可食用日期仍为 " + food.expiryDate;
+        } else if (plan.afterOpenRecommendedDate.length() > 0) {
+            advice += "；开封后建议处理日：" + plan.afterOpenRecommendedDate;
+        }
         if (food.remainingQuantity <= 0) {
             advice += "；剩余数量为 0，可标记已用完";
         }
         return advice;
+    }
+
+    private static String afterOpenCardHint(FoodItem food, ReminderPlan plan) {
+        if (plan.daysLeft < 0) {
+            return "开封后建议处理日已过：" + plan.afterOpenRecommendedDate
+                    + " · 最终可食用日期 " + food.expiryDate
+                    + zeroQuantitySuffix(food);
+        }
+        if (plan.daysLeft == 0) {
+            return "今日建议处理：开封后建议处理日 · "
+                    + plan.priorityBand
+                    + " · 最终可食用日期 " + food.expiryDate
+                    + zeroQuantitySuffix(food);
+        }
+
+        ReminderEvent next = plan.nextFutureEvent();
+        if (next != null) {
+            int daysToReminder = DateRules.daysBetween(DateRules.todayString(), next.reminderDate);
+            if (daysToReminder == 0) {
+                return "今日提醒：还有 " + plan.daysLeft + " 天到开封后建议处理日 · "
+                        + plan.priorityBand
+                        + zeroQuantitySuffix(food);
+            }
+            return "提醒：" + daysToReminder + " 天后提醒 · "
+                    + plan.priorityBand
+                    + " · 开封后建议 " + plan.afterOpenRecommendedDate
+                    + zeroQuantitySuffix(food);
+        }
+
+        return "提醒：还有 " + plan.daysLeft + " 天到开封后建议处理日 · "
+                + plan.priorityBand
+                + zeroQuantitySuffix(food);
+    }
+
+    private static String afterOpenNextReminderSummary(ReminderPlan plan) {
+        if (plan.daysLeft < 0) {
+            return "开封后建议处理日已过，请优先查看并按家庭习惯处理";
+        }
+        if (plan.daysLeft == 0) {
+            return "今天是开封后建议处理日，请优先查看";
+        }
+        if (plan.daysLeft == 1) {
+            return "明天到开封后建议处理日，建议优先安排";
+        }
+
+        ReminderEvent next = plan.nextFutureEvent();
+        if (next == null) {
+            return "还有 " + plan.daysLeft + " 天到开封后建议处理日，可以提前安排";
+        }
+
+        int daysToReminder = DateRules.daysBetween(DateRules.todayString(), next.reminderDate);
+        if (daysToReminder == 0) {
+            return "今天提醒：还有 " + plan.daysLeft + " 天到开封后建议处理日，请优先查看";
+        }
+        return daysToReminder + " 天后提醒：还有 " + plan.daysLeft + " 天到开封后建议处理日，可以提前安排";
+    }
+
+    private static String afterOpenSuffix(ReminderPlan plan) {
+        if (plan.afterOpenRecommendedDate.length() == 0) {
+            return "";
+        }
+        return " · 开封后建议 " + plan.afterOpenRecommendedDate;
     }
 
     private static String expiredCopy(FoodItem food) {
@@ -498,11 +669,18 @@ final class ReminderPolicy {
         return food.remainingQuantity <= 0 ? " · 可标记已用完" : "";
     }
 
-    private static String upcomingText(FoodItem food, int daysLeft) {
-        if (daysLeft == 1) {
+    private static String upcomingText(FoodItem food, ReminderPlan plan) {
+        if (plan.usesAfterOpenDate) {
+            if (plan.daysLeft == 1) {
+                return food.name + " 明天到开封后建议处理日";
+            }
+            return food.name + " " + plan.daysLeft + " 天后到开封后建议处理日";
+        }
+
+        if (plan.daysLeft == 1) {
             return food.name + " 明天到期";
         }
-        return food.name + " " + daysLeft + " 天后到期";
+        return food.name + " " + plan.daysLeft + " 天后到期";
     }
 
     private static String normalizedStorage(String value) {
@@ -569,5 +747,253 @@ final class ReminderPolicy {
 
     static String formattedScore(double score) {
         return String.format(Locale.US, "%.0f", score);
+    }
+}
+
+final class ReminderSettings {
+    static final boolean DEFAULT_ENABLED = true;
+    static final String DEFAULT_ADVANCE_DAYS_TEXT = "7,3,1,0";
+    static final String DEFAULT_TODAY_SLOTS_TEXT = "08:30,09:00,12:30,18:00,18:30";
+
+    final boolean enabled;
+    final List<Integer> advanceDays;
+    final List<String> todaySlots;
+
+    ReminderSettings(boolean enabled, List<Integer> advanceDays, List<String> todaySlots) {
+        this.enabled = enabled;
+        this.advanceDays = advanceDays == null || advanceDays.isEmpty()
+                ? parseAdvanceDaysOrNull(DEFAULT_ADVANCE_DAYS_TEXT)
+                : normalizeAdvanceDays(advanceDays);
+        this.todaySlots = todaySlots == null || todaySlots.isEmpty()
+                ? parseTodaySlotsOrNull(DEFAULT_TODAY_SLOTS_TEXT)
+                : normalizeTodaySlots(todaySlots);
+    }
+
+    static ReminderSettings defaults() {
+        return fromStoredValues(DEFAULT_ENABLED, DEFAULT_ADVANCE_DAYS_TEXT, DEFAULT_TODAY_SLOTS_TEXT);
+    }
+
+    static ReminderSettings validOrDefault(ReminderSettings settings) {
+        return settings == null ? defaults() : settings;
+    }
+
+    static ReminderSettings fromStoredValues(boolean enabled, String advanceDaysText, String todaySlotsText) {
+        List<Integer> advanceDays = parseAdvanceDaysOrNull(advanceDaysText);
+        List<String> todaySlots = parseTodaySlotsOrNull(todaySlotsText);
+        return new ReminderSettings(
+                enabled,
+                advanceDays == null ? parseAdvanceDaysOrNull(DEFAULT_ADVANCE_DAYS_TEXT) : advanceDays,
+                todaySlots == null ? parseTodaySlotsOrNull(DEFAULT_TODAY_SLOTS_TEXT) : todaySlots
+        );
+    }
+
+    static ReminderSettings fromInput(boolean enabled, String advanceDaysText, String todaySlotsText) {
+        List<Integer> advanceDays = parseAdvanceDaysOrNull(advanceDaysText);
+        List<String> todaySlots = parseTodaySlotsOrNull(todaySlotsText);
+        if (advanceDays == null || todaySlots == null) {
+            return null;
+        }
+        return new ReminderSettings(enabled, advanceDays, todaySlots);
+    }
+
+    List<Integer> offsetsFor(List<Integer> policyOffsets, int totalShelfLifeDays) {
+        if (!enabled) {
+            return new ArrayList<Integer>();
+        }
+        if (usesDefaultAdvanceDays()) {
+            return new ArrayList<Integer>(policyOffsets);
+        }
+
+        List<Integer> result = new ArrayList<Integer>();
+        for (Integer offset : advanceDays) {
+            if (offset != null
+                    && offset.intValue() >= 0
+                    && offset.intValue() <= totalShelfLifeDays
+                    && !result.contains(offset)) {
+                result.add(offset);
+            }
+        }
+        sortOffsetsDescending(result);
+        return result;
+    }
+
+    boolean usesDefaultAdvanceDays() {
+        return sameIntegers(advanceDays, parseAdvanceDaysOrNull(DEFAULT_ADVANCE_DAYS_TEXT));
+    }
+
+    boolean usesDefaultTodaySlots() {
+        return sameStrings(todaySlots, parseTodaySlotsOrNull(DEFAULT_TODAY_SLOTS_TEXT));
+    }
+
+    List<String> todayReminderSlots() {
+        return new ArrayList<String>(todaySlots);
+    }
+
+    String advanceDaysText() {
+        return joinIntegers(advanceDays);
+    }
+
+    String todaySlotsText() {
+        return joinStrings(todaySlots);
+    }
+
+    String summaryText() {
+        return (enabled ? "已启用" : "已关闭")
+                + "；提前天数 " + advanceDaysText()
+                + "；今日时段 " + todaySlotsText();
+    }
+
+    private static List<Integer> normalizeAdvanceDays(List<Integer> source) {
+        List<Integer> result = new ArrayList<Integer>();
+        for (Integer value : source) {
+            if (value == null || value.intValue() < 0 || result.contains(value)) {
+                continue;
+            }
+            result.add(value);
+        }
+        sortOffsetsDescending(result);
+        return result;
+    }
+
+    private static List<String> normalizeTodaySlots(List<String> source) {
+        List<String> result = new ArrayList<String>();
+        for (String value : source) {
+            String slot = normalizeSlot(value);
+            if (slot.length() > 0 && !result.contains(slot)) {
+                result.add(slot);
+            }
+        }
+        return result;
+    }
+
+    private static List<Integer> parseAdvanceDaysOrNull(String raw) {
+        String text = FoodItem.cleanText(raw);
+        if (text.length() == 0) {
+            return null;
+        }
+
+        String[] parts = text.split(",");
+        List<Integer> result = new ArrayList<Integer>();
+        for (int index = 0; index < parts.length; index++) {
+            String part = FoodItem.cleanText(parts[index]);
+            if (part.length() == 0) {
+                return null;
+            }
+            try {
+                Integer value = Integer.valueOf(Integer.parseInt(part));
+                if (value.intValue() < 0) {
+                    return null;
+                }
+                if (!result.contains(value)) {
+                    result.add(value);
+                }
+            } catch (NumberFormatException ignored) {
+                return null;
+            }
+        }
+
+        if (result.isEmpty()) {
+            return null;
+        }
+        sortOffsetsDescending(result);
+        return result;
+    }
+
+    private static List<String> parseTodaySlotsOrNull(String raw) {
+        String text = FoodItem.cleanText(raw);
+        if (text.length() == 0) {
+            return null;
+        }
+
+        String[] parts = text.split(",");
+        List<String> result = new ArrayList<String>();
+        for (int index = 0; index < parts.length; index++) {
+            String slot = normalizeSlot(parts[index]);
+            if (slot.length() == 0) {
+                return null;
+            }
+            if (!result.contains(slot)) {
+                result.add(slot);
+            }
+        }
+
+        return result.isEmpty() ? null : result;
+    }
+
+    private static String normalizeSlot(String raw) {
+        String text = FoodItem.cleanText(raw);
+        int separator = text.indexOf(':');
+        if (separator <= 0 || separator != text.lastIndexOf(':') || separator == text.length() - 1) {
+            return "";
+        }
+
+        try {
+            int hour = Integer.parseInt(text.substring(0, separator));
+            int minute = Integer.parseInt(text.substring(separator + 1));
+            if (hour < 0 || hour > 23 || minute < 0 || minute > 59) {
+                return "";
+            }
+            return String.format(Locale.US, "%02d:%02d", hour, minute);
+        } catch (NumberFormatException ignored) {
+            return "";
+        }
+    }
+
+    private static boolean sameIntegers(List<Integer> left, List<Integer> right) {
+        if (left == null || right == null || left.size() != right.size()) {
+            return false;
+        }
+        for (int index = 0; index < left.size(); index++) {
+            if (!left.get(index).equals(right.get(index))) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    private static boolean sameStrings(List<String> left, List<String> right) {
+        if (left == null || right == null || left.size() != right.size()) {
+            return false;
+        }
+        for (int index = 0; index < left.size(); index++) {
+            if (!left.get(index).equals(right.get(index))) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    private static void sortOffsetsDescending(List<Integer> offsets) {
+        for (int index = 1; index < offsets.size(); index++) {
+            Integer current = offsets.get(index);
+            int cursor = index - 1;
+            while (cursor >= 0 && offsets.get(cursor).intValue() < current.intValue()) {
+                offsets.set(cursor + 1, offsets.get(cursor));
+                cursor--;
+            }
+            offsets.set(cursor + 1, current);
+        }
+    }
+
+    private static String joinIntegers(List<Integer> values) {
+        StringBuilder builder = new StringBuilder();
+        for (int index = 0; index < values.size(); index++) {
+            if (index > 0) {
+                builder.append(',');
+            }
+            builder.append(values.get(index));
+        }
+        return builder.toString();
+    }
+
+    private static String joinStrings(List<String> values) {
+        StringBuilder builder = new StringBuilder();
+        for (int index = 0; index < values.size(); index++) {
+            if (index > 0) {
+                builder.append(',');
+            }
+            builder.append(values.get(index));
+        }
+        return builder.toString();
     }
 }

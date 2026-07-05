@@ -10,7 +10,12 @@ final class ReminderPlan {
     String riskLabel = "中风险";
     String riskReason = "";
     int totalShelfLifeDays = 1;
+    int expiryDaysLeft = Integer.MIN_VALUE;
     int daysLeft = Integer.MIN_VALUE;
+    int afterOpenDaysLeft = Integer.MIN_VALUE;
+    String afterOpenRecommendedDate = "";
+    String effectiveReminderDate = "";
+    boolean usesAfterOpenDate = false;
     double priorityScore = 0;
     String priorityBand = "普通";
     String nextReminderSummary = "";

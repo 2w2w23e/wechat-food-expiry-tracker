@@ -1,12 +1,14 @@
 # 食期管家 Android APK
 
-这个目录包含“食期管家”的原生 Android 本地版。当前发布候选版本聚焦手动录入、本地存储、到期排序、提醒规划、系统通知、商品码识别和已用完归档。
+这个目录包含“食期管家”的原生 Android 本地版。当前 APK 本地版聚焦手动录入、本地存储、到期排序、提醒规划、系统通知、商品码识别和已用完归档；当前不考虑应用商店发布或云存储。
 
 微信小程序源码已封存在 `../miniprogram/`，除非明确恢复小程序端开发，否则不继续迭代。
 
 ## 构建
 
 当前 APK 版本号：`versionName 0.3.1`，`versionCode 4`。每次生成新的可交付 APK 时，都需要同步提升 `AndroidManifest.xml` 里的 `versionName` 和 `versionCode`。
+
+构建脚本依赖本机 Android SDK 命令行工具。若当前机器缺少 Android SDK，APK 构建应标记为环境阻塞，待补齐环境后再验证。
 
 默认构建本地调试安装包：
 
@@ -58,12 +60,12 @@ apk/build/outputs/apk/shiqi-android-release.apk
 - 已用完归档和恢复
 - Android 本地存储
 
-## 发布整理
+## 本地交付整理
 
 - 已移除示例数据加载入口。
 - 已移除内置 mock/sample 食品数据。
 - 已移除测试定时系统提醒按钮和测试通知 action。
-- 发布包不会写入 API Key、OCR Key、OpenAI Key 或其他密钥。
+- APK 包不会写入 API Key、OCR Key、OpenAI Key 或其他密钥。
 - 条码、二维码实时预览帧和图库图片解码使用 ZXing core；商品信息查询使用网络请求，不在客户端内置密钥。
 
 ## 当前不做
@@ -71,6 +73,7 @@ apk/build/outputs/apk/shiqi-android-release.apk
 - 云数据库
 - 账号体系
 - 多设备同步
+- 应用商店发布流程
 - OCR
 - AI 智能识别
 - WorkManager 或复杂后台服务

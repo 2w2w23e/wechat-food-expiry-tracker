@@ -24,6 +24,12 @@ final class DateRules {
         return parseDateParts(value) != null;
     }
 
+    static boolean isShelfLifeUnit(String shelfLifeUnit) {
+        return "day".equals(shelfLifeUnit)
+                || "month".equals(shelfLifeUnit)
+                || "year".equals(shelfLifeUnit);
+    }
+
     static String addShelfLife(String productionDate, Integer shelfLifeValue, String shelfLifeUnit) {
         DateParts date = parseDateParts(productionDate);
         if (date == null || shelfLifeValue == null || shelfLifeValue.intValue() <= 0) {
@@ -44,6 +50,10 @@ final class DateRules {
         }
 
         return "";
+    }
+
+    static String addAfterOpenShelfLife(String openedDate, Integer afterOpenShelfLifeValue, String afterOpenShelfLifeUnit) {
+        return addShelfLife(openedDate, afterOpenShelfLifeValue, afterOpenShelfLifeUnit);
     }
 
     static String getExpiryStatus(String expiryDate) {

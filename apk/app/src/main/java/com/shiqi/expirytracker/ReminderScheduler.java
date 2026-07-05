@@ -6,10 +6,12 @@ import android.app.NotificationManager;
 import android.app.PendingIntent;
 import android.content.Context;
 import android.content.Intent;
+import android.content.SharedPreferences;
 import android.content.pm.PackageManager;
 import android.os.Build;
 
 import java.util.Calendar;
+import java.util.List;
 
 final class ReminderScheduler {
     static final String ACTION_DAILY_BRIEFING = "com.shiqi.expirytracker.action.DAILY_BRIEFING";
@@ -18,17 +20,29 @@ final class ReminderScheduler {
     static final String CHANNEL_ID = "food_expiry_reminders";
 
     private static final String ACTION_LEGACY_DAILY_REMINDER = "com.shiqi.expirytracker.action.DAILY_REMINDER";
+    private static final String PREFS_NAME = "shiqi_android_v0";
+    private static final String PREF_REMINDER_ENABLED = "reminder_enabled_v0";
+    private static final String PREF_REMINDER_ADVANCE_DAYS = "reminder_advance_days_v0";
+    private static final String PREF_REMINDER_TODAY_SLOTS = "reminder_today_slots_v0";
     private static final int REQUEST_CODE_DAILY_BRIEFING = 7001;
     private static final int REQUEST_CODE_DUE_DAY_BASE = 7100;
+    private static final int MAX_DUE_DAY_SLOT_REQUESTS = 12;
     private static final int BRIEFING_HOUR = 8;
     private static final int BRIEFING_MINUTE = 30;
-    private static final String[] DUE_DAY_SLOTS = new String[] { "08:30", "09:00", "12:30", "18:00", "18:30" };
+    private static final String[] DEFAULT_DUE_DAY_SLOTS = new String[] { "08:30", "09:00", "12:30", "18:00", "18:30" };
+    private static ReminderSettings activeSettings = ReminderSettings.defaults();
 
     private ReminderScheduler() {}
 
     static void scheduleDaily(Context context) {
+        scheduleDaily(context, loadSettings(context));
+    }
+
+    static void scheduleDaily(Context context, ReminderSettings settings) {
         Context appContext = context.getApplicationContext();
-        ensureNotificationChannel(appContext);
+        ReminderSettings effectiveSettings = ReminderSettings.validOrDefault(settings);
+        activeSettings = effectiveSettings;
+        ReminderPolicy.useSettings(effectiveSettings);
 
         AlarmManager alarmManager = (AlarmManager) appContext.getSystemService(Context.ALARM_SERVICE);
         if (alarmManager == null) {
@@ -36,6 +50,12 @@ final class ReminderScheduler {
         }
 
         cancelLegacyDaily(appContext, alarmManager);
+        cancelCurrentSchedules(appContext, alarmManager);
+        if (!effectiveSettings.enabled) {
+            return;
+        }
+
+        ensureNotificationChannel(appContext);
 
         alarmManager.setInexactRepeating(
                 AlarmManager.RTC_WAKEUP,
@@ -44,8 +64,10 @@ final class ReminderScheduler {
                 briefingPendingIntent(appContext)
         );
 
-        for (int index = 0; index < DUE_DAY_SLOTS.length; index++) {
-            String slot = DUE_DAY_SLOTS[index];
+        String[] slots = dueDaySlots(effectiveSettings);
+        int count = Math.min(slots.length, MAX_DUE_DAY_SLOT_REQUESTS);
+        for (int index = 0; index < count; index++) {
+            String slot = slots[index];
             int[] parts = timeParts(slot);
             alarmManager.setInexactRepeating(
                     AlarmManager.RTC_WAKEUP,
@@ -54,6 +76,30 @@ final class ReminderScheduler {
                     dueDayPendingIntent(appContext, slot, index)
             );
         }
+    }
+
+    static ReminderSettings loadSettings(Context context) {
+        if (context == null) {
+            return ReminderSettings.defaults();
+        }
+
+        SharedPreferences preferences = context.getApplicationContext().getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE);
+        return ReminderSettings.fromStoredValues(
+                preferences.getBoolean(PREF_REMINDER_ENABLED, ReminderSettings.DEFAULT_ENABLED),
+                preferences.getString(PREF_REMINDER_ADVANCE_DAYS, ReminderSettings.DEFAULT_ADVANCE_DAYS_TEXT),
+                preferences.getString(PREF_REMINDER_TODAY_SLOTS, ReminderSettings.DEFAULT_TODAY_SLOTS_TEXT)
+        );
+    }
+
+    static void saveSettings(Context context, ReminderSettings settings) {
+        ReminderSettings effectiveSettings = ReminderSettings.validOrDefault(settings);
+        SharedPreferences preferences = context.getApplicationContext().getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE);
+        preferences.edit()
+                .putBoolean(PREF_REMINDER_ENABLED, effectiveSettings.enabled)
+                .putString(PREF_REMINDER_ADVANCE_DAYS, effectiveSettings.advanceDaysText())
+                .putString(PREF_REMINDER_TODAY_SLOTS, effectiveSettings.todaySlotsText())
+                .apply();
+        scheduleDaily(context, effectiveSettings);
     }
 
     static void ensureNotificationChannel(Context context) {
@@ -90,11 +136,36 @@ final class ReminderScheduler {
     }
 
     static String reminderTimeLabel() {
-        return "每天 08:30 简报；今日到期按 08:30、09:00、12:30、18:00、18:30 提醒";
+        return reminderTimeLabel(activeSettings);
+    }
+
+    static String reminderTimeLabel(ReminderSettings settings) {
+        ReminderSettings effectiveSettings = ReminderSettings.validOrDefault(settings);
+        if (!effectiveSettings.enabled) {
+            return "全局提醒已关闭";
+        }
+
+        String advanceText = effectiveSettings.usesDefaultAdvanceDays()
+                ? "提前天数按当前默认规则"
+                : "提前 " + effectiveSettings.advanceDaysText() + " 天";
+        String todayText = effectiveSettings.usesDefaultTodaySlots()
+                ? "今日到期按风险时段 " + joinArray(DEFAULT_DUE_DAY_SLOTS)
+                : "今日到期按 " + effectiveSettings.todaySlotsText();
+        return "每天 08:30 简报；" + todayText + " 提醒；" + advanceText;
     }
 
     static String[] dueDaySlots() {
-        return DUE_DAY_SLOTS.clone();
+        return dueDaySlots(activeSettings);
+    }
+
+    static String[] dueDaySlots(ReminderSettings settings) {
+        ReminderSettings effectiveSettings = ReminderSettings.validOrDefault(settings);
+        if (effectiveSettings.usesDefaultTodaySlots()) {
+            return DEFAULT_DUE_DAY_SLOTS.clone();
+        }
+
+        List<String> slots = effectiveSettings.todayReminderSlots();
+        return slots.toArray(new String[slots.size()]);
     }
 
     private static PendingIntent briefingPendingIntent(Context context) {
@@ -135,6 +206,32 @@ final class ReminderScheduler {
         }
     }
 
+    private static void cancelCurrentSchedules(Context context, AlarmManager alarmManager) {
+        PendingIntent briefing = PendingIntent.getBroadcast(
+                context,
+                REQUEST_CODE_DAILY_BRIEFING,
+                new Intent(context, ReminderReceiver.class).setAction(ACTION_DAILY_BRIEFING),
+                PendingIntent.FLAG_NO_CREATE | PendingIntent.FLAG_IMMUTABLE
+        );
+        if (briefing != null) {
+            alarmManager.cancel(briefing);
+            briefing.cancel();
+        }
+
+        for (int index = 0; index < MAX_DUE_DAY_SLOT_REQUESTS; index++) {
+            PendingIntent dueDay = PendingIntent.getBroadcast(
+                    context,
+                    REQUEST_CODE_DUE_DAY_BASE + index,
+                    new Intent(context, ReminderReceiver.class).setAction(ACTION_DUE_DAY_REMINDER),
+                    PendingIntent.FLAG_NO_CREATE | PendingIntent.FLAG_IMMUTABLE
+            );
+            if (dueDay != null) {
+                alarmManager.cancel(dueDay);
+                dueDay.cancel();
+            }
+        }
+    }
+
     private static long nextTimeMillis(int hour, int minute) {
         Calendar calendar = Calendar.getInstance();
         calendar.set(Calendar.HOUR_OF_DAY, hour);
@@ -154,5 +251,16 @@ final class ReminderScheduler {
                 Integer.parseInt(value.substring(0, 2)),
                 Integer.parseInt(value.substring(3, 5))
         };
+    }
+
+    private static String joinArray(String[] values) {
+        StringBuilder builder = new StringBuilder();
+        for (int index = 0; index < values.length; index++) {
+            if (index > 0) {
+                builder.append('、');
+            }
+            builder.append(values[index]);
+        }
+        return builder.toString();
     }
 }
