@@ -247,7 +247,7 @@ public final class MainActivity extends Activity {
         });
         actionRow.addView(scanButton, weightWrap(1));
 
-        Button dateOcrButton = outlineButton("视频识别日期");
+        Button dateOcrButton = outlineButton("\u8bc6\u522b\u5305\u88c5\u6587\u5b57");
         dateOcrButton.setTextColor(COLOR_PRIMARY);
         dateOcrButton.setOnClickListener(new View.OnClickListener() {
             @Override

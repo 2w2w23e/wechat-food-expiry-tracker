@@ -61,6 +61,7 @@ public final class DateOcrScanActivity extends ComponentActivity {
     private String latestRawText = "";
     private long lastAnalyzeAt;
     private volatile boolean analysisInFlight;
+    private boolean cameraBound;
 
     private final Executor mainExecutor = new Executor() {
         @Override
@@ -141,7 +142,7 @@ public final class DateOcrScanActivity extends ComponentActivity {
         topActions.addView(closeButton, fixed(76, 42));
 
         TextView title = new TextView(this);
-        title.setText("识别生产日期");
+        title.setText("\u8bc6\u522b\u5305\u88c5\u6587\u5b57");
         title.setTextColor(Color.WHITE);
         title.setTextSize(18);
         title.setTypeface(Typeface.DEFAULT, Typeface.BOLD);
@@ -252,14 +253,37 @@ public final class DateOcrScanActivity extends ComponentActivity {
             public void run() {
                 try {
                     cameraProvider = providerFuture.get();
+                    if (!hasBackCamera(cameraProvider)) {
+                        showCameraUnavailable("\u672a\u627e\u5230\u53ef\u7528\u540e\u7f6e\u76f8\u673a\uff0c\u53ef\u4ee5\u8fd4\u56de\u540e\u624b\u52a8\u65b0\u589e\u98df\u54c1");
+                        return;
+                    }
                     bindCameraUseCases(cameraProvider);
+                    cameraBound = true;
                     statusText.setText("正在识别，尽量让文字占满框内并保持清晰");
                 } catch (Exception error) {
-                    statusText.setText("相机启动失败，可以返回后手动新增食品");
+                    showCameraUnavailable("\u76f8\u673a\u542f\u52a8\u5931\u8d25\uff0c\u53ef\u4ee5\u8fd4\u56de\u540e\u624b\u52a8\u65b0\u589e\u98df\u54c1");
                     Toast.makeText(DateOcrScanActivity.this, "相机启动失败", Toast.LENGTH_SHORT).show();
                 }
             }
         }, mainExecutor);
+    }
+
+    private boolean hasBackCamera(ProcessCameraProvider provider) {
+        try {
+            return provider.hasCamera(CameraSelector.DEFAULT_BACK_CAMERA);
+        } catch (Exception error) {
+            return false;
+        }
+    }
+
+    private void showCameraUnavailable(String message) {
+        cameraBound = false;
+        statusText.setText(message);
+        candidateText.setText("\u5019\u9009\uff1a\u76f8\u673a\u4e0d\u53ef\u7528\uff0c\u8bf7\u624b\u52a8\u8f93\u5165");
+        rawText.setText("\u539f\u59cb OCR\uff1a\u6682\u65e0");
+        useButton.setEnabled(false);
+        useButton.setAlpha(0.45f);
+        stopCamera();
     }
 
     private void bindCameraUseCases(ProcessCameraProvider provider) {
@@ -287,6 +311,7 @@ public final class DateOcrScanActivity extends ComponentActivity {
     }
 
     private void stopCamera() {
+        cameraBound = false;
         if (cameraProvider != null) {
             cameraProvider.unbindAll();
             cameraProvider = null;
@@ -296,7 +321,7 @@ public final class DateOcrScanActivity extends ComponentActivity {
 
     private void analyzeImage(final ImageProxy imageProxy) {
         long now = SystemClock.uptimeMillis();
-        if (analysisInFlight || now - lastAnalyzeAt < ANALYZE_INTERVAL_MS) {
+        if (!cameraBound || analysisInFlight || now - lastAnalyzeAt < ANALYZE_INTERVAL_MS) {
             imageProxy.close();
             return;
         }

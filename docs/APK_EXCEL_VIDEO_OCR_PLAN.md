@@ -125,7 +125,7 @@
 
 ## 5. 视频识别产品流程建议
 
-入口命名：`视频识别日期` 或在扫码页新增 `识别生产日期`。
+入口命名：当前 APK 使用 `识别包装文字`，强调这是包装表面文字候选识别；旧方案中的 `视频识别日期` 仅作为历史备选。
 
 交互流程：
 
@@ -217,6 +217,8 @@
 
 ### OCR-002：CameraX + ML Kit POC
 
+状态：已完成 APK POC。当前入口为 `识别包装文字`，页面只输出 raw OCR、候选摘要和表单草稿，不直接保存食品。
+
 - 引入 CameraX Preview + ImageAnalysis。
 - 引入 ML Kit Text Recognition v2 Chinese。
 - 使用 `STRATEGY_KEEP_ONLY_LATEST`，避免积压帧。
@@ -235,13 +237,13 @@
 
 ### OCR-004：多帧投票和确认页
 
-状态：多帧投票纯 Java 逻辑已完成，位置为 `apk/app/src/main/java/com/shiqi/expirytracker/DateOcrFrameVoter.java`；确认页 UI 和表单预填仍留给 `OCR-002` / 后续 UI 节点。
+状态：多帧投票纯 Java 逻辑已完成，位置为 `apk/app/src/main/java/com/shiqi/expirytracker/DateOcrFrameVoter.java`；稳定候选现已进入用户确认流，确认后只预填新增食品表单，表单保存前不写入本地食品数据。
 
 - 对连续帧候选做投票，默认至少 2 帧命中同一候选才算稳定。
 - 候选冲突时不进入 ready 状态，必须要求用户人工确认。
 - 输出 `productionDate`、`shelfLife`、`expiryDate`、`calculatedExpiryDate` 的稳定候选，但仍全部标记为 `candidateOnly`。
 - JVM 测试覆盖重复候选进入确认、单帧不足不确认、重复冲突不确认。
-- 后续 UI 节点：只在候选稳定后提示确认；进入食品表单时只预填字段；用户在表单保存前不写食品数据。
+- 当前 UI 节点：只在候选稳定后允许“使用候选”；候选返回后先弹窗确认，再进入食品表单预填；用户在表单保存前不写食品数据。
 
 ### OCR-005：PaddleOCR 对比实验
 
@@ -288,10 +290,10 @@ Excel：
 - 新增 `DateOcrScanActivity`，使用 CameraX `Preview` + `ImageAnalysis`，并显式使用 `STRATEGY_KEEP_ONLY_LATEST`，避免实时识别积压帧。
 - 新增 ML Kit Text Recognition v2 Chinese 本地识别依赖，使用 `InputImage.fromMediaImage(..., imageProxy.getImageInfo().getRotationDegrees())` 处理 CameraX 帧。
 - 新增 `DateOcrResultPayload`，把稳定候选转换为可编辑 `FoodItem` 草稿；不写入 `FoodStore`，不写入 notes，不保存 raw OCR。
-- 主页面新增“视频识别日期”入口；稳定候选返回后先弹出用户确认，再进入新增表单预填，最终保存仍复用原表单“保存”按钮。
+- 主页面新增“识别包装文字”入口；稳定候选返回后先弹出用户确认，再进入新增表单预填，最终保存仍复用原表单“保存”按钮。
 - `apk/build-apk.ps1` 的 debug 路径改为委托 Gradle 构建并复制到原输出路径，因为 CameraX / ML Kit 是 AAR/Maven 依赖，不适合继续由手工 `javac + d8` 打包。
 
 仍未声明完成的内容：
 
-- 真实食品包装上的准确率评估仍需要使用 `video/` 样本和真机/模拟器摄像头继续回归。
+- 当前视觉 QA 已覆盖首页“识别包装文字”入口和无可用相机时的 OCR 页面降级态；允许权限后的实时预览、动态候选和“使用候选”可点击态仍需要真机或稳定摄像头模拟器继续回归。
 - 当前 POC 不做自动选择冲突候选，不做云端 OCR，不引入 API key，不上传视频或图片。
