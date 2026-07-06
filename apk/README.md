@@ -6,7 +6,7 @@
 
 ## 构建
 
-当前 APK 版本号：`versionName 0.3.3`，`versionCode 6`。每次生成新的可交付 APK 时，都需要同步提升 `AndroidManifest.xml` 和 `apk/app/build.gradle` 里的 `versionName` 和 `versionCode`。
+当前 APK 版本号：`versionName 0.3.5`，`versionCode 8`。每次生成新的可交付 APK 时，都需要同步提升 `AndroidManifest.xml` 和 `apk/app/build.gradle` 里的 `versionName` 和 `versionCode`。
 
 构建脚本依赖本机 Android SDK 命令行工具。若当前机器缺少 Android SDK，APK 构建应标记为环境阻塞，待补齐环境后再验证。
 
@@ -61,6 +61,7 @@ apk/build/outputs/apk/shiqi-android-release.apk
 - 状态多选筛选和分类多选筛选
 - 食品搜索，支持中文、拼音和首字母匹配
 - 统一智能识别：同一页面支持相机、视频模拟、图片和手动兜底，自动尝试商品码、商品信息查询和包装文字 OCR，商品码、商品名、生产日期、保质期和最终日期进入同一个结果面板
+- 视频识别修复：视频帧会使用多个放大裁剪区域、条码 OCR 兜底和包装文字候选锁定；无商品名时使用“条码商品 + 商品码”作为可保存候选名
 - 商品码识别：支持一维商品条码、QR Code / Data Matrix 中的 GS1 Digital Link 或商品码参数；商品信息查询先走现有 GS1 接口，未命中时对进口商品补查中国商品信息服务平台公开进口商品数据
 - 根据商品名和条码分类信息智能建议食品分类，保存前仍需用户确认
 - 包装文字 OCR：使用 ML Kit Text Recognition v2 Chinese 生成生产日期 / 保质期候选，多帧稳定后才允许填入表单

@@ -777,6 +777,18 @@ public final class LocalLogicTest {
                 assertFalse(result.hasAnyCandidate(), "barcode-like and invalid data should not create candidates");
             }
         });
+
+        test("DateOcrParser ignores unhinted six digit screen noise but keeps hinted spray code", new TestCase() {
+            public void run() {
+                DateOcrParser.Result noise = DateOcrParser.parse("屏幕录制 154606 00:20 80");
+                assertFalse(noise.hasAnyCandidate(), "screen timers should not become weak dates");
+
+                DateOcrParser.Result hinted = DateOcrParser.parse("喷码 250506 保质期:540天");
+                assertEquals("2025-05-06", hinted.productionDates.get(0).normalized);
+                assertEquals(540, hinted.shelfLives.get(0).value);
+                assertEquals("day", hinted.shelfLives.get(0).unit);
+            }
+        });
     }
 
     private void runDateOcrFrameVoterTests() {
@@ -911,6 +923,39 @@ public final class LocalLogicTest {
     }
 
     private void runUnifiedRecognitionStabilizerTests() {
+        test("RecognitionTextCleaner removes screen-recorded app UI but keeps label candidates", new TestCase() {
+            public void run() {
+                String cleaned = RecognitionTextCleaner.cleanForPackagingOcr(
+                        "识别结果\n"
+                                + "商品码 未发现稳定条码\n"
+                                + "条码 / 生产日期 / 保质期\n"
+                                + "保质期:540天\n"
+                                + "6920459940310\n"
+                                + "填入新增表单"
+                );
+
+                assertFalse(cleaned.contains("识别结果"), "screen-recorded result panel should be removed");
+                assertFalse(cleaned.contains("填入新增表单"), "screen-recorded button text should be removed");
+                assertTrue(cleaned.contains("保质期:540天"), "real shelf life should stay");
+                assertEquals("6920459940310", RecognitionTextCleaner.extractProductCodeFromOcr(cleaned));
+            }
+        });
+
+        test("RecognitionTextCleaner extracts packaging product name from OCR text", new TestCase() {
+            public void run() {
+                String name = RecognitionTextCleaner.extractProductNameFromOcr(
+                        "大董老北京\n"
+                                + "炸酱面 约2人份\n"
+                                + "配料：小麦粉、饮用水\n"
+                                + "净含量 550g"
+                );
+
+                assertTrue(name.contains("大董老北京") || name.contains("炸酱面"),
+                        "product name should come from visible packaging words");
+                assertFalse(name.contains("配料"), "ingredients line should not become product name");
+            }
+        });
+
         test("UnifiedRecognitionStabilizer locks barcode after repeated frames", new TestCase() {
             public void run() {
                 UnifiedRecognitionStabilizer stabilizer = new UnifiedRecognitionStabilizer(6, 3);
@@ -942,6 +987,29 @@ public final class LocalLogicTest {
                 );
                 assertEquals("4006381333931", afterNoise.stableBarcode);
                 assertTrue(afterNoise.hasFillableCandidate(), "empty frames must not clear locked barcode");
+            }
+        });
+
+        test("UnifiedRecognitionStabilizer locks packaging text as fillable candidate without changing it later", new TestCase() {
+            public void run() {
+                UnifiedRecognitionStabilizer stabilizer = new UnifiedRecognitionStabilizer(6, 3);
+
+                UnifiedRecognitionStabilizer.Snapshot first = stabilizer.addFrame(
+                        "",
+                        DateOcrParser.parse("大董老北京\n炸酱面"),
+                        "大董老北京\n炸酱面",
+                        false
+                );
+                assertTrue(first.hasStablePackagingName(), "first high-confidence packaging name should lock");
+                assertTrue(first.hasFillableCandidate(), "locked packaging name should allow confirmation");
+
+                UnifiedRecognitionStabilizer.Snapshot second = stabilizer.addFrame(
+                        "",
+                        DateOcrParser.parse("大董老北京\n炸酱面"),
+                        "大董老北京\n炸酱面",
+                        false
+                );
+                assertEquals(first.stablePackagingName, second.stablePackagingName);
             }
         });
 
@@ -1028,7 +1096,7 @@ public final class LocalLogicTest {
             }
         });
 
-        test("UnifiedRecognitionPayload keeps barcode-only result usable for confirmation", new TestCase() {
+        test("UnifiedRecognitionPayload keeps barcode-only result savable without manual name input", new TestCase() {
             public void run() {
                 FoodItem draft = UnifiedRecognitionPayload.toDraft(
                         "036000291452",
@@ -1042,9 +1110,30 @@ public final class LocalLogicTest {
                         ""
                 );
 
-                assertEquals("", draft.name);
+                assertEquals("条码商品 036000291452", draft.name);
+                assertEquals("none", draft.dateSource);
                 assertTrue(draft.notes.contains("036000291452"), "barcode-only result should be preserved in notes");
                 assertTrue(UnifiedRecognitionPayload.hasUsableDraft(draft), "barcode-only draft should be editable");
+            }
+        });
+
+        test("UnifiedRecognitionPayload keeps packaging-text-only result savable without manual date input", new TestCase() {
+            public void run() {
+                FoodItem draft = UnifiedRecognitionPayload.toDraft(
+                        "",
+                        "大董老北京 炸酱面",
+                        "",
+                        "",
+                        "",
+                        "",
+                        false,
+                        null,
+                        ""
+                );
+
+                assertEquals("大董老北京 炸酱面", draft.name);
+                assertEquals("none", draft.dateSource);
+                assertTrue(UnifiedRecognitionPayload.hasUsableDraft(draft), "text-only draft should be editable");
             }
         });
     }

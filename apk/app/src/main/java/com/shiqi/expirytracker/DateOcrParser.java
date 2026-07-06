@@ -73,6 +73,9 @@ final class DateOcrParser {
             String hintContext = nearbyHintText(text, matcher.start(1), matcher.end(1));
             boolean productionHint = PRODUCTION_HINT.matcher(hintContext).find();
             boolean expiryHint = EXPIRY_HINT.matcher(hintContext).find();
+            if (!productionHint && !expiryHint && compactDigitLength(raw) == 6) {
+                continue;
+            }
 
             if (productionHint) {
                 productionDates.add(new DateCandidate("productionDate", raw, normalized, context, 0.88d, false, false));
@@ -181,6 +184,17 @@ final class DateOcrParser {
         }
 
         return "";
+    }
+
+    private static int compactDigitLength(String raw) {
+        int count = 0;
+        for (int index = 0; index < raw.length(); index++) {
+            char current = raw.charAt(index);
+            if (current >= '0' && current <= '9') {
+                count++;
+            }
+        }
+        return count;
     }
 
     private static String formatDate(String yearText, String monthText, String dayText) {
