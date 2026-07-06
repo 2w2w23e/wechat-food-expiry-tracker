@@ -499,6 +499,8 @@ public final class LocalLogicTest {
         runDateOcrParserTests();
         runDateOcrFrameVoterTests();
         runDateOcrResultPayloadTests();
+        runUnifiedRecognitionStabilizerTests();
+        runUnifiedRecognitionPayloadTests();
 
         System.out.println("Local logic tests: " + passed + " passed, " + failed + " failed.");
         if (failed > 0) {
@@ -904,6 +906,145 @@ public final class LocalLogicTest {
                 assertEquals("day", draft.shelfLifeUnit);
                 assertEquals("2026-07-08", draft.expiryDate);
                 assertEquals("calculated", draft.dateSource);
+            }
+        });
+    }
+
+    private void runUnifiedRecognitionStabilizerTests() {
+        test("UnifiedRecognitionStabilizer locks barcode after repeated frames", new TestCase() {
+            public void run() {
+                UnifiedRecognitionStabilizer stabilizer = new UnifiedRecognitionStabilizer(6, 3);
+
+                UnifiedRecognitionStabilizer.Snapshot first = stabilizer.addFrame(
+                        "4006381333931",
+                        DateOcrParser.parse(""),
+                        "",
+                        false
+                );
+                assertFalse(first.hasStableBarcode(), "single live frame should not lock barcode");
+                assertFalse(first.hasFillableCandidate(), "single live barcode should not be fillable yet");
+
+                UnifiedRecognitionStabilizer.Snapshot second = stabilizer.addFrame(
+                        "4006381333931",
+                        DateOcrParser.parse("noise"),
+                        "noise",
+                        false
+                );
+                assertEquals("4006381333931", second.stableBarcode);
+                assertTrue(second.hasStableBarcode(), "same barcode should lock after two frames");
+                assertTrue(second.hasFillableCandidate(), "locked barcode alone should allow confirmation/editing");
+
+                UnifiedRecognitionStabilizer.Snapshot afterNoise = stabilizer.addFrame(
+                        "",
+                        DateOcrParser.parse(""),
+                        "",
+                        false
+                );
+                assertEquals("4006381333931", afterNoise.stableBarcode);
+                assertTrue(afterNoise.hasFillableCandidate(), "empty frames must not clear locked barcode");
+            }
+        });
+
+        test("UnifiedRecognitionStabilizer locks gallery barcode from single image", new TestCase() {
+            public void run() {
+                UnifiedRecognitionStabilizer stabilizer = new UnifiedRecognitionStabilizer(6, 3);
+                UnifiedRecognitionStabilizer.Snapshot snapshot = stabilizer.addFrame(
+                        "036000291452",
+                        DateOcrParser.parse(""),
+                        "",
+                        true
+                );
+
+                assertEquals("036000291452", snapshot.stableBarcode);
+                assertTrue(snapshot.hasFillableCandidate(), "single selected image barcode should be fillable");
+            }
+        });
+
+        test("UnifiedRecognitionStabilizer requires stable date votes and keeps them through noise", new TestCase() {
+            public void run() {
+                UnifiedRecognitionStabilizer stabilizer = new UnifiedRecognitionStabilizer(8, 3);
+
+                stabilizer.addFrame(
+                        "",
+                        DateOcrParser.parse("production date 2026-07-01 shelf life 7 days"),
+                        "production date 2026-07-01 shelf life 7 days",
+                        false
+                );
+                UnifiedRecognitionStabilizer.Snapshot second = stabilizer.addFrame(
+                        "",
+                        DateOcrParser.parse("prod date 2026/07/01 shelf life 7 days"),
+                        "prod date 2026/07/01 shelf life 7 days",
+                        false
+                );
+                assertFalse(second.hasStableDateCandidate(), "two frames are below unified stability threshold");
+
+                UnifiedRecognitionStabilizer.Snapshot third = stabilizer.addFrame(
+                        "",
+                        DateOcrParser.parse("MFG 20260701 shelf life 7 days"),
+                        "MFG 20260701 shelf life 7 days",
+                        false
+                );
+                assertTrue(third.hasStableDateCandidate(), "three matching date frames should stabilize");
+                FoodItem draft = DateOcrResultPayload.toDraft(third.stableDateVote);
+                assertEquals("2026-07-01", draft.productionDate);
+                assertEquals(Integer.valueOf(7), draft.shelfLifeValue);
+                assertEquals("2026-07-08", draft.expiryDate);
+
+                UnifiedRecognitionStabilizer.Snapshot afterNoise = stabilizer.addFrame(
+                        "",
+                        DateOcrParser.parse("unrelated label text"),
+                        "unrelated label text",
+                        false
+                );
+                assertTrue(afterNoise.hasStableDateCandidate(), "stable date candidate should survive later noise");
+                assertEquals("2026-07-01", DateOcrResultPayload.toDraft(afterNoise.stableDateVote).productionDate);
+            }
+        });
+    }
+
+    private void runUnifiedRecognitionPayloadTests() {
+        test("UnifiedRecognitionPayload merges barcode product and OCR fields into editable draft", new TestCase() {
+            public void run() {
+                FoodItem draft = UnifiedRecognitionPayload.toDraft(
+                        "4006381333931",
+                        "测试牛奶",
+                        "dairy",
+                        "品牌：测试\n规格：250ml",
+                        "2026-07-01",
+                        "2026-07-08",
+                        true,
+                        Integer.valueOf(7),
+                        "day"
+                );
+
+                assertEquals("测试牛奶", draft.name);
+                assertEquals("dairy", draft.category);
+                assertEquals("件", draft.unit);
+                assertEquals("2026-07-01", draft.productionDate);
+                assertEquals("2026-07-08", draft.expiryDate);
+                assertEquals("calculated", draft.dateSource);
+                assertTrue(draft.notes.contains("4006381333931"), "draft notes should include barcode");
+                assertTrue(UnifiedRecognitionPayload.hasUsableDraft(draft), "merged draft should be usable");
+            }
+        });
+
+        test("UnifiedRecognitionPayload keeps barcode-only result usable for confirmation", new TestCase() {
+            public void run() {
+                FoodItem draft = UnifiedRecognitionPayload.toDraft(
+                        "036000291452",
+                        "",
+                        "",
+                        "",
+                        "",
+                        "",
+                        false,
+                        null,
+                        ""
+                );
+
+                assertEquals("", draft.name);
+                assertTrue(draft.notes.contains("036000291452"), "barcode-only result should be preserved in notes");
+                assertTrue(UnifiedRecognitionPayload.hasUsableDraft(draft), "barcode-only draft should be editable");
             }
         });
     }
