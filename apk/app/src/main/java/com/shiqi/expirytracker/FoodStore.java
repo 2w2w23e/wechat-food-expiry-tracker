@@ -53,10 +53,18 @@ final class FoodStore {
         return result.foods;
     }
 
-    void saveFoods(List<FoodItem> foods) {
+    boolean saveFoods(List<FoodItem> foods) {
+        return saveFoodsInternal(foods, false);
+    }
+
+    boolean saveFoodsForImport(List<FoodItem> foods) {
+        return saveFoodsInternal(foods, true);
+    }
+
+    private boolean saveFoodsInternal(List<FoodItem> foods, boolean synchronous) {
         String currentRaw = preferences.getString(STORAGE_KEY, null);
         if (!canOverwriteCurrentStorage(currentRaw)) {
-            return;
+            return false;
         }
 
         try {
@@ -68,10 +76,18 @@ final class FoodStore {
             if (FoodStoreMigration.needsMigration(currentRaw, CURRENT_SCHEMA_VERSION)) {
                 editor.putString(MIGRATION_BACKUP_KEY, currentRaw);
             }
-            editor.putString(STORAGE_KEY, nextRaw).apply();
+            editor.putString(STORAGE_KEY, nextRaw);
+            if (synchronous && !editor.commit()) {
+                return false;
+            }
+            if (!synchronous) {
+                editor.apply();
+            }
             lastLoadFailed = false;
+            return true;
         } catch (JSONException ignored) {
             // Keep the previous SharedPreferences value if the new payload cannot be serialized.
+            return false;
         }
     }
 

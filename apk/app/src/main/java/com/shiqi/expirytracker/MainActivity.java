@@ -68,6 +68,8 @@ public final class MainActivity extends Activity {
     private static final String FOOD_ACTION_REPLENISH = "replenish";
     private static final String FOOD_ACTION_COPY = "copy";
     private static final String FOOD_ACTION_MORE = "more";
+    private static final String EXTRA_QA_FORCE_IMPORT_SAVE_FAILURE =
+            "com.shiqi.expirytracker.QA_FORCE_IMPORT_SAVE_FAILURE";
 
     private static final int COLOR_BG = Color.rgb(246, 247, 242);
     private static final int COLOR_CARD = Color.WHITE;
@@ -112,6 +114,7 @@ public final class MainActivity extends Activity {
     private boolean activeCategoryAllExpanded = false;
     private boolean activeLocationAllExpanded = false;
     private boolean syncingSearchText = false;
+    private boolean qaForceNextImportSaveFailure = false;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -122,6 +125,8 @@ public final class MainActivity extends Activity {
         window.setNavigationBarColor(COLOR_BG);
 
         store = new FoodStore(this);
+        qaForceNextImportSaveFailure = isDebuggable()
+                && getIntent().getBooleanExtra(EXTRA_QA_FORCE_IMPORT_SAVE_FAILURE, false);
         reminderSettings = ReminderScheduler.loadSettings(this);
         ReminderPolicy.useSettings(reminderSettings);
         foods = new ArrayList<FoodItem>(store.loadFoods());
@@ -688,25 +693,48 @@ public final class MainActivity extends Activity {
         message.append("错误行：").append(preview.errorRows).append('\n');
         message.append("警告行：").append(preview.warningRows).append('\n');
         if (preview.errorRows > 0) {
-            message.append("\n错误行不会导入：");
-            appendImportMessages(message, preview, true);
+            message.append("\n错误行不会导入。可点“查看错误行详情”核对。");
         }
         if (preview.warningRows > 0) {
-            message.append("\n警告：");
-            appendImportMessages(message, preview, false);
+            message.append("\n存在警告行。警告行可导入，但部分字段会按默认值处理。");
         }
-        message.append("\n\n导入会追加到当前本地数据，确认前不会写入。");
+        message.append("\n\n确认前不会写入。覆盖导入会先写最近备份，失败时不会改动现有数据。");
+
+        LinearLayout previewLayout = new LinearLayout(this);
+        previewLayout.setOrientation(LinearLayout.VERTICAL);
+        previewLayout.setPadding(dp(8), dp(4), dp(8), 0);
+
+        TextView previewText = text(message.toString(), 14, COLOR_TEXT, Typeface.NORMAL);
+        previewText.setLineSpacing(dp(2), 1.0f);
+        previewLayout.addView(previewText, matchWrap());
+
+        if (preview.errorRows > 0 || preview.warningRows > 0) {
+            Button detailsButton = outlineButton("查看错误行详情");
+            detailsButton.setOnClickListener(new View.OnClickListener() {
+                @Override
+                public void onClick(View view) {
+                    showExcelImportRowDetails(preview);
+                }
+            });
+            previewLayout.addView(detailsButton, withMargins(matchWrap(), 0, dp(12), 0, 0));
+        }
 
         AlertDialog.Builder builder = new AlertDialog.Builder(this)
                 .setTitle("Excel 导入预览")
-                .setMessage(message.toString())
+                .setView(previewLayout)
                 .setNegativeButton("取消", null);
 
         if (preview.importableRows > 0) {
-            builder.setPositiveButton("追加导入", new DialogInterface.OnClickListener() {
+            builder.setNeutralButton("追加导入", new DialogInterface.OnClickListener() {
                 @Override
                 public void onClick(DialogInterface dialogInterface, int which) {
-                    applyExcelImport(preview);
+                    applyExcelImport(preview, false);
+                }
+            });
+            builder.setPositiveButton("覆盖导入", new DialogInterface.OnClickListener() {
+                @Override
+                public void onClick(DialogInterface dialogInterface, int which) {
+                    confirmExcelOverwriteImport(preview);
                 }
             });
         } else {
@@ -723,7 +751,7 @@ public final class MainActivity extends Activity {
             if (items.isEmpty()) {
                 continue;
             }
-            if (appended >= 5) {
+            if (appended >= 20) {
                 message.append("\n- 还有更多行，请修正后重试");
                 return;
             }
@@ -732,7 +760,46 @@ public final class MainActivity extends Activity {
         }
     }
 
-    private void applyExcelImport(FoodExcelImporter.ImportPreview preview) {
+    private void showExcelImportRowDetails(FoodExcelImporter.ImportPreview preview) {
+        StringBuilder message = new StringBuilder();
+        if (preview.errorRows > 0) {
+            message.append("错误行不会导入：");
+            appendImportMessages(message, preview, true);
+        }
+        if (preview.warningRows > 0) {
+            if (message.length() > 0) {
+                message.append("\n\n");
+            }
+            message.append("警告行：");
+            appendImportMessages(message, preview, false);
+        }
+        if (message.length() == 0) {
+            message.append("没有错误或警告。");
+        }
+
+        new AlertDialog.Builder(this)
+                .setTitle("Excel 错误行详情")
+                .setMessage(message.toString())
+                .setPositiveButton("知道了", null)
+                .show();
+    }
+
+    private void confirmExcelOverwriteImport(final FoodExcelImporter.ImportPreview preview) {
+        new AlertDialog.Builder(this)
+                .setTitle("确认覆盖导入")
+                .setMessage("将用 " + preview.importableRows + " 条可导入食品覆盖当前本机 "
+                        + foods.size() + " 条食品。\n\n覆盖前会保留最近备份；如果保存失败，当前数据不会被改动。错误行不会导入。")
+                .setNegativeButton("取消", null)
+                .setPositiveButton("确认覆盖", new DialogInterface.OnClickListener() {
+                    @Override
+                    public void onClick(DialogInterface dialogInterface, int which) {
+                        applyExcelImport(preview, true);
+                    }
+                })
+                .show();
+    }
+
+    private void applyExcelImport(FoodExcelImporter.ImportPreview preview, boolean replaceExisting) {
         List<FoodItem> imported = preview.importableFoods();
         if (imported.isEmpty()) {
             toast("没有可导入的食品");
@@ -740,19 +807,44 @@ public final class MainActivity extends Activity {
         }
 
         String now = DateRules.nowIsoLike();
-        for (int index = imported.size() - 1; index >= 0; index--) {
-            FoodItem item = imported.get(index).copy();
+        List<FoodItem> nextFoods = new ArrayList<FoodItem>();
+        for (FoodItem source : imported) {
+            FoodItem item = source.copy();
             item.id = newFoodId();
             if (item.createdAt.length() == 0) {
                 item.createdAt = now;
             }
             item.updatedAt = now;
             item.normalizeQuantityBounds();
-            foods.add(0, item);
+            nextFoods.add(item);
         }
 
-        saveFoodsRefreshReminders();
-        toast("已导入 " + imported.size() + " 条食品");
+        if (!replaceExisting) {
+            nextFoods.addAll(foods);
+        }
+
+        if (!saveFoodsForImport(nextFoods)) {
+            toast("导入失败，当前本地数据未改动");
+            return;
+        }
+
+        foods = nextFoods;
+        ReminderScheduler.scheduleDaily(MainActivity.this, reminderSettings);
+        renderFilterControls();
+        renderFoods();
+        toast((replaceExisting ? "已覆盖导入 " : "已追加导入 ") + imported.size() + " 条食品");
+    }
+
+    private boolean saveFoodsForImport(List<FoodItem> nextFoods) {
+        if (qaForceNextImportSaveFailure) {
+            qaForceNextImportSaveFailure = false;
+            return false;
+        }
+        return store.saveFoodsForImport(nextFoods);
+    }
+
+    private boolean isDebuggable() {
+        return (getApplicationInfo().flags & android.content.pm.ApplicationInfo.FLAG_DEBUGGABLE) != 0;
     }
 
     private String exportTimestamp() {

@@ -1,10 +1,10 @@
 # APK 视觉 QA 记录
 
-日期：2026-07-05
+日期：2026-07-05 / 2026-07-06
 
 ## 1. 当前结论
 
-总体结论：PARTIAL
+总体结论：本轮范围 PASS；全量真实相机范围仍 PARTIAL
 
 已解除的阻塞：
 
@@ -14,12 +14,14 @@
 - 编辑食品表单已取得稳定截图证据，保存后可回到列表。
 - 条码流程已取得手动输入、查询结果、手动新增表单和条码备注预填证据。
 - Excel 导入已取得首页入口、系统文件选择器、导入预览、确认追加和导入后食品卡片证据。
+- 2026-07-06 已补齐视频模拟相机 OCR 入口、视频选择、抽帧预览、动态 raw OCR 和候选稳定性提示。
+- 2026-07-06 已补齐 Excel 覆盖导入、错误行详情、覆盖确认、导入成功结果和 debug 强制失败回滚视觉证据。
+- 2026-07-06 已补齐条码图库识别、GS1 QR 提取、无商品信息兜底、手动新增确认保存和保存后卡片视觉证据。
 
-仍未完成：
+仍未完成 / 本轮不包含：
 
-- 真实摄像头扫码识别和 OCR 实时预览仍需真机或稳定摄像头模拟器复测；本轮已验证到条码权限/手动输入兜底、包装文字识别首页入口和 OCR 无相机降级页。
-- 条码图库识别和完整新增保存仍需后续真机 / 样本图片场景 QA。
-- Excel 覆盖导入和错误行视觉预览仍是后续任务；当前已验证追加导入。
+- 真实摄像头扫码识别和真实摄像头 OCR 实时预览按用户 2026-07-06 最新要求先不做。
+- OCR 对真实包装生产日期的准确率仍需更大样本和更强 OCR / 预处理方案继续验证；本轮只证明视频模拟实时识别链路可运行，不能声称准确率已充分达标。
 
 说明：本文件只记录视觉检验状态。代码编译、单元逻辑测试和 APK 构建通过不等于视觉 QA 通过。
 
@@ -33,10 +35,10 @@
 | VIS-004 | 编辑食品 | 旧数据默认值、位置编辑、开封后保质期编辑、保存后回到列表 | PASS | `docs/qa/screenshots/2026-07-05-vis-004-edit-food-form.png`, `docs/qa/screenshots/2026-07-05-vis-004-edit-save-return.png` |
 | VIS-005 | 食品详情 | 详情展示、更多操作、剩余归 0、补货、复制食品、标记已用完 | PASS | `docs/qa/screenshots/2026-07-05-vis-005-detail-actions.png`, `docs/qa/screenshots/2026-07-05-vis-005-more-actions.png` |
 | VIS-006 | 提醒设置 | 全局提醒开关、提前天数、今日提醒时间段、关闭提醒后的文案 | PASS | `docs/qa/screenshots/2026-07-05-vis-006-reminder-settings.png` |
-| VIS-007 | 条码流程 | 相机扫码、图库识别、手动输入、查询结果、用户确认后保存 | PARTIAL | `docs/qa/screenshots/2026-07-05-vis-007-after-scan-tap.png`, `docs/qa/screenshots/2026-07-05-vis-007-camera-denied-manual-available.png`, `docs/qa/screenshots/2026-07-05-vis-007-manual-input-filled.png`, `docs/qa/screenshots/2026-07-05-vis-007-manual-query-result.png`, `docs/qa/screenshots/2026-07-05-vis-007-manual-add-notes-barcode.png`; 手动输入、查询失败兜底、手动新增表单和条码备注预填可见，真实相机扫码 / 图库识别 / 完整保存未完成 |
-| VIS-008 | 升级回归 | 安装覆盖升级后旧食品数据仍在、旧 JSON 字段兼容、新字段默认值正确 | PARTIAL | 覆盖安装后 `QA_Milk` 仍显示；Gradle 覆盖安装 smoke 见 `docs/qa/screenshots/gradle-build-home-smoke.png`；旧 schema 迁移由 JVM 测试覆盖，未做视觉旧数据注入 |
+| VIS-007 | 条码流程 | 相机扫码、图库识别、手动输入、查询结果、用户确认后保存 | PASS（图库/手动确认保存）；真实相机 N/A | `docs/qa/screenshots/2026-07-05-vis-007-after-scan-tap.png`, `docs/qa/screenshots/2026-07-05-vis-007-camera-denied-manual-available.png`, `docs/qa/screenshots/2026-07-05-vis-007-manual-input-filled.png`, `docs/qa/screenshots/2026-07-05-vis-007-manual-query-result.png`, `docs/qa/screenshots/2026-07-05-vis-007-manual-add-notes-barcode.png`, `docs/qa/screenshots/2026-07-06-barcode-retry-picker.png`, `docs/qa/screenshots/2026-07-06-barcode-retry-result.png`, `docs/qa/screenshots/2026-07-06-barcode-retry-form-prefill.png`, `docs/qa/screenshots/2026-07-06-barcode-retry-saved-home.png`, `docs/qa/screenshots/2026-07-06-barcode-retry-saved-card.png`; 本轮不做真实相机 |
+| VIS-008 | 升级回归 | 安装覆盖升级后旧食品数据仍在、旧 JSON 字段兼容、新字段默认值正确 | PASS_WITH_LIMITS | 覆盖安装后 `QA_Milk` 仍显示；Gradle 覆盖安装 smoke 见 `docs/qa/screenshots/gradle-build-home-smoke.png`；2026-07-06 使用最终 `0.3.2` APK 覆盖安装后，首页仍显示 `在库 2 件` 和既有食品简报，证据：`docs/qa/screenshots/2026-07-06-final-upgrade-home.png`；旧 schema 迁移由 JVM 测试覆盖 |
 | VIS-009 | Excel 导出 | 首页导出按钮、系统文件保存器、导出完成提示、导出文件包含 foods / README sheet | PASS | `docs/qa/screenshots/2026-07-05-xlsx-001-home-export-button.png`, `docs/qa/screenshots/2026-07-05-xlsx-001-system-save-picker.png`, `docs/qa/screenshots/2026-07-05-xlsx-001-export-complete.png`; 实际导出的 `.xlsx` 拉到 `.local/qa/` 后确认包含 `QA_Milk`、`expiryDate` header 和 README sheet |
-| VIS-010 | Excel 导入 | 首页导入按钮、系统文件选择器、导入预览、确认前不写入、确认后追加到列表 | PASS | `docs/qa/screenshots/2026-07-05-xlsx-002-home-import-button.png`, `docs/qa/screenshots/2026-07-05-xlsx-002-picker-file-visible.png`, `docs/qa/screenshots/2026-07-05-xlsx-002-import-preview-ascii-confirm.png`, `docs/qa/screenshots/2026-07-05-xlsx-002-import-complete-ascii.png`, `docs/qa/screenshots/2026-07-05-xlsx-002-imported-food-card-ascii.png`; `Import_Banana` 通过预览后追加导入，列表统计从 2 件变 3 件 |
+| VIS-010 | Excel 导入 | 首页导入按钮、系统文件选择器、导入预览、确认前不写入、追加/覆盖确认、错误行详情、失败回滚 | PASS | `docs/qa/screenshots/2026-07-05-xlsx-002-home-import-button.png`, `docs/qa/screenshots/2026-07-05-xlsx-002-picker-file-visible.png`, `docs/qa/screenshots/2026-07-05-xlsx-002-import-preview-ascii-confirm.png`, `docs/qa/screenshots/2026-07-05-xlsx-002-import-complete-ascii.png`, `docs/qa/screenshots/2026-07-05-xlsx-002-imported-food-card-ascii.png`, `docs/qa/screenshots/2026-07-06-excel-import-preview-overwrite-errors.png`, `docs/qa/screenshots/2026-07-06-excel-import-error-details.png`, `docs/qa/screenshots/2026-07-06-excel-import-overwrite-confirm.png`, `docs/qa/screenshots/2026-07-06-excel-import-overwrite-result.png`, `docs/qa/screenshots/2026-07-06-excel-forced-failure-toast.png`, `docs/qa/screenshots/2026-07-06-excel-forced-failure-home-after.png`; 失败回滚使用 debug-only ADB 开关强制下一次导入保存失败，首页仍保持 2 件 |
 
 ## 3. 本轮视觉发现与修复
 
@@ -100,3 +102,20 @@ adb shell input tap 540 1267
 
 - 本机 `Medium_Phone` AVD 使用默认摄像头后曾在 Allow 后出现相机/adb 不稳定；改用无摄像头启动后已验证 OCR 降级态，但仍没有取得允许权限后的实时预览、动态候选、“使用候选”可点击态和候选回填表单截图。
 - 真实包装生产日期识别准确率仍需基于 `video/` 样本、真机或稳定摄像头模拟器继续回归。
+
+## 7. 2026-07-06 视频模拟 OCR 视觉记录
+
+结论：链路 PASS；识别准确率 PARTIAL
+
+本轮按“先不做真实相机”的范围，用 `video/` 样本模拟相机实时识别：
+
+- 页面进入后不再立即请求相机权限，可选择“视频”或“相机”，证据：`docs/qa/screenshots/2026-07-06-video-ocr-input-choice.png`。
+- 系统文件选择器可选择 `/sdcard/Download/ocr_sample_1.mp4`，证据：`docs/qa/screenshots/2026-07-06-video-ocr-picker.png`。
+- 视频抽帧会显示在识别框内，并持续刷新 raw OCR，证据：`docs/qa/screenshots/2026-07-06-video-ocr-replay-running.png`、`docs/qa/screenshots/2026-07-06-video-ocr-replay-final.png`。
+- 多帧投票没有得到稳定生产日期候选时，“使用候选”保持禁用，页面提示可换更清晰视频或手动输入；没有自动保存 OCR 结果。
+
+边界：
+
+- 本轮证明视频模拟相机实时识别链路可运行，且遵守候选确认规则。
+- 当前 ML Kit 对样本 1 的 raw OCR 噪声较大，未形成稳定生产日期候选，因此不能声明真实包装生产日期识别准确率已经充分完成。
+- 真实相机实时预览和真实摄像头 OCR 按用户 2026-07-06 最新要求先不做。

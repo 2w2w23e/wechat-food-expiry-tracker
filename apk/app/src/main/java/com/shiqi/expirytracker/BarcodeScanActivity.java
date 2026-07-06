@@ -654,11 +654,7 @@ public final class BarcodeScanActivity extends Activity implements SurfaceHolder
     }
 
     private void openGalleryWithPermission() {
-        if (hasGalleryPermission()) {
-            openGalleryPicker();
-            return;
-        }
-        requestPermissions(galleryPermissions(), REQUEST_GALLERY_PERMISSION);
+        openGalleryPicker();
     }
 
     private boolean hasGalleryPermission() {
@@ -686,12 +682,15 @@ public final class BarcodeScanActivity extends Activity implements SurfaceHolder
     }
 
     private void openGalleryPicker() {
-        Intent intent = new Intent(Intent.ACTION_PICK, MediaStore.Images.Media.EXTERNAL_CONTENT_URI);
+        Intent intent = new Intent(Intent.ACTION_OPEN_DOCUMENT);
+        intent.addCategory(Intent.CATEGORY_OPENABLE);
         intent.setType("image/*");
+        intent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
         try {
             startActivityForResult(intent, REQUEST_GALLERY_IMAGE);
         } catch (ActivityNotFoundException exception) {
             Intent fallback = new Intent(Intent.ACTION_GET_CONTENT);
+            fallback.addCategory(Intent.CATEGORY_OPENABLE);
             fallback.setType("image/*");
             try {
                 startActivityForResult(Intent.createChooser(fallback, "选择条码图片"), REQUEST_GALLERY_IMAGE);

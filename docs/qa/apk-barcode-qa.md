@@ -42,7 +42,24 @@
 | BAR-REAL-007 | 图库照片 | 真实包装条码照片、屏幕截图或测试码图片 | 从扫码页右下角图库入口选择图片识别 | 图库权限、选择、解码流程可用；失败时不产生脏数据 |
 | BAR-REAL-008 | 手动输入兜底 | 任意已知 EAN-13 / GTIN，含一个故意输错样例 | 扫码失败后手动输入，分别测试有效码和无效码 | 有效码可进入查询和确认；无效码有提示且不自动保存 |
 
-## 4. 结果等级
+## 4. 2026-07-06 本轮执行记录
+
+本轮按用户最新要求不做真实相机，只验证图库识别和用户确认保存链路。
+
+测试批次：BAR-GALLERY-20260706
+APK 来源 / 版本：`apk/build/outputs/apk/shiqi-android-debug.apk`
+设备型号：`Medium_Phone` AVD
+Android 版本：API 29 image
+网络环境：模拟器网络可访问商品查询接口
+相机权限：不参与本轮
+图库权限：使用 Android DocumentsUI `ACTION_OPEN_DOCUMENT`，不再依赖 Google Photos 或媒体读权限
+
+| ID | 场景 | 样品 / 条码 | 扫码识别 | 条码提取 | 商品信息查询 | 用户确认保存 | 结论 | 证据 / 备注 |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| BAR-REAL-007 | 图库照片 | `barcode-gs1-qr-qa.png`，GS1 Digital Link QR，GTIN `04006381333931` | PASS | PASS | PARTIAL | PASS | PASS_WITH_LIMITS | 文件选择器可见 `barcode-gs1-qr-qa.png`，证据：`docs/qa/screenshots/2026-07-06-barcode-retry-picker.png`；弹窗显示条码 `04006381333931`，商品库无命中但给出“手动新增”，证据：`docs/qa/screenshots/2026-07-06-barcode-retry-result.png`；用户补全名称和最终可食用日期后保存，首页统计变为 2 件并可见食品卡片，证据：`docs/qa/screenshots/2026-07-06-barcode-retry-saved-home.png`、`docs/qa/screenshots/2026-07-06-barcode-retry-saved-card.png` |
+| BAR-REAL-001..006 | 真实相机扫码 | 真实包装一维码 / Data Matrix / QR | N/A | N/A | N/A | N/A | NOT_RUN | 用户 2026-07-06 指定先不做真实相机 |
+
+## 5. 结果等级
 
 | 结果 | 含义 |
 | --- | --- |
@@ -51,7 +68,7 @@
 | BLOCKED | 因缺少真机、相机权限、安装包、测试样本、网络环境或 Android SDK 环境导致无法执行 |
 | FAIL | 任一步出现错误提取、崩溃、卡死、误保存、绕过用户确认、写入密钥或触发云同步等问题 |
 
-## 5. 单次 QA 记录模板
+## 6. 单次 QA 记录模板
 
 ```text
 测试批次：
@@ -80,7 +97,7 @@ Android 版本：
 | BAR-REAL-007 | 图库照片 |  | PASS / PARTIAL / BLOCKED / FAIL | PASS / PARTIAL / BLOCKED / FAIL | PASS / PARTIAL / BLOCKED / FAIL | PASS / PARTIAL / BLOCKED / FAIL |  |  |
 | BAR-REAL-008 | 手动输入兜底 |  | PASS / PARTIAL / BLOCKED / FAIL | PASS / PARTIAL / BLOCKED / FAIL | PASS / PARTIAL / BLOCKED / FAIL | PASS / PARTIAL / BLOCKED / FAIL |  |  |
 
-## 6. 缺陷记录模板
+## 7. 缺陷记录模板
 
 ```text
 缺陷编号：
