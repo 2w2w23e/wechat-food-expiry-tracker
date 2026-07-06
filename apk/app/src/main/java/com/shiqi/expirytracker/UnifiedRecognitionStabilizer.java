@@ -8,11 +8,13 @@ final class UnifiedRecognitionStabilizer {
     private static final int DEFAULT_MAX_FRAMES = 10;
     private static final int DEFAULT_DATE_MIN_VOTES = 3;
     private static final int BARCODE_LOCK_VOTES = 2;
+    private static final int PACKAGING_NAME_LOCK_VOTES = 1;
 
     private final int maxFrames;
     private final int dateMinVotes;
     private final List<Frame> frames = new ArrayList<Frame>();
     private String lockedBarcode = "";
+    private String lockedPackagingName = "";
     private DateOcrFrameVoter.VoteResult stableDateVote;
     private DateOcrFrameVoter.VoteResult latestDateVote;
     private String latestRawText = "";
@@ -37,7 +39,9 @@ final class UnifiedRecognitionStabilizer {
             barcode = "";
         }
 
-        Frame frame = new Frame(barcode, ocrResult, FoodItem.cleanText(rawText));
+        String cleanedRawText = FoodItem.cleanText(rawText);
+        String packagingName = RecognitionTextCleaner.extractProductNameFromOcr(cleanedRawText);
+        Frame frame = new Frame(barcode, packagingName, ocrResult, cleanedRawText);
         frames.add(frame);
         while (frames.size() > maxFrames) {
             frames.remove(0);
@@ -45,6 +49,7 @@ final class UnifiedRecognitionStabilizer {
 
         latestRawText = frame.rawText;
         updateBarcodeLock(barcode, singleFrameConfirmation);
+        updatePackagingNameLock(packagingName, singleFrameConfirmation);
         updateDateVote();
         return snapshot();
     }
@@ -54,6 +59,8 @@ final class UnifiedRecognitionStabilizer {
                 frames.size(),
                 lockedBarcode,
                 barcodeVotes(lockedBarcode),
+                lockedPackagingName,
+                packagingNameVotes(lockedPackagingName),
                 stableDateVote,
                 latestDateVote,
                 latestRawText
@@ -63,6 +70,7 @@ final class UnifiedRecognitionStabilizer {
     void reset() {
         frames.clear();
         lockedBarcode = "";
+        lockedPackagingName = "";
         stableDateVote = null;
         latestDateVote = null;
         latestRawText = "";
@@ -93,6 +101,19 @@ final class UnifiedRecognitionStabilizer {
         }
     }
 
+    private void updatePackagingNameLock(String packagingName, boolean singleFrameConfirmation) {
+        if (lockedPackagingName.length() > 0) {
+            return;
+        }
+        String name = FoodItem.cleanText(packagingName);
+        if (name.length() == 0) {
+            return;
+        }
+        if (singleFrameConfirmation || packagingNameVotes(name) >= PACKAGING_NAME_LOCK_VOTES) {
+            lockedPackagingName = name;
+        }
+    }
+
     private int barcodeVotes(String barcode) {
         String code = BarcodeUtils.digitsOnly(barcode);
         if (code.length() == 0) {
@@ -107,13 +128,29 @@ final class UnifiedRecognitionStabilizer {
         return votes;
     }
 
+    private int packagingNameVotes(String packagingName) {
+        String name = FoodItem.cleanText(packagingName);
+        if (name.length() == 0) {
+            return 0;
+        }
+        int votes = 0;
+        for (Frame frame : frames) {
+            if (RecognitionTextCleaner.productNamesSimilar(name, frame.packagingName)) {
+                votes++;
+            }
+        }
+        return votes;
+    }
+
     private static final class Frame {
         final String barcode;
+        final String packagingName;
         final DateOcrParser.Result ocrResult;
         final String rawText;
 
-        Frame(String barcode, DateOcrParser.Result ocrResult, String rawText) {
+        Frame(String barcode, String packagingName, DateOcrParser.Result ocrResult, String rawText) {
             this.barcode = barcode == null ? "" : barcode;
+            this.packagingName = FoodItem.cleanText(packagingName);
             this.ocrResult = ocrResult;
             this.rawText = rawText == null ? "" : rawText;
         }
@@ -123,6 +160,8 @@ final class UnifiedRecognitionStabilizer {
         final int frameCount;
         final String stableBarcode;
         final int barcodeVotes;
+        final String stablePackagingName;
+        final int packagingNameVotes;
         final DateOcrFrameVoter.VoteResult stableDateVote;
         final DateOcrFrameVoter.VoteResult latestDateVote;
         final String latestRawText;
@@ -131,6 +170,8 @@ final class UnifiedRecognitionStabilizer {
                 int frameCount,
                 String stableBarcode,
                 int barcodeVotes,
+                String stablePackagingName,
+                int packagingNameVotes,
                 DateOcrFrameVoter.VoteResult stableDateVote,
                 DateOcrFrameVoter.VoteResult latestDateVote,
                 String latestRawText
@@ -138,6 +179,8 @@ final class UnifiedRecognitionStabilizer {
             this.frameCount = frameCount;
             this.stableBarcode = stableBarcode == null ? "" : stableBarcode;
             this.barcodeVotes = barcodeVotes;
+            this.stablePackagingName = FoodItem.cleanText(stablePackagingName);
+            this.packagingNameVotes = Math.max(0, packagingNameVotes);
             this.stableDateVote = stableDateVote;
             this.latestDateVote = latestDateVote;
             this.latestRawText = latestRawText == null ? "" : latestRawText;
@@ -151,8 +194,15 @@ final class UnifiedRecognitionStabilizer {
             return stableDateVote != null && stableDateVote.readyForUserConfirmation();
         }
 
+        boolean hasStablePackagingName() {
+            return stablePackagingName.length() > 0;
+        }
+
         boolean hasFillableCandidate() {
             if (hasStableBarcode()) {
+                return true;
+            }
+            if (hasStablePackagingName()) {
                 return true;
             }
             if (!hasStableDateCandidate()) {

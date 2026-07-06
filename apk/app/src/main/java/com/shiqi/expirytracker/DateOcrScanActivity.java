@@ -52,6 +52,7 @@ import com.google.mlkit.vision.text.TextRecognizer;
 import com.google.mlkit.vision.text.chinese.ChineseTextRecognizerOptions;
 
 import java.io.InputStream;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
 import java.util.concurrent.Executor;
@@ -561,7 +562,7 @@ public final class DateOcrScanActivity extends ComponentActivity {
                 @Override
                 public void run() {
                     statusBadge.setText("读取失败");
-                    statusText.setText("视频模拟识别失败，请换一个本地视频或手动输入。");
+                    statusText.setText("视频模拟识别失败，请换一个更清晰的本地视频或图片。");
                     Toast.makeText(DateOcrScanActivity.this, "视频读取失败", Toast.LENGTH_SHORT).show();
                 }
             });
@@ -638,7 +639,7 @@ public final class DateOcrScanActivity extends ComponentActivity {
                     @Override
                     public void run() {
                         statusBadge.setText("读取失败");
-                        statusText.setText("图片读取失败，请换一张图片或手动输入。");
+                        statusText.setText("图片读取失败，请换一张更清晰的图片。");
                     }
                 });
             } finally {
@@ -669,7 +670,7 @@ public final class DateOcrScanActivity extends ComponentActivity {
                     UnifiedRecognitionStabilizer.Snapshot snapshot = stabilizer.snapshot();
                     statusText.setText(snapshot.hasFillableCandidate()
                             ? "图片识别完成，可先确认再填入表单。"
-                            : "图片识别完成，但没有稳定候选。可换图或手动输入。");
+                            : "图片识别完成，但没有稳定候选。可换一张更清晰的图片。");
                 }
             });
         } catch (final Exception error) {
@@ -677,7 +678,7 @@ public final class DateOcrScanActivity extends ComponentActivity {
                 @Override
                 public void run() {
                     statusBadge.setText("读取失败");
-                    statusText.setText("图片读取失败，请换一张图片或手动输入。");
+                    statusText.setText("图片读取失败，请换一张更清晰的图片。");
                 }
             });
         }
@@ -687,18 +688,111 @@ public final class DateOcrScanActivity extends ComponentActivity {
         if (bitmap == null || textRecognizer == null || barcodeScanner == null) {
             return;
         }
-        InputImage image = InputImage.fromBitmap(bitmap, 0);
-        Task<List<Barcode>> barcodeTask = barcodeScanner.process(image);
-        Task<Text> textTask = textRecognizer.process(image);
-        Tasks.await(Tasks.whenAllComplete(barcodeTask, textTask), 8, TimeUnit.SECONDS);
+        String barcode = "";
+        StringBuilder rawText = new StringBuilder();
+        List<FrameVariant> variants = buildFrameVariants(bitmap);
+        try {
+            for (FrameVariant variant : variants) {
+                InputImage image = InputImage.fromBitmap(variant.bitmap, variant.rotationDegrees);
+                if (variant.scanBarcode && barcode.length() == 0) {
+                    Task<List<Barcode>> barcodeTask = barcodeScanner.process(image);
+                    Tasks.await(barcodeTask, 8, TimeUnit.SECONDS);
+                    if (barcodeTask.isSuccessful()) {
+                        barcode = extractProductBarcode(barcodeTask.getResult());
+                    }
+                }
+                if (variant.scanText) {
+                    Task<Text> textTask = textRecognizer.process(image);
+                    Tasks.await(textTask, 8, TimeUnit.SECONDS);
+                    if (textTask.isSuccessful() && textTask.getResult() != null) {
+                        appendRecognizedText(rawText, textTask.getResult().getText());
+                    }
+                }
+            }
+        } finally {
+            recycleVariants(variants);
+        }
 
-        List<Barcode> barcodes = barcodeTask.isSuccessful() ? barcodeTask.getResult() : null;
-        Text text = textTask.isSuccessful() ? textTask.getResult() : null;
         handleRecognitionResult(
-                extractProductBarcode(barcodes),
-                text == null ? "" : text.getText(),
+                barcode,
+                rawText.toString(),
                 singleFrameConfirmation
         );
+    }
+
+    private List<FrameVariant> buildFrameVariants(Bitmap bitmap) {
+        List<FrameVariant> variants = new ArrayList<FrameVariant>();
+        variants.add(new FrameVariant(bitmap, 0, true, false, false));
+        addFrameCrop(variants, bitmap, 0.04f, 0.13f, 0.92f, 0.50f, 1100, 0, true, true);
+        addFrameCrop(variants, bitmap, 0.06f, 0.27f, 0.88f, 0.35f, 1100, 0, true, true);
+        addFrameCrop(variants, bitmap, 0.16f, 0.31f, 0.72f, 0.25f, 1000, 0, true, true);
+        addFrameCrop(variants, bitmap, 0.24f, 0.37f, 0.46f, 0.22f, 1000, 0, true, false);
+        addFrameCrop(variants, bitmap, 0.24f, 0.37f, 0.46f, 0.22f, 1000, 90, true, false);
+        addFrameCrop(variants, bitmap, 0.24f, 0.37f, 0.46f, 0.22f, 1000, 270, true, false);
+        return variants;
+    }
+
+    private void addFrameCrop(
+            List<FrameVariant> variants,
+            Bitmap source,
+            float leftRatio,
+            float topRatio,
+            float widthRatio,
+            float heightRatio,
+            int minLargestSide,
+            int rotationDegrees,
+            boolean scanBarcode,
+            boolean scanText
+    ) {
+        int sourceWidth = source.getWidth();
+        int sourceHeight = source.getHeight();
+        int left = clamp(Math.round(sourceWidth * leftRatio), 0, sourceWidth - 1);
+        int top = clamp(Math.round(sourceHeight * topRatio), 0, sourceHeight - 1);
+        int width = clamp(Math.round(sourceWidth * widthRatio), 1, sourceWidth - left);
+        int height = clamp(Math.round(sourceHeight * heightRatio), 1, sourceHeight - top);
+        Bitmap crop = Bitmap.createBitmap(source, left, top, width, height);
+        Bitmap prepared = upscaleIfNeeded(crop, minLargestSide);
+        if (prepared != crop) {
+            crop.recycle();
+        }
+        variants.add(new FrameVariant(prepared, rotationDegrees, scanBarcode, scanText, true));
+    }
+
+    private Bitmap upscaleIfNeeded(Bitmap bitmap, int minLargestSide) {
+        int largest = Math.max(bitmap.getWidth(), bitmap.getHeight());
+        if (largest >= minLargestSide) {
+            return bitmap;
+        }
+        float scale = Math.min(3.0f, minLargestSide / (float) largest);
+        return Bitmap.createScaledBitmap(
+                bitmap,
+                Math.max(1, Math.round(bitmap.getWidth() * scale)),
+                Math.max(1, Math.round(bitmap.getHeight() * scale)),
+                true
+        );
+    }
+
+    private void appendRecognizedText(StringBuilder builder, String rawText) {
+        String cleaned = RecognitionTextCleaner.cleanForPackagingOcr(rawText);
+        if (cleaned.length() == 0) {
+            return;
+        }
+        if (builder.length() > 0) {
+            builder.append('\n');
+        }
+        builder.append(cleaned);
+    }
+
+    private void recycleVariants(List<FrameVariant> variants) {
+        for (FrameVariant variant : variants) {
+            if (variant.recycleBitmap) {
+                variant.bitmap.recycle();
+            }
+        }
+    }
+
+    private int clamp(int value, int min, int max) {
+        return Math.max(min, Math.min(max, value));
     }
 
     private long videoDurationUs(MediaMetadataRetriever retriever) {
@@ -745,9 +839,9 @@ public final class DateOcrScanActivity extends ComponentActivity {
         if (snapshot.hasFillableCandidate()) {
             statusText.setText("视频模拟完成，候选已可用；确认前不会保存到食品列表。");
         } else if (analyzedFrames > 0) {
-            statusText.setText("视频模拟完成，但候选还不稳定，可换更清晰视频、图片或手动输入。");
+            statusText.setText("视频模拟完成，但候选还不稳定，可换更清晰视频或图片。");
         } else {
-            statusText.setText("视频没有可用画面，请换一个本地视频或手动输入。");
+            statusText.setText("视频没有可用画面，请换一个更清晰的本地视频。");
         }
     }
 
@@ -926,6 +1020,9 @@ public final class DateOcrScanActivity extends ComponentActivity {
 
     private void handleRecognitionResult(String barcode, String rawText, boolean singleFrameConfirmation) {
         String cleanedText = FoodItem.cleanText(rawText);
+        if (!BarcodeUtils.isSupportedProductCode(barcode)) {
+            barcode = RecognitionTextCleaner.extractProductCodeFromOcr(cleanedText);
+        }
         DateOcrParser.Result parsed = DateOcrParser.parse(cleanedText);
         latestSnapshot = stabilizer.addFrame(barcode, parsed, cleanedText, singleFrameConfirmation);
         latestRawText = cleanedText;
@@ -1033,6 +1130,9 @@ public final class DateOcrScanActivity extends ComponentActivity {
     }
 
     private String productDisplayText(UnifiedRecognitionStabilizer.Snapshot snapshot) {
+        if (snapshot != null && snapshot.hasStablePackagingName() && !snapshot.hasStableBarcode()) {
+            return snapshot.stablePackagingName + "（包装文字候选）";
+        }
         if (latestProductInfo != null && latestProductInfo.found) {
             String name = latestProductInfo.displayName();
             return name.length() > 0 ? name + "（条码查询）" : "已查询到商品";
@@ -1041,21 +1141,29 @@ public final class DateOcrScanActivity extends ComponentActivity {
             return "正在查询商品信息";
         }
         if (snapshot.hasStableBarcode() && productLookupError.length() > 0) {
-            return "未完成查询，可手动补充";
+            return "未完成查询，将使用条码候选名";
         }
         if (snapshot.hasStableBarcode() && latestProductBarcode.length() > 0) {
-            return "未查到商品名，可手动补充";
+            return "未查到商品名，将使用条码候选名";
         }
-        return "等待条码或手动补充";
+        return "等待条码或包装文字";
     }
 
     private void updateStatus(UnifiedRecognitionStabilizer.Snapshot snapshot) {
+        if (snapshot != null
+                && snapshot.hasStablePackagingName()
+                && !snapshot.hasStableBarcode()
+                && !snapshot.hasStableDateCandidate()) {
+            statusBadge.setText("文字已锁");
+            statusText.setText("已锁定包装文字候选；可先填入表单，确认前不会保存。");
+            return;
+        }
         if (snapshot.hasStableBarcode() && snapshot.hasStableDateCandidate()) {
             statusBadge.setText("已稳定");
             statusText.setText("已锁定条码和日期候选，可确认后填入新增表单。");
         } else if (snapshot.hasStableBarcode()) {
             statusBadge.setText("条码已锁");
-            statusText.setText("已锁定条码；可继续找日期，也可以先填入表单手动补充。");
+            statusText.setText("已锁定条码；可继续找日期，也可以先填入表单。");
         } else if (snapshot.hasStableDateCandidate()) {
             statusBadge.setText("日期已稳");
             statusText.setText("日期候选已稳定；未发现条码，可确认后填入表单。");
@@ -1094,7 +1202,7 @@ public final class DateOcrScanActivity extends ComponentActivity {
 
         FoodItem dateDraft = DateOcrResultPayload.toDraft(snapshot.stableDateVote);
         BarcodeProductInfo info = latestProductInfo;
-        String productName = info != null && info.found ? info.displayName() : "";
+        String productName = info != null && info.found ? info.displayName() : snapshot.stablePackagingName;
         String productCategory = info != null && info.found ? BarcodeCategoryClassifier.inferCategory(info) : "";
         String productNotes = info != null && info.found ? info.notes() : "";
 
@@ -1111,7 +1219,7 @@ public final class DateOcrScanActivity extends ComponentActivity {
             result.putExtra(DateOcrResultPayload.EXTRA_SHELF_LIFE_VALUE, dateDraft.shelfLifeValue.intValue());
         }
         result.putExtra(DateOcrResultPayload.EXTRA_SHELF_LIFE_UNIT, dateDraft.shelfLifeUnit);
-        result.putExtra(DateOcrResultPayload.EXTRA_RAW_TEXT, latestRawText);
+        result.putExtra(DateOcrResultPayload.EXTRA_RAW_TEXT, snippet(latestRawText, 260));
         result.putExtra(UnifiedRecognitionPayload.EXTRA_SUMMARY, UnifiedRecognitionPayload.summary(
                 snapshot.stableBarcode,
                 productName,
@@ -1214,6 +1322,28 @@ public final class DateOcrScanActivity extends ComponentActivity {
         return Math.round(value * getResources().getDisplayMetrics().density);
     }
 
+    private static final class FrameVariant {
+        final Bitmap bitmap;
+        final int rotationDegrees;
+        final boolean scanBarcode;
+        final boolean scanText;
+        final boolean recycleBitmap;
+
+        FrameVariant(
+                Bitmap bitmap,
+                int rotationDegrees,
+                boolean scanBarcode,
+                boolean scanText,
+                boolean recycleBitmap
+        ) {
+            this.bitmap = bitmap;
+            this.rotationDegrees = rotationDegrees;
+            this.scanBarcode = scanBarcode;
+            this.scanText = scanText;
+            this.recycleBitmap = recycleBitmap;
+        }
+    }
+
     private final class RecognitionGuideOverlay extends View {
         private final Paint paint = new Paint(Paint.ANTI_ALIAS_FLAG);
 
@@ -1253,12 +1383,6 @@ public final class DateOcrScanActivity extends ComponentActivity {
             drawCorner(canvas, frame.left, frame.bottom, corner, true, false);
             drawCorner(canvas, frame.right, frame.bottom, corner, false, false);
 
-            paint.setStyle(Paint.Style.FILL);
-            paint.setColor(Color.argb(220, 255, 255, 255));
-            paint.setTextSize(dp(13));
-            paint.setTypeface(Typeface.DEFAULT_BOLD);
-            paint.setTextAlign(Paint.Align.CENTER);
-            canvas.drawText("条码 / 生产日期 / 保质期", width / 2f, frame.top - dp(12), paint);
         }
 
         private void drawCorner(Canvas canvas, float x, float y, float length, boolean left, boolean top) {

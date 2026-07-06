@@ -133,7 +133,7 @@ public final class MainActivity extends Activity {
         buildScreen();
         renderFoods();
         setupReminderNotifications();
-        startQaRecognitionIfRequested();
+        scheduleQaRecognitionIfRequested();
     }
 
     private void buildScreen() {
@@ -588,23 +588,32 @@ public final class MainActivity extends Activity {
         startActivityForResult(intent, REQUEST_DATE_OCR);
     }
 
-    private void startQaRecognitionIfRequested() {
+    private void scheduleQaRecognitionIfRequested() {
         if (!isDebuggable() || getIntent() == null) {
             return;
         }
-        String qaVideoPath = FoodItem.cleanText(getIntent().getStringExtra(DateOcrScanActivity.EXTRA_QA_VIDEO_PATH));
-        String qaImagePath = FoodItem.cleanText(getIntent().getStringExtra(DateOcrScanActivity.EXTRA_QA_IMAGE_PATH));
+        final String qaVideoPath = FoodItem.cleanText(getIntent().getStringExtra(DateOcrScanActivity.EXTRA_QA_VIDEO_PATH));
+        final String qaImagePath = FoodItem.cleanText(getIntent().getStringExtra(DateOcrScanActivity.EXTRA_QA_IMAGE_PATH));
         if (qaVideoPath.length() == 0 && qaImagePath.length() == 0) {
             return;
         }
-        Intent intent = new Intent(this, DateOcrScanActivity.class);
-        if (qaVideoPath.length() > 0) {
-            intent.putExtra(DateOcrScanActivity.EXTRA_QA_VIDEO_PATH, qaVideoPath);
-        }
-        if (qaImagePath.length() > 0) {
-            intent.putExtra(DateOcrScanActivity.EXTRA_QA_IMAGE_PATH, qaImagePath);
-        }
-        startActivityForResult(intent, REQUEST_DATE_OCR);
+        getIntent().removeExtra(DateOcrScanActivity.EXTRA_QA_VIDEO_PATH);
+        getIntent().removeExtra(DateOcrScanActivity.EXTRA_QA_IMAGE_PATH);
+
+        View anchor = mainScrollView == null ? getWindow().getDecorView() : mainScrollView;
+        anchor.post(new Runnable() {
+            @Override
+            public void run() {
+                Intent intent = new Intent(MainActivity.this, DateOcrScanActivity.class);
+                if (qaVideoPath.length() > 0) {
+                    intent.putExtra(DateOcrScanActivity.EXTRA_QA_VIDEO_PATH, qaVideoPath);
+                }
+                if (qaImagePath.length() > 0) {
+                    intent.putExtra(DateOcrScanActivity.EXTRA_QA_IMAGE_PATH, qaImagePath);
+                }
+                startActivityForResult(intent, REQUEST_DATE_OCR);
+            }
+        });
     }
 
     private void startExcelExport() {
@@ -2753,7 +2762,7 @@ public final class MainActivity extends Activity {
                 productionAgePreview.setVisibility(noExpiry ? View.VISIBLE : View.GONE);
                 productionAgePreview.setText("已生产时长：" + DateRules.productionAgeLabel(clean(productionDateInput)));
                 hint.setText(noExpiry
-                        ? "无过期时间食品不会参与到期提醒；保存时只需要生产日期。"
+                        ? "无过期时间食品不会参与到期提醒；生产日期可留空。"
                         : "可直接选择最终可食用日期；如果不选择，则使用生产日期 + 保质期计算。");
             }
         };
@@ -2969,8 +2978,8 @@ public final class MainActivity extends Activity {
         String dateSource;
 
         if (noExpiryInput.isChecked()) {
-            if (!DateRules.isValidDateString(productionDate)) {
-                toast("无过期时间食品必须选择生产日期");
+            if (productionDate.length() > 0 && !DateRules.isValidDateString(productionDate)) {
+                toast("生产日期格式不正确，请重新选择日期");
                 return null;
             }
             shelfLifeValue = null;

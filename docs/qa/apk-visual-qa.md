@@ -18,6 +18,7 @@
 - 2026-07-06 已补齐 Excel 覆盖导入、错误行详情、覆盖确认、导入成功结果和 debug 强制失败回滚视觉证据。
 - 2026-07-06 已补齐条码图库识别、GS1 QR 提取、无商品信息兜底、手动新增确认保存和保存后卡片视觉证据。
 - 2026-07-06 已补齐统一智能识别：首页单一入口、视频模拟预览、图片条码锁定、确认弹窗和新增表单预填视觉证据。
+- 2026-07-06 已用用户提供的屏幕录制视频完成视频-only 识别闭环：不手动输入文字，自动锁定 `6920459940310`，自动生成“条码商品 6920459940310”，保存后首页显示在库 1 件和商品卡片。
 
 仍未完成 / 本轮不包含：
 
@@ -41,6 +42,7 @@
 | VIS-009 | Excel 导出 | 首页导出按钮、系统文件保存器、导出完成提示、导出文件包含 foods / README sheet | PASS | `docs/qa/screenshots/2026-07-05-xlsx-001-home-export-button.png`, `docs/qa/screenshots/2026-07-05-xlsx-001-system-save-picker.png`, `docs/qa/screenshots/2026-07-05-xlsx-001-export-complete.png`; 实际导出的 `.xlsx` 拉到 `.local/qa/` 后确认包含 `QA_Milk`、`expiryDate` header 和 README sheet |
 | VIS-010 | Excel 导入 | 首页导入按钮、系统文件选择器、导入预览、确认前不写入、追加/覆盖确认、错误行详情、失败回滚 | PASS | `docs/qa/screenshots/2026-07-05-xlsx-002-home-import-button.png`, `docs/qa/screenshots/2026-07-05-xlsx-002-picker-file-visible.png`, `docs/qa/screenshots/2026-07-05-xlsx-002-import-preview-ascii-confirm.png`, `docs/qa/screenshots/2026-07-05-xlsx-002-import-complete-ascii.png`, `docs/qa/screenshots/2026-07-05-xlsx-002-imported-food-card-ascii.png`, `docs/qa/screenshots/2026-07-06-excel-import-preview-overwrite-errors.png`, `docs/qa/screenshots/2026-07-06-excel-import-error-details.png`, `docs/qa/screenshots/2026-07-06-excel-import-overwrite-confirm.png`, `docs/qa/screenshots/2026-07-06-excel-import-overwrite-result.png`, `docs/qa/screenshots/2026-07-06-excel-forced-failure-toast.png`, `docs/qa/screenshots/2026-07-06-excel-forced-failure-home-after.png`; 失败回滚使用 debug-only ADB 开关强制下一次导入保存失败，首页仍保持 2 件 |
 | VIS-011 | 统一智能识别 | 首页单一入口、视频模拟预览、图片条码锁定、确认弹窗、只进入新增表单不自动保存 | PASS_WITH_LIMITS | `docs/qa/screenshots/2026-07-06-unified-recognition-home.png`, `docs/qa/screenshots/2026-07-06-unified-recognition-video-replay.png`, `docs/qa/screenshots/2026-07-06-unified-recognition-image-barcode.png`, `docs/qa/screenshots/2026-07-06-unified-recognition-confirm-dialog.png`, `docs/qa/screenshots/2026-07-06-unified-recognition-form-prefill.png`; 视频样本链路可运行但该样本未形成稳定日期候选，真实包装准确率仍需扩大样本回归 |
+| VIS-012 | 视频-only 识别新增商品 | 使用用户提供的视频，不手动输入文字，锁定条码，填入新增表单，自动勾选无过期时间，保存后出现商品卡片 | PASS | `docs/qa/screenshots/2026-07-06-video-only-recognition-after-replay-v2.png`, `docs/qa/screenshots/2026-07-06-video-only-recognition-form-v2.png`, `docs/qa/screenshots/2026-07-06-video-only-recognition-saved-v2.png`, `docs/qa/screenshots/2026-07-06-video-only-recognition-saved-item-v2.png`; 该视频仍未稳定识别生产日期 / 保质期，保存为暂无到期日商品 |
 
 ## 3. 本轮视觉发现与修复
 

@@ -36,12 +36,18 @@ final class UnifiedRecognitionPayload {
 
         if (cleanName.length() > 0) {
             draft.name = cleanName;
+        } else if (BarcodeUtils.isSupportedProductCode(cleanBarcode)) {
+            draft.name = "条码商品 " + cleanBarcode;
         }
         if (cleanCategory.length() > 0) {
             draft.category = cleanCategory;
         }
         if (cleanName.length() > 0 || cleanBarcode.length() > 0) {
             draft.unit = "件";
+        }
+        if ((BarcodeUtils.isSupportedProductCode(cleanBarcode) || cleanName.length() > 0)
+                && !DateOcrResultPayload.hasUsableDraft(draft)) {
+            draft.dateSource = "none";
         }
 
         StringBuilder notes = new StringBuilder();
