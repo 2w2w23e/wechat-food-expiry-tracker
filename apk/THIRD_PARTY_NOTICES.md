@@ -32,3 +32,11 @@ Project: https://developer.android.com/jetpack/androidx/releases/camera
 - Use: on-device Chinese/Latin package-label text recognition for candidate-only production date and shelf-life extraction.
 
 Project: https://developers.google.com/ml-kit/vision/text-recognition/v2/android
+
+## ML Kit Barcode Scanning
+
+- Package: `com.google.mlkit:barcode-scanning:17.3.0`
+- License: Apache License 2.0
+- Use: on-device barcode detection inside the unified local recognition flow.
+
+Project: https://developers.google.com/ml-kit/vision/barcode-scanning/android
