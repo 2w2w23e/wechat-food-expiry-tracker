@@ -1,8 +1,10 @@
 package com.shiqi.expirytracker;
 
 import android.Manifest;
+import android.content.ActivityNotFoundException;
 import android.content.Intent;
 import android.content.pm.PackageManager;
+import android.graphics.Bitmap;
 import android.graphics.Canvas;
 import android.graphics.Color;
 import android.graphics.Paint;
@@ -10,6 +12,8 @@ import android.graphics.RectF;
 import android.graphics.Typeface;
 import android.graphics.drawable.GradientDrawable;
 import android.media.Image;
+import android.media.MediaMetadataRetriever;
+import android.net.Uri;
 import android.os.Bundle;
 import android.os.SystemClock;
 import android.view.Gravity;
@@ -19,6 +23,7 @@ import android.view.Window;
 import android.view.WindowManager;
 import android.widget.Button;
 import android.widget.FrameLayout;
+import android.widget.ImageView;
 import android.widget.LinearLayout;
 import android.widget.TextView;
 import android.widget.Toast;
@@ -32,6 +37,7 @@ import androidx.camera.lifecycle.ProcessCameraProvider;
 import androidx.camera.view.PreviewView;
 
 import com.google.common.util.concurrent.ListenableFuture;
+import com.google.android.gms.tasks.Tasks;
 import com.google.mlkit.vision.common.InputImage;
 import com.google.mlkit.vision.text.TextRecognition;
 import com.google.mlkit.vision.text.TextRecognizer;
@@ -42,13 +48,19 @@ import java.util.List;
 import java.util.concurrent.Executor;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
 
 public final class DateOcrScanActivity extends ComponentActivity {
+    static final String EXTRA_START_VIDEO_REPLAY = "com.shiqi.expirytracker.START_VIDEO_REPLAY";
     private static final int REQUEST_CAMERA_PERMISSION = 6201;
+    private static final int REQUEST_VIDEO_REPLAY = 6202;
     private static final int MAX_RECENT_FRAMES = 6;
     private static final long ANALYZE_INTERVAL_MS = 450L;
+    private static final long VIDEO_FRAME_INTERVAL_US = 450000L;
+    private static final int VIDEO_MAX_FRAME_SIDE = 1280;
 
     private PreviewView previewView;
+    private ImageView replayFrameView;
     private TextView statusText;
     private TextView candidateText;
     private TextView rawText;
@@ -61,7 +73,9 @@ public final class DateOcrScanActivity extends ComponentActivity {
     private String latestRawText = "";
     private long lastAnalyzeAt;
     private volatile boolean analysisInFlight;
+    private volatile boolean videoReplayActive;
     private boolean cameraBound;
+    private Bitmap lastReplayFrame;
 
     private final Executor mainExecutor = new Executor() {
         @Override
@@ -83,12 +97,17 @@ public final class DateOcrScanActivity extends ComponentActivity {
         recognizer = TextRecognition.getClient(new ChineseTextRecognizerOptions.Builder().build());
 
         buildScreen();
-        ensureCameraPermission();
+        showInputChoiceState();
+        if (getIntent() != null && getIntent().getBooleanExtra(EXTRA_START_VIDEO_REPLAY, false)) {
+            startVideoReplayPicker();
+        }
     }
 
     @Override
     protected void onDestroy() {
+        stopVideoReplay();
         stopCamera();
+        clearLastReplayFrame();
         if (recognizer != null) {
             recognizer.close();
             recognizer = null;
@@ -107,6 +126,15 @@ public final class DateOcrScanActivity extends ComponentActivity {
         previewView = new PreviewView(this);
         previewView.setScaleType(PreviewView.ScaleType.FILL_CENTER);
         root.addView(previewView, new FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.MATCH_PARENT
+        ));
+
+        replayFrameView = new ImageView(this);
+        replayFrameView.setScaleType(ImageView.ScaleType.FIT_CENTER);
+        replayFrameView.setBackgroundColor(Color.BLACK);
+        replayFrameView.setVisibility(View.GONE);
+        root.addView(replayFrameView, new FrameLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
                 ViewGroup.LayoutParams.MATCH_PARENT
         ));
@@ -149,8 +177,23 @@ public final class DateOcrScanActivity extends ComponentActivity {
         title.setGravity(Gravity.CENTER);
         topActions.addView(title, weightWrap(1));
 
-        TextView spacer = new TextView(this);
-        topActions.addView(spacer, fixed(76, 42));
+        Button videoButton = overlayButton("视频", 62);
+        videoButton.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View view) {
+                startVideoReplayPicker();
+            }
+        });
+        topActions.addView(videoButton, fixed(62, 42));
+
+        Button cameraButton = overlayButton("相机", 62);
+        cameraButton.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View view) {
+                ensureCameraPermission();
+            }
+        });
+        topActions.addView(cameraButton, fixed(62, 42));
 
         statusText = new TextView(this);
         statusText.setText("把生产日期、喷码或保质期放入框内，缓慢移动包装");
@@ -218,7 +261,30 @@ public final class DateOcrScanActivity extends ComponentActivity {
         setContentView(root);
     }
 
+    private void showInputChoiceState() {
+        stopCamera();
+        stopVideoReplay();
+        resetRecognitionState();
+        if (previewView != null) {
+            previewView.setVisibility(View.VISIBLE);
+        }
+        if (replayFrameView != null) {
+            replayFrameView.setVisibility(View.GONE);
+        }
+        statusText.setText("可选择视频模拟相机实时识别，或打开相机扫描包装文字");
+        candidateText.setText("候选：等待选择输入源");
+        rawText.setText("原始 OCR：暂无");
+    }
+
     private void ensureCameraPermission() {
+        stopVideoReplay();
+        resetRecognitionState();
+        if (previewView != null) {
+            previewView.setVisibility(View.VISIBLE);
+        }
+        if (replayFrameView != null) {
+            replayFrameView.setVisibility(View.GONE);
+        }
         if (checkSelfPermission(Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED) {
             startCamera();
             return;
@@ -239,6 +305,200 @@ public final class DateOcrScanActivity extends ComponentActivity {
             candidateText.setText("候选：相机权限未开启");
             useButton.setEnabled(false);
             useButton.setAlpha(0.45f);
+        }
+    }
+
+    @Override
+    protected void onActivityResult(int requestCode, int resultCode, Intent data) {
+        super.onActivityResult(requestCode, resultCode, data);
+        if (requestCode != REQUEST_VIDEO_REPLAY) {
+            return;
+        }
+        if (resultCode != RESULT_OK || data == null || data.getData() == null) {
+            statusText.setText("未选择视频，可继续选择视频模拟或打开相机");
+            return;
+        }
+        startVideoReplay(data.getData());
+    }
+
+    private void startVideoReplayPicker() {
+        stopCamera();
+        stopVideoReplay();
+        resetRecognitionState();
+        Intent intent = new Intent(Intent.ACTION_OPEN_DOCUMENT);
+        intent.addCategory(Intent.CATEGORY_OPENABLE);
+        intent.setType("video/*");
+        intent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
+        try {
+            startActivityForResult(intent, REQUEST_VIDEO_REPLAY);
+        } catch (ActivityNotFoundException error) {
+            Intent fallback = new Intent(Intent.ACTION_GET_CONTENT);
+            fallback.addCategory(Intent.CATEGORY_OPENABLE);
+            fallback.setType("video/*");
+            try {
+                startActivityForResult(Intent.createChooser(fallback, "选择包装视频"), REQUEST_VIDEO_REPLAY);
+            } catch (ActivityNotFoundException ignored) {
+                Toast.makeText(this, "当前设备没有可用的视频选择器", Toast.LENGTH_SHORT).show();
+            }
+        }
+    }
+
+    private void startVideoReplay(final Uri uri) {
+        if (uri == null || cameraExecutor == null) {
+            statusText.setText("未选择视频，可继续选择视频模拟或打开相机");
+            return;
+        }
+
+        stopCamera();
+        stopVideoReplay();
+        resetRecognitionState();
+        videoReplayActive = true;
+        if (previewView != null) {
+            previewView.setVisibility(View.GONE);
+        }
+        if (replayFrameView != null) {
+            replayFrameView.setVisibility(View.VISIBLE);
+        }
+        statusText.setText("正在用视频模拟实时相机识别，候选仍需手动确认");
+
+        cameraExecutor.execute(new Runnable() {
+            @Override
+            public void run() {
+                replayVideoFrames(uri);
+            }
+        });
+    }
+
+    private void replayVideoFrames(Uri uri) {
+        MediaMetadataRetriever retriever = new MediaMetadataRetriever();
+        int analyzedFrames = 0;
+        try {
+            retriever.setDataSource(this, uri);
+            long durationUs = videoDurationUs(retriever);
+            if (durationUs <= 0) {
+                durationUs = 30000000L;
+            }
+
+            for (long frameUs = 0; videoReplayActive && frameUs <= durationUs; frameUs += VIDEO_FRAME_INTERVAL_US) {
+                Bitmap frame = retriever.getFrameAtTime(frameUs, MediaMetadataRetriever.OPTION_CLOSEST);
+                if (frame == null) {
+                    continue;
+                }
+                Bitmap scaled = scaleReplayFrame(frame);
+                if (scaled != frame) {
+                    frame.recycle();
+                }
+
+                showReplayFrame(scaled);
+                analyzeReplayFrame(scaled);
+                analyzedFrames++;
+                SystemClock.sleep(Math.max(120L, ANALYZE_INTERVAL_MS / 2L));
+            }
+
+            final int finalFrameCount = analyzedFrames;
+            runOnUiThread(new Runnable() {
+                @Override
+                public void run() {
+                    updateVideoReplayCompleteState(finalFrameCount);
+                }
+            });
+        } catch (final Exception error) {
+            runOnUiThread(new Runnable() {
+                @Override
+                public void run() {
+                    statusText.setText("视频模拟识别失败，请换一个本地视频或手动输入");
+                    Toast.makeText(DateOcrScanActivity.this, "视频读取失败", Toast.LENGTH_SHORT).show();
+                }
+            });
+        } finally {
+            videoReplayActive = false;
+            try {
+                retriever.release();
+            } catch (Exception ignored) {
+            }
+        }
+    }
+
+    private void analyzeReplayFrame(Bitmap bitmap) throws Exception {
+        if (bitmap == null || recognizer == null) {
+            return;
+        }
+        InputImage image = InputImage.fromBitmap(bitmap, 0);
+        com.google.mlkit.vision.text.Text visionText =
+                Tasks.await(recognizer.process(image), 8, TimeUnit.SECONDS);
+        handleOcrText(visionText == null ? "" : visionText.getText());
+    }
+
+    private long videoDurationUs(MediaMetadataRetriever retriever) {
+        try {
+            String value = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_DURATION);
+            return Long.parseLong(value) * 1000L;
+        } catch (Exception ignored) {
+            return 0L;
+        }
+    }
+
+    private Bitmap scaleReplayFrame(Bitmap bitmap) {
+        int width = bitmap.getWidth();
+        int height = bitmap.getHeight();
+        int largest = Math.max(width, height);
+        if (largest <= VIDEO_MAX_FRAME_SIDE) {
+            return bitmap;
+        }
+        float scale = VIDEO_MAX_FRAME_SIDE / (float) largest;
+        return Bitmap.createScaledBitmap(
+                bitmap,
+                Math.max(1, Math.round(width * scale)),
+                Math.max(1, Math.round(height * scale)),
+                true
+        );
+    }
+
+    private void showReplayFrame(final Bitmap bitmap) {
+        runOnUiThread(new Runnable() {
+            @Override
+            public void run() {
+                if (replayFrameView == null || bitmap == null) {
+                    return;
+                }
+                clearLastReplayFrame();
+                lastReplayFrame = bitmap;
+                replayFrameView.setImageBitmap(bitmap);
+            }
+        });
+    }
+
+    private void updateVideoReplayCompleteState(int analyzedFrames) {
+        DateOcrFrameVoter.VoteResult vote = latestVote;
+        if (vote != null && vote.readyForUserConfirmation()) {
+            statusText.setText("视频模拟完成，候选已稳定；确认前不会保存到食品列表");
+        } else if (analyzedFrames > 0) {
+            statusText.setText("视频模拟完成，但候选还不稳定，可换更清晰视频或手动输入");
+        } else {
+            statusText.setText("视频没有可用画面，请换一个本地视频或手动输入");
+        }
+    }
+
+    private void stopVideoReplay() {
+        videoReplayActive = false;
+    }
+
+    private void resetRecognitionState() {
+        recentFrames.clear();
+        latestVote = null;
+        latestRawText = "";
+        analysisInFlight = false;
+        lastAnalyzeAt = 0L;
+        if (useButton != null) {
+            useButton.setEnabled(false);
+            useButton.setAlpha(0.45f);
+        }
+    }
+
+    private void clearLastReplayFrame() {
+        if (lastReplayFrame != null) {
+            lastReplayFrame.recycle();
+            lastReplayFrame = null;
         }
     }
 
