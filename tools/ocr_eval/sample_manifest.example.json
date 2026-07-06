@@ -1,0 +1,13 @@
+{
+  "samples": [
+    {
+      "file": "video/example-label.mp4",
+      "notes": "Local reference only. Do not commit real sample videos.",
+      "expected": {
+        "productionDate": "2026-07-01",
+        "shelfLife": "7 days",
+        "expiryDate": "2026-07-08"
+      }
+    }
+  ]
+}

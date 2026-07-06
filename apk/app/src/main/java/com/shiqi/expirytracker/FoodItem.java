@@ -10,15 +10,21 @@ final class FoodItem {
     String productionDate = "";
     Integer shelfLifeValue = null;
     String shelfLifeUnit = "";
+    String openedDate = "";
+    Integer afterOpenShelfLifeValue = null;
+    String afterOpenShelfLifeUnit = "";
     String expiryDate = "";
     String dateSource = "unknown";
     double quantity = 1;
     double remainingQuantity = 1;
-    String unit = "piece";
+    String unit = "件";
     String storageMethod = "room_temp";
+    String location = FoodData.LOCATION_UNSPECIFIED;
     String notes = "";
     String createdAt = "";
     String updatedAt = "";
+    boolean isFinished = false;
+    String finishedAt = "";
 
     static FoodItem fromJson(JSONObject json) {
         FoodItem item = new FoodItem();
@@ -30,23 +36,51 @@ final class FoodItem {
                 ? Integer.valueOf(json.optInt("shelfLifeValue"))
                 : null;
         item.shelfLifeUnit = optCleanString(json, "shelfLifeUnit");
+        item.openedDate = optCleanString(json, "openedDate");
+        item.afterOpenShelfLifeValue = optPositiveInteger(json, "afterOpenShelfLifeValue");
+        item.afterOpenShelfLifeUnit = optCleanString(json, "afterOpenShelfLifeUnit");
         item.expiryDate = optCleanString(json, "expiryDate");
         item.dateSource = optCleanString(json, "dateSource");
         item.quantity = json.optDouble("quantity", 1);
         item.remainingQuantity = Math.min(json.optDouble("remainingQuantity", item.quantity), item.quantity);
-        item.unit = optFallback(json.optString("unit", "piece"), "piece");
+        item.unit = optFallback(json.optString("unit", "件"), "件");
         item.storageMethod = optFallback(json.optString("storageMethod", "room_temp"), "room_temp");
+        item.location = FoodData.normalizeLocationValue(json.optString("location", FoodData.LOCATION_UNSPECIFIED));
         item.notes = optCleanString(json, "notes");
         item.createdAt = optCleanString(json, "createdAt");
         item.updatedAt = optCleanString(json, "updatedAt");
+        item.isFinished = json.optBoolean("isFinished", false);
+        item.finishedAt = optCleanString(json, "finishedAt");
+        item.normalizeQuantityBounds();
 
         if (!DateRules.isValidDateString(item.expiryDate)) {
             item.expiryDate = "";
-            item.dateSource = "unknown";
+            if (!"none".equals(item.dateSource)) {
+                item.dateSource = "unknown";
+            }
         }
 
-        if (!"calculated".equals(item.dateSource) && !"manual".equals(item.dateSource)) {
+        if (!DateRules.isValidDateString(item.openedDate)) {
+            item.openedDate = "";
+        }
+
+        if (!DateRules.isShelfLifeUnit(item.afterOpenShelfLifeUnit)) {
+            item.afterOpenShelfLifeValue = null;
+            item.afterOpenShelfLifeUnit = "";
+        }
+
+        if (item.afterOpenShelfLifeValue == null) {
+            item.afterOpenShelfLifeUnit = "";
+        }
+
+        if (!"calculated".equals(item.dateSource) && !"manual".equals(item.dateSource) && !"none".equals(item.dateSource)) {
             item.dateSource = item.expiryDate.length() > 0 ? "manual" : "unknown";
+        }
+
+        if ("none".equals(item.dateSource)) {
+            item.expiryDate = "";
+            item.shelfLifeValue = null;
+            item.shelfLifeUnit = "";
         }
 
         return item;
@@ -64,15 +98,25 @@ final class FoodItem {
             json.put("shelfLifeValue", shelfLifeValue.intValue());
         }
         putNullableString(json, "shelfLifeUnit", shelfLifeUnit);
+        putNullableString(json, "openedDate", openedDate);
+        if (afterOpenShelfLifeValue == null) {
+            json.put("afterOpenShelfLifeValue", JSONObject.NULL);
+        } else {
+            json.put("afterOpenShelfLifeValue", afterOpenShelfLifeValue.intValue());
+        }
+        putNullableString(json, "afterOpenShelfLifeUnit", afterOpenShelfLifeUnit);
         putNullableString(json, "expiryDate", expiryDate);
         json.put("dateSource", dateSource);
         json.put("quantity", quantity);
         json.put("remainingQuantity", remainingQuantity);
         json.put("unit", unit);
         json.put("storageMethod", storageMethod);
+        json.put("location", FoodData.normalizeLocationValue(location));
         json.put("notes", notes);
         json.put("createdAt", createdAt);
         json.put("updatedAt", updatedAt);
+        json.put("isFinished", isFinished);
+        putNullableString(json, "finishedAt", finishedAt);
         return json;
     }
 
@@ -84,16 +128,52 @@ final class FoodItem {
         item.productionDate = productionDate;
         item.shelfLifeValue = shelfLifeValue;
         item.shelfLifeUnit = shelfLifeUnit;
+        item.openedDate = openedDate;
+        item.afterOpenShelfLifeValue = afterOpenShelfLifeValue;
+        item.afterOpenShelfLifeUnit = afterOpenShelfLifeUnit;
         item.expiryDate = expiryDate;
         item.dateSource = dateSource;
         item.quantity = quantity;
         item.remainingQuantity = remainingQuantity;
         item.unit = unit;
         item.storageMethod = storageMethod;
+        item.location = location;
         item.notes = notes;
         item.createdAt = createdAt;
         item.updatedAt = updatedAt;
+        item.isFinished = isFinished;
+        item.finishedAt = finishedAt;
         return item;
+    }
+
+    FoodItem copyAsNewRecord(String newId, String now) {
+        FoodItem item = copy();
+        item.id = cleanText(newId);
+        item.createdAt = cleanText(now);
+        item.updatedAt = cleanText(now);
+        item.isFinished = false;
+        item.finishedAt = "";
+        item.normalizeQuantityBounds();
+        item.remainingQuantity = item.quantity;
+        return item;
+    }
+
+    void normalizeQuantityBounds() {
+        quantity = normalizedQuantity(quantity);
+        remainingQuantity = clampedRemainingQuantity(remainingQuantity, quantity);
+    }
+
+    static double normalizedQuantity(double value) {
+        if (Double.isNaN(value) || Double.isInfinite(value) || value < 0) {
+            return 0;
+        }
+        return value;
+    }
+
+    static double clampedRemainingQuantity(double remaining, double quantity) {
+        double safeQuantity = normalizedQuantity(quantity);
+        double safeRemaining = normalizedQuantity(remaining);
+        return Math.min(safeRemaining, safeQuantity);
     }
 
     private static String optCleanString(JSONObject json, String key) {
@@ -101,6 +181,15 @@ final class FoodItem {
             return "";
         }
         return cleanText(json.optString(key, ""));
+    }
+
+    private static Integer optPositiveInteger(JSONObject json, String key) {
+        if (!json.has(key) || json.isNull(key)) {
+            return null;
+        }
+
+        int value = json.optInt(key);
+        return value > 0 ? Integer.valueOf(value) : null;
     }
 
     static String cleanText(String value) {

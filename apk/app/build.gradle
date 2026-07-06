@@ -1,0 +1,84 @@
+plugins {
+    id 'com.android.application'
+}
+
+def localDebugKeystore = rootProject.file('apk/debug.keystore')
+
+android {
+    namespace 'com.shiqi.expirytracker'
+
+    compileSdk {
+        version = release(36) {
+            minorApiLevel = 1
+        }
+    }
+    buildToolsVersion '36.1.0'
+
+    signingConfigs {
+        debug {
+            storeFile localDebugKeystore
+            storePassword 'android'
+            keyAlias 'androiddebugkey'
+            keyPassword 'android'
+        }
+    }
+
+    defaultConfig {
+        applicationId 'com.shiqi.expirytracker'
+        minSdk 23
+        targetSdk 35
+        versionCode 4
+        versionName '0.3.1'
+    }
+
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_1_8
+        targetCompatibility JavaVersion.VERSION_1_8
+    }
+}
+
+dependencies {
+    def camerax_version = '1.6.1'
+    def activity_version = '1.13.0'
+
+    implementation files('libs/zxing-core-3.5.3.jar')
+    implementation "androidx.activity:activity:${activity_version}"
+    implementation "androidx.camera:camera-core:${camerax_version}"
+    implementation "androidx.camera:camera-camera2:${camerax_version}"
+    implementation "androidx.camera:camera-lifecycle:${camerax_version}"
+    implementation "androidx.camera:camera-view:${camerax_version}"
+    implementation 'com.google.mlkit:text-recognition-chinese:16.0.1'
+}
+
+tasks.register('ensureLocalDebugKeystore') {
+    outputs.file(localDebugKeystore)
+
+    doLast {
+        if (localDebugKeystore.exists()) {
+            return
+        }
+
+        localDebugKeystore.parentFile.mkdirs()
+        def keytoolName = System.getProperty('os.name').toLowerCase().contains('windows') ? 'keytool.exe' : 'keytool'
+        exec {
+            executable new File(System.getProperty('java.home'), "bin/${keytoolName}").absolutePath
+            args(
+                '-genkeypair',
+                '-keystore', localDebugKeystore.absolutePath,
+                '-storepass', 'android',
+                '-keypass', 'android',
+                '-alias', 'androiddebugkey',
+                '-dname', 'CN=Android Debug,O=Android,C=US',
+                '-keyalg', 'RSA',
+                '-keysize', '2048',
+                '-validity', '10000'
+            )
+        }
+    }
+}
+
+afterEvaluate {
+    tasks.named('validateSigningDebug').configure {
+        dependsOn tasks.named('ensureLocalDebugKeystore')
+    }
+}
