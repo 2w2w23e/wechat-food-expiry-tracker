@@ -4,11 +4,22 @@ __pycache__/
 build/
 .local/
 video/
+local.properties
 tools/ocr_eval/.venv/
 tools/ocr_eval/models/
 tools/ocr_eval/out/
 apk/build/
+apk/app/build/
 apk/debug.keystore
+.cxx/
+.externalNativeBuild/
+captures/
+*.apk
+*.apks
+*.aab
+*.jks
+*.keystore
+*.hprof
 
 # Local IDE metadata
 .idea/
