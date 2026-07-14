@@ -15,8 +15,12 @@ final class DateOcrParser {
             "(?<!\\d)((?:20\\d{2}|\\d{2})\\s*(?:年|[./-])\\s*\\d{1,2}\\s*(?:月|[./-])\\s*\\d{1,2}\\s*(?:日)?)(?!\\d)"
     );
     private static final Pattern COMPACT_DATE = Pattern.compile("(?<!\\d)((?:20\\d{6})|(?:\\d{6}))(?!\\d)");
+    private static final Pattern PACKED_PRODUCTION_CODE = Pattern.compile("(?<!\\d)(20\\d{6})\\d{1,8}(?!\\d)");
     private static final Pattern COMPACT_DATE_RANGE = Pattern.compile(
             "(?<!\\d)(20\\d{6})\\s*(?:(?:[/|~～]|至)\\s*)?(20\\d{6})(?!\\d)"
+    );
+    private static final Pattern OCR_DAMAGED_COMPACT_DATE_RANGE = Pattern.compile(
+            "(?<!\\d)((?:0\\d{6})|(?:\\d{6}))\\s*(?:[/|~～]|至)\\s*(20\\d{6})(?!\\d)"
     );
     private static final Pattern NUMBER = Pattern.compile("\\d+");
     private static final Pattern PRODUCTION_HINT = Pattern.compile(
@@ -28,7 +32,23 @@ final class DateOcrParser {
             Pattern.CASE_INSENSITIVE
     );
     private static final Pattern SHELF_LIFE = Pattern.compile(
-            "(保质期|质期|保鲜期|保存期|冷藏|冷冻|常温|shelf\\s*life|valid(?:ity)?|storage\\s*time)\\s*[:：为是约\\-]*\\s*(\\d{1,4})\\s*(天|日|个月|月|年|days?|months?|years?)",
+            "(保\\s*质\\s*期|质\\s*期|保\\s*鲜\\s*期|保\\s*存\\s*期|冷藏|冷冻|常温|shelf\\s*life|valid(?:ity)?|storage\\s*time)\\s*[:：为是约\\-]*\\s*(\\d{1,4})\\s*(天|日|个\\s*月|月|年|days?|months?|years?)",
+            Pattern.CASE_INSENSITIVE
+    );
+    private static final Pattern BARCODE_HINT = Pattern.compile(
+            "(条码|商品码|barcode|gtin|ean|upc)",
+            Pattern.CASE_INSENSITIVE
+    );
+    private static final Pattern UNHINTED_SHELF_LIFE = Pattern.compile(
+            "(?<!\\d)(\\d{1,3})\\s*(天|日|个\\s*月)(?!\\d)",
+            Pattern.CASE_INSENSITIVE
+    );
+    private static final Pattern OCR_DAMAGED_MONTH_SHELF_LIFE = Pattern.compile(
+            "保[^\\s\\d]{2,3}\\s*(\\d{1,3})\\s*个(?:月|1)?(?!\\d)",
+            Pattern.CASE_INSENSITIVE
+    );
+    private static final Pattern AGE_CONTEXT = Pattern.compile(
+            "(月龄|年龄|适用.*月|婴幼儿|宝宝|儿童|周岁|岁以上|岁以下)",
             Pattern.CASE_INSENSITIVE
     );
 
@@ -42,8 +62,14 @@ final class DateOcrParser {
 
         collectDates(text, DATE_WITH_SEPARATOR, productionDates, expiryDates);
         collectDates(text, COMPACT_DATE, productionDates, expiryDates);
+        collectPackedProductionCodes(text, productionDates);
         promoteCompactDateRange(text, productionDates, expiryDates);
+        promoteOcrDamagedCompactDateRange(text, productionDates, expiryDates);
         collectShelfLives(text, shelfLives);
+        collectOcrDamagedMonthShelfLives(text, shelfLives);
+        if (shelfLives.isEmpty()) {
+            collectUnhintedShelfLives(text, shelfLives);
+        }
 
         dedupeDateCandidates(productionDates);
         dedupeDateCandidates(expiryDates);
@@ -57,6 +83,65 @@ final class DateOcrParser {
         sortDateCandidates(calculatedExpiryDates);
 
         return new Result(rawText == null ? "" : rawText, text, productionDates, expiryDates, shelfLives, calculatedExpiryDates);
+    }
+
+    static Result parseFocusedWithDateOnlySupplement(String focusedText, String supplementText) {
+        Result focused = parse(focusedText);
+        if (FoodItem.cleanText(supplementText).length() == 0) {
+            return focused;
+        }
+
+        Result supplement = parse(supplementText);
+        List<DateCandidate> productionDates = new ArrayList<DateCandidate>(focused.productionDates);
+        productionDates.addAll(supplement.productionDates);
+        List<DateCandidate> expiryDates = new ArrayList<DateCandidate>(focused.expiryDates);
+        expiryDates.addAll(supplement.expiryDates);
+        List<ShelfLifeCandidate> shelfLives = new ArrayList<ShelfLifeCandidate>(focused.shelfLives);
+
+        dedupeDateCandidates(productionDates);
+        dedupeDateCandidates(expiryDates);
+        dedupeShelfLives(shelfLives);
+        sortDateCandidates(productionDates);
+        sortDateCandidates(expiryDates);
+        sortShelfLives(shelfLives);
+
+        List<DateCandidate> calculatedExpiryDates = calculateExpiryDates(productionDates, shelfLives);
+        dedupeDateCandidates(calculatedExpiryDates);
+        sortDateCandidates(calculatedExpiryDates);
+        return new Result(
+                focused.rawText + "\n" + supplement.rawText,
+                focused.normalizedText + "\n" + supplement.normalizedText,
+                productionDates,
+                expiryDates,
+                shelfLives,
+                calculatedExpiryDates
+        );
+    }
+
+    private static void collectPackedProductionCodes(String text, List<DateCandidate> productionDates) {
+        Matcher matcher = PACKED_PRODUCTION_CODE.matcher(text);
+        while (matcher.find()) {
+            String rawDate = matcher.group(1);
+            String normalized = normalizeDate(rawDate);
+            if (!DateRules.isValidDateString(normalized)) {
+                continue;
+            }
+
+            String hintContext = nearbyText(text, matcher.start(1), matcher.end(), 64);
+            if (BARCODE_HINT.matcher(hintContext).find()) {
+                continue;
+            }
+            boolean productionHint = PRODUCTION_HINT.matcher(hintContext).find();
+            productionDates.add(new DateCandidate(
+                    "productionDate",
+                    rawDate,
+                    normalized,
+                    hintContext,
+                    productionHint ? 0.90d : 0.52d,
+                    !productionHint,
+                    false
+            ));
+        }
     }
 
     private static void collectDates(
@@ -145,6 +230,52 @@ final class DateOcrParser {
         return false;
     }
 
+    private static void promoteOcrDamagedCompactDateRange(
+            String text,
+            List<DateCandidate> productionDates,
+            List<DateCandidate> expiryDates
+    ) {
+        if (hasStrongDateCandidate(productionDates) || hasStrongDateCandidate(expiryDates)) {
+            return;
+        }
+        Matcher matcher = OCR_DAMAGED_COMPACT_DATE_RANGE.matcher(text);
+        if (!matcher.find()) {
+            return;
+        }
+        String productionRaw = matcher.group(1);
+        String production = productionRaw.length() == 7
+                ? normalizeDate("2" + productionRaw)
+                : normalizeDate(productionRaw);
+        String expiry = normalizeDate(matcher.group(2));
+        if (!DateRules.isValidDateString(production)
+                || !DateRules.isValidDateString(expiry)
+                || production.compareTo(expiry) >= 0) {
+            return;
+        }
+
+        String context = nearbyText(text, matcher.start(), matcher.end(), 30);
+        productionDates.clear();
+        expiryDates.clear();
+        productionDates.add(new DateCandidate(
+                "productionDate",
+                productionRaw,
+                production,
+                context,
+                0.74d,
+                false,
+                false
+        ));
+        expiryDates.add(new DateCandidate(
+                "expiryDate",
+                matcher.group(2),
+                expiry,
+                context,
+                0.74d,
+                false,
+                false
+        ));
+    }
+
     private static void collectShelfLives(String text, List<ShelfLifeCandidate> shelfLives) {
         Matcher matcher = SHELF_LIFE.matcher(text);
         while (matcher.find()) {
@@ -161,6 +292,58 @@ final class DateOcrParser {
                     0.84d
             ));
         }
+    }
+
+    private static void collectUnhintedShelfLives(String text, List<ShelfLifeCandidate> shelfLives) {
+        Matcher matcher = UNHINTED_SHELF_LIFE.matcher(text);
+        while (matcher.find()) {
+            int value = parsePositiveInt(matcher.group(1));
+            String unit = normalizeShelfLifeUnit(matcher.group(2));
+            String context = nearbyText(text, matcher.start(), matcher.end(), 18);
+            if (!isPlausibleShelfLife(value, unit) || AGE_CONTEXT.matcher(context).find()) {
+                continue;
+            }
+            shelfLives.add(new ShelfLifeCandidate(
+                    matcher.group(0),
+                    value,
+                    unit,
+                    context,
+                    0.62d
+            ));
+        }
+    }
+
+    private static void collectOcrDamagedMonthShelfLives(
+            String text,
+            List<ShelfLifeCandidate> shelfLives
+    ) {
+        Matcher matcher = OCR_DAMAGED_MONTH_SHELF_LIFE.matcher(text);
+        while (matcher.find()) {
+            int value = parsePositiveInt(matcher.group(1));
+            if (!isPlausibleShelfLife(value, "month")) {
+                continue;
+            }
+            shelfLives.add(new ShelfLifeCandidate(
+                    matcher.group(0),
+                    value,
+                    "month",
+                    nearbyText(text, matcher.start(), matcher.end(), 18),
+                    0.74d
+            ));
+        }
+    }
+
+    private static boolean isPlausibleShelfLife(int value, String unit) {
+        if (value <= 0 || unit.length() == 0) {
+            return false;
+        }
+        if ("day".equals(unit)) {
+            return value <= 3650;
+        }
+        if ("month".equals(unit)) {
+            return value <= 120;
+        }
+        return "year".equals(unit) && value <= 50;
     }
 
     private static List<DateCandidate> calculateExpiryDates(
@@ -281,7 +464,8 @@ final class DateOcrParser {
         if ("天".equals(unit) || "日".equals(unit) || "day".equals(unit) || "days".equals(unit)) {
             return "day";
         }
-        if ("月".equals(unit) || "个月".equals(unit) || "month".equals(unit) || "months".equals(unit)) {
+        if ("月".equals(unit) || "个月".equals(unit.replace(" ", ""))
+                || "month".equals(unit) || "months".equals(unit)) {
             return "month";
         }
         if ("年".equals(unit) || "year".equals(unit) || "years".equals(unit)) {
@@ -383,6 +567,16 @@ final class DateOcrParser {
                     || !calculatedExpiryDates.isEmpty();
         }
 
+        int productionDateEvidenceCount(String normalizedDate) {
+            if (!DateRules.isValidDateString(normalizedDate)) {
+                return 0;
+            }
+            int count = countDateEvidence(normalizedText, DATE_WITH_SEPARATOR, normalizedDate);
+            count += countDateEvidence(normalizedText, COMPACT_DATE, normalizedDate);
+            count += countDateEvidence(normalizedText, PACKED_PRODUCTION_CODE, normalizedDate);
+            return Math.min(3, count);
+        }
+
         int strongDatePairEvidenceCount() {
             Matcher matcher = COMPACT_DATE_RANGE.matcher(normalizedText);
             int count = 0;
@@ -393,6 +587,19 @@ final class DateOcrParser {
                         && DateRules.isValidDateString(expiry)
                         && production.compareTo(expiry) < 0) {
                     count++;
+                }
+            }
+            matcher = OCR_DAMAGED_COMPACT_DATE_RANGE.matcher(normalizedText);
+            while (matcher.find()) {
+                String productionRaw = matcher.group(1);
+                String production = productionRaw.length() == 7
+                        ? normalizeDate("2" + productionRaw)
+                        : normalizeDate(productionRaw);
+                String expiry = normalizeDate(matcher.group(2));
+                if (DateRules.isValidDateString(production)
+                        && DateRules.isValidDateString(expiry)
+                        && production.compareTo(expiry) < 0) {
+                    count += 2;
                 }
             }
             return count;
@@ -415,6 +622,17 @@ final class DateOcrParser {
             }
             return false;
         }
+    }
+
+    private static int countDateEvidence(String text, Pattern pattern, String normalizedDate) {
+        int count = 0;
+        Matcher matcher = pattern.matcher(text);
+        while (matcher.find()) {
+            if (normalizedDate.equals(normalizeDate(matcher.group(1)))) {
+                count++;
+            }
+        }
+        return count;
     }
 
     static final class DateCandidate {

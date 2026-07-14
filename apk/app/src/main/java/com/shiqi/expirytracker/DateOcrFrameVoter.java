@@ -38,9 +38,9 @@ final class DateOcrFrameVoter {
                 framesWithCandidates++;
             }
 
-            addDateCandidates(productionDates, frame.productionDates, frameIndex);
-            addDateCandidates(expiryDates, frame.expiryDates, frameIndex);
-            addDateCandidates(calculatedExpiryDates, frame.calculatedExpiryDates, frameIndex);
+            addDateCandidates(productionDates, frame.productionDates, frame, frameIndex, true);
+            addDateCandidates(expiryDates, frame.expiryDates, frame, frameIndex, false);
+            addDateCandidates(calculatedExpiryDates, frame.calculatedExpiryDates, frame, frameIndex, false);
             addShelfLifeCandidates(shelfLives, frame.shelfLives, frameIndex);
         }
 
@@ -51,13 +51,33 @@ final class DateOcrFrameVoter {
         StableDate expiryDate = strongPair == null
                 ? stableDate(expiryDates, requiredVotes)
                 : strongPair.expiryDate;
+        int shelfLifeRequiredVotes = productionDate == null ? requiredVotes : 1;
+        StableShelfLife shelfLife = stableShelfLife(shelfLives, shelfLifeRequiredVotes);
         StableDate calculatedExpiryDate = stableDate(calculatedExpiryDates, requiredVotes);
-        StableShelfLife shelfLife = stableShelfLife(shelfLives, requiredVotes);
+        if (calculatedExpiryDate == null && productionDate != null && shelfLife != null) {
+            String calculated = DateRules.addShelfLife(
+                    productionDate.value,
+                    Integer.valueOf(shelfLife.value),
+                    shelfLife.unit
+            );
+            if (DateRules.isValidDateString(calculated)) {
+                calculatedExpiryDate = new StableDate(
+                        "calculatedExpiryDate",
+                        calculated,
+                        productionDate.raw + " + " + shelfLife.raw,
+                        productionDate.context + " | " + shelfLife.context,
+                        Math.min(productionDate.votes, shelfLife.votes),
+                        Math.min(productionDate.confidence, shelfLife.confidence),
+                        productionDate.weakHint,
+                        true
+                );
+            }
+        }
 
         boolean conflict = hasDateConflict(productionDates, requiredVotes)
                 || hasDateConflict(expiryDates, requiredVotes)
                 || hasDateConflict(calculatedExpiryDates, requiredVotes)
-                || hasShelfLifeConflict(shelfLives, requiredVotes);
+                || hasShelfLifeConflict(shelfLives, shelfLifeRequiredVotes);
 
         return new VoteResult(
                 safeFrames.size(),
@@ -74,7 +94,9 @@ final class DateOcrFrameVoter {
     private static void addDateCandidates(
             Map<String, DateAccumulator> accumulators,
             List<DateOcrParser.DateCandidate> candidates,
-            int frameIndex
+            DateOcrParser.Result frame,
+            int frameIndex,
+            boolean productionEvidence
     ) {
         for (DateOcrParser.DateCandidate candidate : candidates) {
             DateAccumulator accumulator = accumulators.get(candidate.normalized);
@@ -82,7 +104,10 @@ final class DateOcrFrameVoter {
                 accumulator = new DateAccumulator(candidate.type, candidate.normalized);
                 accumulators.put(candidate.normalized, accumulator);
             }
-            accumulator.add(candidate, frameIndex);
+            int evidenceVotes = productionEvidence
+                    ? Math.max(1, frame.productionDateEvidenceCount(candidate.normalized))
+                    : 1;
+            accumulator.add(candidate, frameIndex, evidenceVotes);
         }
     }
 
@@ -293,14 +318,14 @@ final class DateOcrFrameVoter {
             this.value = value;
         }
 
-        void add(DateOcrParser.DateCandidate candidate, int frameIndex) {
+        void add(DateOcrParser.DateCandidate candidate, int frameIndex, int evidenceVotes) {
             if (frameIndex != lastFrameIndex) {
-                votes++;
+                votes += Math.max(1, evidenceVotes);
                 lastFrameIndex = frameIndex;
             }
             score += candidate.confidence;
             if (!candidate.weakHint && frameIndex != lastStrongFrameIndex) {
-                strongVotes++;
+                strongVotes += Math.max(1, evidenceVotes);
                 lastStrongFrameIndex = frameIndex;
             }
             weakHint = strongVotes == 0;

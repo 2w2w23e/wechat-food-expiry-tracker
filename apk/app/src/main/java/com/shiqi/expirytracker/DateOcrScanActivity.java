@@ -9,18 +9,21 @@ import android.graphics.Bitmap;
 import android.graphics.BitmapFactory;
 import android.graphics.Canvas;
 import android.graphics.Color;
+import android.graphics.Matrix;
 import android.graphics.Paint;
 import android.graphics.Rect;
 import android.graphics.RectF;
 import android.graphics.Typeface;
 import android.graphics.drawable.GradientDrawable;
-import android.media.Image;
 import android.media.MediaMetadataRetriever;
 import android.net.Uri;
 import android.os.Bundle;
 import android.os.SystemClock;
 import android.util.Log;
+import android.util.Size;
 import android.view.Gravity;
+import android.view.MotionEvent;
+import android.view.Surface;
 import android.view.View;
 import android.view.ViewGroup;
 import android.view.Window;
@@ -34,10 +37,16 @@ import android.widget.TextView;
 import android.widget.Toast;
 
 import androidx.activity.ComponentActivity;
+import androidx.camera.core.Camera;
 import androidx.camera.core.CameraSelector;
+import androidx.camera.core.FocusMeteringAction;
+import androidx.camera.core.FocusMeteringResult;
 import androidx.camera.core.ImageAnalysis;
 import androidx.camera.core.ImageProxy;
+import androidx.camera.core.MeteringPoint;
 import androidx.camera.core.Preview;
+import androidx.camera.core.resolutionselector.ResolutionSelector;
+import androidx.camera.core.resolutionselector.ResolutionStrategy;
 import androidx.camera.lifecycle.ProcessCameraProvider;
 import androidx.camera.view.PreviewView;
 
@@ -75,6 +84,10 @@ public final class DateOcrScanActivity extends ComponentActivity {
     private static final long ANALYZE_INTERVAL_MS = 420L;
     private static final long VIDEO_FRAME_INTERVAL_US = 300000L;
     private static final int VIDEO_MAX_FRAME_SIDE = 1280;
+    private static final double[] SHORT_VIDEO_FRAME_RATIOS = new double[] {
+            0.00d, 0.10d, 0.20d, 0.30d, 0.40d, 0.50d, 0.60d,
+            0.68d, 0.74d, 0.80d, 0.85d, 0.90d, 0.95d, 0.99d
+    };
 
     private PreviewView previewView;
     private ImageView replayFrameView;
@@ -92,6 +105,7 @@ public final class DateOcrScanActivity extends ComponentActivity {
     private TextRecognizer latinTextRecognizer;
     private BarcodeScanner barcodeScanner;
     private ProcessCameraProvider cameraProvider;
+    private Camera camera;
     private final UnifiedRecognitionStabilizer stabilizer = new UnifiedRecognitionStabilizer();
     private UnifiedRecognitionStabilizer.Snapshot latestSnapshot = stabilizer.snapshot();
     private BarcodeProductInfo latestProductInfo;
@@ -100,11 +114,12 @@ public final class DateOcrScanActivity extends ComponentActivity {
     private String productLookupError = "";
     private String latestRawText = "";
     private String selectedPackagingName = "";
-    private int recognitionGeneration;
+    private volatile int recognitionGeneration;
     private long lastAnalyzeAt;
     private volatile boolean analysisInFlight;
     private volatile boolean videoReplayActive;
     private volatile boolean longVideoProfile;
+    private volatile boolean videoDetailFrame;
     private int analyzedFrameSequence;
     private boolean cameraBound;
     private Bitmap lastReplayFrame;
@@ -158,6 +173,7 @@ public final class DateOcrScanActivity extends ComponentActivity {
 
     @Override
     protected void onDestroy() {
+        recognitionGeneration++;
         stopVideoReplay();
         stopCamera();
         clearLastReplayFrame();
@@ -529,10 +545,11 @@ public final class DateOcrScanActivity extends ComponentActivity {
             }
 
             longVideoProfile = durationUs > 20000000L;
-            int targetIntervals = longVideoProfile ? 15 : 27;
-            long frameIntervalUs = Math.max(VIDEO_FRAME_INTERVAL_US, durationUs / targetIntervals);
-            final int expectedFrames = Math.max(1, (int) (durationUs / frameIntervalUs) + 1);
-            for (long frameUs = 0; videoReplayActive && frameUs <= durationUs; frameUs += frameIntervalUs) {
+            List<Long> frameTimesUs = videoFrameTimes(durationUs, longVideoProfile);
+            final int expectedFrames = frameTimesUs.size();
+            for (int frameIndex = 0; videoReplayActive && frameIndex < frameTimesUs.size(); frameIndex++) {
+                long frameUs = frameTimesUs.get(frameIndex).longValue();
+                videoDetailFrame = longVideoProfile || frameUs >= Math.round(durationUs * 0.58d);
                 Bitmap frame = retriever.getFrameAtTime(frameUs, MediaMetadataRetriever.OPTION_CLOSEST);
                 if (frame == null) {
                     continue;
@@ -546,6 +563,9 @@ public final class DateOcrScanActivity extends ComponentActivity {
                 analyzeBitmapFrame(scaled, false);
                 analyzedFrames++;
                 updateVideoReplayProgress(analyzedFrames, expectedFrames);
+                if (hasCompleteVideoLabelCandidate()) {
+                    break;
+                }
                 SystemClock.sleep(Math.max(110L, ANALYZE_INTERVAL_MS / 2L));
             }
 
@@ -580,6 +600,7 @@ public final class DateOcrScanActivity extends ComponentActivity {
         } finally {
             videoReplayActive = false;
             longVideoProfile = false;
+            videoDetailFrame = false;
             try {
                 retriever.release();
             } catch (Exception ignored) {
@@ -697,16 +718,30 @@ public final class DateOcrScanActivity extends ComponentActivity {
     }
 
     private void analyzeBitmapFrame(Bitmap bitmap, boolean singleFrameConfirmation) throws Exception {
+        analyzeBitmapFrame(bitmap, singleFrameConfirmation, false, recognitionGeneration);
+    }
+
+    private void analyzeBitmapFrame(
+            Bitmap bitmap,
+            boolean singleFrameConfirmation,
+            boolean cameraLive,
+            int expectedGeneration
+    ) throws Exception {
         if (bitmap == null || textRecognizer == null || barcodeScanner == null) {
             return;
         }
         String barcode = "";
         StringBuilder rawText = new StringBuilder();
+        StringBuilder focusedDateText = new StringBuilder();
+        StringBuilder supplementaryDateText = new StringBuilder();
         List<PackagingTextAnalyzer.Observation> textObservations =
                 new ArrayList<PackagingTextAnalyzer.Observation>();
-        List<FrameVariant> variants = buildFrameVariants(bitmap);
+        List<FrameVariant> variants = buildFrameVariants(bitmap, cameraLive);
         try {
             for (FrameVariant variant : variants) {
+                if (expectedGeneration != recognitionGeneration) {
+                    return;
+                }
                 InputImage image = InputImage.fromBitmap(variant.bitmap, variant.rotationDegrees);
                 List<Task<?>> variantTasks = new ArrayList<Task<?>>();
                 Task<List<Barcode>> barcodeTask = null;
@@ -733,6 +768,12 @@ public final class DateOcrScanActivity extends ComponentActivity {
                 if (textTask != null && textTask.isSuccessful() && textTask.getResult() != null) {
                     Text recognizedText = textTask.getResult();
                     appendRecognizedText(rawText, recognizedText.getText());
+                    if (variant.dateFocused) {
+                        appendRecognizedText(focusedDateText, recognizedText.getText());
+                    }
+                    if (variant.datePairSupplement) {
+                        appendRecognizedText(supplementaryDateText, recognizedText.getText());
+                    }
                     appendTextObservations(
                             textObservations,
                             recognizedText,
@@ -744,6 +785,12 @@ public final class DateOcrScanActivity extends ComponentActivity {
                 if (latinTextTask != null && latinTextTask.isSuccessful() && latinTextTask.getResult() != null) {
                     Text latinText = latinTextTask.getResult();
                     appendRecognizedText(rawText, latinText.getText());
+                    if (variant.dateFocused) {
+                        appendRecognizedText(focusedDateText, latinText.getText());
+                    }
+                    if (variant.datePairSupplement) {
+                        appendRecognizedText(supplementaryDateText, latinText.getText());
+                    }
                     appendTextObservations(
                             textObservations,
                             latinText,
@@ -757,20 +804,25 @@ public final class DateOcrScanActivity extends ComponentActivity {
             recycleVariants(variants);
         }
 
+        if (expectedGeneration != recognitionGeneration) {
+            return;
+        }
         handleRecognitionResult(
                 barcode,
                 rawText.toString(),
                 PackagingTextAnalyzer.analyze(textObservations),
-                singleFrameConfirmation
+                singleFrameConfirmation,
+                videoReplayActive || cameraLive ? focusedDateText.toString() : rawText.toString(),
+                supplementaryDateText.toString()
         );
     }
 
     private boolean awaitRecognitionTask(Task<?> task, String label) {
         try {
-            Tasks.await(task, longVideoProfile ? 4 : 8, TimeUnit.SECONDS);
+            Tasks.await(task);
             return task.isSuccessful();
         } catch (Exception error) {
-            Log.w("ShiqiRecognition", label + " timed out for one variant", error);
+            Log.w("ShiqiRecognition", label + " failed for one variant", error);
             return false;
         }
     }
@@ -789,33 +841,62 @@ public final class DateOcrScanActivity extends ComponentActivity {
         });
     }
 
-    private List<FrameVariant> buildFrameVariants(Bitmap bitmap) {
+    private List<FrameVariant> buildFrameVariants(Bitmap bitmap, boolean cameraLive) {
         List<FrameVariant> variants = new ArrayList<FrameVariant>();
-        variants.add(new FrameVariant(
-                bitmap,
-                0,
-                true,
-                !longVideoProfile,
-                !longVideoProfile,
-                false,
-                0.68d
-        ));
-        addFrameCrop(variants, bitmap, 0.04f, 0.13f, 0.92f, 0.50f, 1100, 0, true, true, true);
-        addFrameCrop(variants, bitmap, 0.24f, 0.37f, 0.46f, 0.22f, 1000, 0, true, true, true);
-        addFrameCrop(variants, bitmap, 0.24f, 0.37f, 0.46f, 0.22f, 1000, 90, true, false, false);
-        if (!longVideoProfile) {
-            addFrameCrop(variants, bitmap, 0.24f, 0.37f, 0.46f, 0.22f, 1000, 270, true, false, false);
-        }
         analyzedFrameSequence++;
+        if (cameraLive) {
+            variants.add(new FrameVariant(bitmap, 0, true, true, true, false, 0.82d));
+            addFrameCrop(variants, bitmap, 0.07f, 0.13f, 0.86f, 0.52f, 1400, 0, true, true, true, true);
+            if (analyzedFrameSequence % 2 == 0) {
+                addEnhancedFrameCrop(variants, bitmap, 0.07f, 0.13f, 0.86f, 0.52f, 1500);
+            }
+            return variants;
+        }
+        if (videoReplayActive && !videoDetailFrame) {
+            variants.add(new FrameVariant(
+                    bitmap,
+                    0,
+                    true,
+                    true,
+                    analyzedFrameSequence % 2 == 1,
+                    false,
+                    0.72d
+            ));
+            addFrameCrop(variants, bitmap, 0.04f, 0.13f, 0.92f, 0.52f, 1200, 0, true, true, false);
+            if (analyzedFrameSequence % 2 == 0) {
+                Bitmap enhanced = LowContrastTextPreprocessor.enhanceLaserPrintedText(bitmap);
+                if (enhanced != null) {
+                    variants.add(new FrameVariant(enhanced, 0, false, true, false, true, 0.86d));
+                }
+            }
+            return variants;
+        }
+        variants.add(new FrameVariant(bitmap, 0, true, false, false, false, 0.68d));
+        addFrameCrop(variants, bitmap, 0.04f, 0.13f, 0.92f, 0.50f, 1100, 0, false, true, false);
+        addFrameCrop(variants, bitmap, 0.38f, 0.48f, 0.60f, 0.44f, 1400, 0, false, true, false, true);
+        addFrameCrop(variants, bitmap, 0.54f, 0.60f, 0.44f, 0.22f, 1500, 0, false, true, true, true);
         if (analyzedFrameSequence % 2 == 1) {
             Bitmap enhanced = LowContrastTextPreprocessor.enhanceLaserPrintedText(bitmap);
             if (enhanced != null) {
-                variants.add(new FrameVariant(enhanced, 0, false, true, false, true, 0.88d));
+                variants.add(new FrameVariant(enhanced, 0, false, true, false, true, 0.88d, false, true));
             }
         } else {
-            addEnhancedFrameCrop(variants, bitmap, 0.12f, 0.22f, 0.76f, 0.55f, 1280);
+            addEnhancedFrameCrop(variants, bitmap, 0.54f, 0.60f, 0.44f, 0.22f, 1500);
         }
         return variants;
+    }
+
+    private boolean hasCompleteVideoLabelCandidate() {
+        UnifiedRecognitionStabilizer.Snapshot snapshot = latestSnapshot;
+        if (snapshot == null || !snapshot.hasStableBarcode() || snapshot.stableDateVote == null) {
+            return false;
+        }
+        DateOcrFrameVoter.VoteResult vote = snapshot.stableDateVote;
+        return vote.productionDate != null
+                && vote.shelfLife != null
+                && vote.calculatedExpiryDate != null
+                && (!snapshot.rankedPackagingCandidates.isEmpty()
+                || snapshot.hasStablePackagingName());
     }
 
     private void addEnhancedFrameCrop(
@@ -841,7 +922,7 @@ public final class DateOcrScanActivity extends ComponentActivity {
         Bitmap enhanced = LowContrastTextPreprocessor.enhanceLaserPrintedText(prepared);
         prepared.recycle();
         if (enhanced != null) {
-            variants.add(new FrameVariant(enhanced, 0, false, true, true, true, 0.94d));
+            variants.add(new FrameVariant(enhanced, 0, false, true, true, true, 0.94d, true));
         }
     }
 
@@ -857,6 +938,36 @@ public final class DateOcrScanActivity extends ComponentActivity {
             boolean scanBarcode,
             boolean scanText,
             boolean scanLatinText
+    ) {
+        addFrameCrop(
+                variants,
+                source,
+                leftRatio,
+                topRatio,
+                widthRatio,
+                heightRatio,
+                minLargestSide,
+                rotationDegrees,
+                scanBarcode,
+                scanText,
+                scanLatinText,
+                false
+        );
+    }
+
+    private void addFrameCrop(
+            List<FrameVariant> variants,
+            Bitmap source,
+            float leftRatio,
+            float topRatio,
+            float widthRatio,
+            float heightRatio,
+            int minLargestSide,
+            int rotationDegrees,
+            boolean scanBarcode,
+            boolean scanText,
+            boolean scanLatinText,
+            boolean dateFocused
     ) {
         int sourceWidth = source.getWidth();
         int sourceHeight = source.getHeight();
@@ -877,7 +988,8 @@ public final class DateOcrScanActivity extends ComponentActivity {
                 scanText,
                 scanLatinText,
                 true,
-                sourceQuality
+                sourceQuality,
+                dateFocused
         ));
     }
 
@@ -886,7 +998,7 @@ public final class DateOcrScanActivity extends ComponentActivity {
         if (largest >= minLargestSide) {
             return bitmap;
         }
-        float scale = Math.min(3.0f, minLargestSide / (float) largest);
+        float scale = Math.min(4.0f, minLargestSide / (float) largest);
         return Bitmap.createScaledBitmap(
                 bitmap,
                 Math.max(1, Math.round(bitmap.getWidth() * scale)),
@@ -984,6 +1096,27 @@ public final class DateOcrScanActivity extends ComponentActivity {
         }
     }
 
+    private List<Long> videoFrameTimes(long durationUs, boolean longVideo) {
+        List<Long> times = new ArrayList<Long>();
+        if (longVideo) {
+            long frameIntervalUs = Math.max(VIDEO_FRAME_INTERVAL_US, durationUs / 15L);
+            for (long frameUs = 0; frameUs <= durationUs; frameUs += frameIntervalUs) {
+                times.add(Long.valueOf(frameUs));
+            }
+        } else {
+            for (double ratio : SHORT_VIDEO_FRAME_RATIOS) {
+                long frameUs = Math.min(durationUs, Math.max(0L, Math.round(durationUs * ratio)));
+                if (times.isEmpty() || times.get(times.size() - 1).longValue() != frameUs) {
+                    times.add(Long.valueOf(frameUs));
+                }
+            }
+        }
+        if (times.isEmpty()) {
+            times.add(Long.valueOf(0L));
+        }
+        return times;
+    }
+
     private Bitmap scaleReplayFrame(Bitmap bitmap) {
         int width = bitmap.getWidth();
         int height = bitmap.getHeight();
@@ -1042,6 +1175,7 @@ public final class DateOcrScanActivity extends ComponentActivity {
     private void stopVideoReplay() {
         videoReplayActive = false;
         longVideoProfile = false;
+        videoDetailFrame = false;
     }
 
     private void resetRecognitionState() {
@@ -1076,11 +1210,15 @@ public final class DateOcrScanActivity extends ComponentActivity {
             return;
         }
 
+        final int cameraGeneration = recognitionGeneration;
         final ListenableFuture<ProcessCameraProvider> providerFuture = ProcessCameraProvider.getInstance(this);
         providerFuture.addListener(new Runnable() {
             @Override
             public void run() {
                 try {
+                    if (cameraGeneration != recognitionGeneration) {
+                        return;
+                    }
                     cameraProvider = providerFuture.get();
                     if (!hasBackCamera(cameraProvider)) {
                         showCameraUnavailable("未找到可用后置相机，可使用视频、图片或手动新增。");
@@ -1117,10 +1255,23 @@ public final class DateOcrScanActivity extends ComponentActivity {
     private void bindCameraUseCases(ProcessCameraProvider provider) {
         provider.unbindAll();
 
-        Preview preview = new Preview.Builder().build();
+        int targetRotation = previewView.getDisplay() == null
+                ? Surface.ROTATION_0
+                : previewView.getDisplay().getRotation();
+        Preview preview = new Preview.Builder()
+                .setTargetRotation(targetRotation)
+                .build();
         preview.setSurfaceProvider(previewView.getSurfaceProvider());
 
+        ResolutionSelector resolutionSelector = new ResolutionSelector.Builder()
+                .setResolutionStrategy(new ResolutionStrategy(
+                        new Size(1280, 960),
+                        ResolutionStrategy.FALLBACK_RULE_CLOSEST_HIGHER_THEN_LOWER
+                ))
+                .build();
         ImageAnalysis imageAnalysis = new ImageAnalysis.Builder()
+                .setResolutionSelector(resolutionSelector)
+                .setTargetRotation(targetRotation)
                 .setBackpressureStrategy(ImageAnalysis.STRATEGY_KEEP_ONLY_LATEST)
                 .build();
         imageAnalysis.setAnalyzer(cameraExecutor, new ImageAnalysis.Analyzer() {
@@ -1130,20 +1281,89 @@ public final class DateOcrScanActivity extends ComponentActivity {
             }
         });
 
-        provider.bindToLifecycle(
+        camera = provider.bindToLifecycle(
                 this,
                 CameraSelector.DEFAULT_BACK_CAMERA,
                 preview,
                 imageAnalysis
         );
+        configureCameraFocus(camera);
+    }
+
+    private void configureCameraFocus(final Camera boundCamera) {
+        if (previewView == null || boundCamera == null) {
+            return;
+        }
+        previewView.setOnTouchListener(new View.OnTouchListener() {
+            @Override
+            public boolean onTouch(View view, MotionEvent event) {
+                if (event.getAction() != MotionEvent.ACTION_UP) {
+                    return true;
+                }
+                startFocusAndMetering(boundCamera, event.getX(), event.getY(), true);
+                return true;
+            }
+        });
+        previewView.post(new Runnable() {
+            @Override
+            public void run() {
+                startFocusAndMetering(
+                        boundCamera,
+                        previewView.getWidth() / 2f,
+                        previewView.getHeight() * 0.36f,
+                        false
+                );
+            }
+        });
+    }
+
+    private void startFocusAndMetering(final Camera boundCamera, float x, float y, final boolean announceResult) {
+        if (previewView == null || boundCamera == null || previewView.getWidth() <= 0 || previewView.getHeight() <= 0) {
+            return;
+        }
+        MeteringPoint point = previewView.getMeteringPointFactory().createPoint(x, y, 0.18f);
+        FocusMeteringAction action = new FocusMeteringAction.Builder(
+                point,
+                FocusMeteringAction.FLAG_AF | FocusMeteringAction.FLAG_AE | FocusMeteringAction.FLAG_AWB
+        ).setAutoCancelDuration(4, TimeUnit.SECONDS).build();
+        if (!boundCamera.getCameraInfo().isFocusMeteringSupported(action)) {
+            if (announceResult) {
+                statusText.setText("此设备不支持点按对焦，请保持包装稳定并靠近小字。");
+            }
+            return;
+        }
+        if (announceResult) {
+            statusText.setText("正在对焦包装小字…");
+        }
+        final ListenableFuture<FocusMeteringResult> focusFuture =
+                boundCamera.getCameraControl().startFocusAndMetering(action);
+        focusFuture.addListener(new Runnable() {
+            @Override
+            public void run() {
+                if (!announceResult || boundCamera != camera) {
+                    return;
+                }
+                try {
+                    statusText.setText(focusFuture.get().isFocusSuccessful()
+                            ? "对焦完成，请保持包装稳定并让小字占满识别框。"
+                            : "对焦未锁定，请靠近包装小字后再轻点一次。");
+                } catch (Exception error) {
+                    statusText.setText("对焦失败，请保持镜头稳定后再轻点包装小字。");
+                }
+            }
+        }, mainExecutor);
     }
 
     private void stopCamera() {
         cameraBound = false;
+        if (previewView != null) {
+            previewView.setOnTouchListener(null);
+        }
         if (cameraProvider != null) {
             cameraProvider.unbindAll();
             cameraProvider = null;
         }
+        camera = null;
         analysisInFlight = false;
     }
 
@@ -1155,52 +1375,60 @@ public final class DateOcrScanActivity extends ComponentActivity {
         }
         lastAnalyzeAt = now;
         analysisInFlight = true;
+        final int frameGeneration = recognitionGeneration;
 
-        Image mediaImage = imageProxy.getImage();
-        if (mediaImage == null || textRecognizer == null || barcodeScanner == null) {
+        Bitmap oriented = null;
+        try {
+            oriented = copyUprightBitmap(imageProxy);
+            analyzeBitmapFrame(oriented, false, true, frameGeneration);
+        } catch (Exception error) {
+            Log.w("ShiqiRecognition", "Camera frame recognition failed", error);
+            runOnUiThread(new Runnable() {
+                @Override
+                public void run() {
+                    statusText.setText("本帧识别失败，轻点包装小字对焦后继续扫描。");
+                }
+            });
+        } finally {
+            if (oriented != null && !oriented.isRecycled()) {
+                oriented.recycle();
+            }
             analysisInFlight = false;
-            imageProxy.close();
-            return;
         }
+    }
 
-        InputImage inputImage = InputImage.fromMediaImage(
-                mediaImage,
-                imageProxy.getImageInfo().getRotationDegrees()
-        );
-        final Task<List<Barcode>> barcodeTask = barcodeScanner.process(inputImage);
-        final Task<Text> textTask = textRecognizer.process(inputImage);
-        Tasks.whenAllComplete(barcodeTask, textTask)
-                .addOnCompleteListener(new com.google.android.gms.tasks.OnCompleteListener<List<Task<?>>>() {
-                    @Override
-                    public void onComplete(Task<List<Task<?>>> task) {
-                        try {
-                            List<Barcode> barcodes = barcodeTask.isSuccessful() ? barcodeTask.getResult() : null;
-                            Text text = textTask.isSuccessful() ? textTask.getResult() : null;
-                            List<PackagingTextAnalyzer.Observation> observations = observationsFromText(
-                                    text,
-                                    imageProxy.getWidth(),
-                                    imageProxy.getHeight(),
-                                    0.90d
-                            );
-                            handleRecognitionResult(
-                                    extractProductBarcode(barcodes),
-                                    text == null ? "" : text.getText(),
-                                    PackagingTextAnalyzer.analyze(observations),
-                                    false
-                            );
-                        } catch (Exception ignored) {
-                            runOnUiThread(new Runnable() {
-                                @Override
-                                public void run() {
-                                    statusText.setText("本帧识别失败，继续对准包装信息。");
-                                }
-                            });
-                        } finally {
-                            analysisInFlight = false;
-                            imageProxy.close();
-                        }
-                    }
-                });
+    private Bitmap copyUprightBitmap(ImageProxy imageProxy) {
+        Bitmap source;
+        int rotationDegrees = imageProxy.getImageInfo().getRotationDegrees();
+        try {
+            source = imageProxy.toBitmap();
+        } finally {
+            imageProxy.close();
+        }
+        int normalizedRotation = ((rotationDegrees % 360) + 360) % 360;
+        if (normalizedRotation == 0) {
+            return source;
+        }
+        Matrix matrix = new Matrix();
+        matrix.postRotate(normalizedRotation);
+        try {
+            Bitmap upright = Bitmap.createBitmap(
+                    source,
+                    0,
+                    0,
+                    source.getWidth(),
+                    source.getHeight(),
+                    matrix,
+                    true
+            );
+            if (upright != source) {
+                source.recycle();
+            }
+            return upright;
+        } catch (RuntimeException error) {
+            source.recycle();
+            throw error;
+        }
     }
 
     private String extractProductBarcode(List<Barcode> barcodes) {
@@ -1238,11 +1466,42 @@ public final class DateOcrScanActivity extends ComponentActivity {
             List<PackagingTextAnalyzer.Candidate> packagingCandidates,
             boolean singleFrameConfirmation
     ) {
+        handleRecognitionResult(barcode, rawText, packagingCandidates, singleFrameConfirmation, rawText);
+    }
+
+    private void handleRecognitionResult(
+            String barcode,
+            String rawText,
+            List<PackagingTextAnalyzer.Candidate> packagingCandidates,
+            boolean singleFrameConfirmation,
+            String dateRawText
+    ) {
+        handleRecognitionResult(
+                barcode,
+                rawText,
+                packagingCandidates,
+                singleFrameConfirmation,
+                dateRawText,
+                ""
+        );
+    }
+
+    private void handleRecognitionResult(
+            String barcode,
+            String rawText,
+            List<PackagingTextAnalyzer.Candidate> packagingCandidates,
+            boolean singleFrameConfirmation,
+            String dateRawText,
+            String supplementaryDateText
+    ) {
         String cleanedText = FoodItem.cleanText(rawText);
         if (!BarcodeUtils.isSupportedProductCode(barcode)) {
             barcode = RecognitionTextCleaner.extractProductCodeFromOcr(cleanedText);
         }
-        DateOcrParser.Result parsed = DateOcrParser.parse(cleanedText);
+        DateOcrParser.Result parsed = DateOcrParser.parseFocusedWithDateOnlySupplement(
+                FoodItem.cleanText(dateRawText),
+                FoodItem.cleanText(supplementaryDateText)
+        );
         latestSnapshot = stabilizer.addFrame(
                 barcode,
                 parsed,
@@ -1672,6 +1931,8 @@ public final class DateOcrScanActivity extends ComponentActivity {
         final boolean scanLatinText;
         final boolean recycleBitmap;
         final double sourceQuality;
+        final boolean dateFocused;
+        final boolean datePairSupplement;
 
         FrameVariant(
                 Bitmap bitmap,
@@ -1682,6 +1943,53 @@ public final class DateOcrScanActivity extends ComponentActivity {
                 boolean recycleBitmap,
                 double sourceQuality
         ) {
+            this(
+                    bitmap,
+                    rotationDegrees,
+                    scanBarcode,
+                    scanText,
+                    scanLatinText,
+                    recycleBitmap,
+                    sourceQuality,
+                    false,
+                    false
+            );
+        }
+
+        FrameVariant(
+                Bitmap bitmap,
+                int rotationDegrees,
+                boolean scanBarcode,
+                boolean scanText,
+                boolean scanLatinText,
+                boolean recycleBitmap,
+                double sourceQuality,
+                boolean dateFocused
+        ) {
+            this(
+                    bitmap,
+                    rotationDegrees,
+                    scanBarcode,
+                    scanText,
+                    scanLatinText,
+                    recycleBitmap,
+                    sourceQuality,
+                    dateFocused,
+                    false
+            );
+        }
+
+        FrameVariant(
+                Bitmap bitmap,
+                int rotationDegrees,
+                boolean scanBarcode,
+                boolean scanText,
+                boolean scanLatinText,
+                boolean recycleBitmap,
+                double sourceQuality,
+                boolean dateFocused,
+                boolean datePairSupplement
+        ) {
             this.bitmap = bitmap;
             this.rotationDegrees = rotationDegrees;
             this.scanBarcode = scanBarcode;
@@ -1689,6 +1997,8 @@ public final class DateOcrScanActivity extends ComponentActivity {
             this.scanLatinText = scanLatinText;
             this.recycleBitmap = recycleBitmap;
             this.sourceQuality = sourceQuality;
+            this.dateFocused = dateFocused;
+            this.datePairSupplement = datePairSupplement;
         }
     }
 

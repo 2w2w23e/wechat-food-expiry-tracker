@@ -1358,6 +1358,80 @@ public final class LocalLogicTest {
                 assertEquals("day", hinted.shelfLives.get(0).unit);
             }
         });
+
+        test("DateOcrParser extracts date prefix from laser production batch code", new TestCase() {
+            public void run() {
+                DateOcrParser.Result result = DateOcrParser.parse(
+                        "保 质 期 9个 月\n生产日期见喷码\n2026012057420"
+                );
+
+                assertEquals("2026-01-20", result.productionDates.get(0).normalized);
+                assertEquals(9, result.shelfLives.get(0).value);
+                assertEquals("month", result.shelfLives.get(0).unit);
+                assertEquals("2026-10-20", result.calculatedExpiryDates.get(0).normalized);
+
+                DateOcrParser.Result barcodeOnly = DateOcrParser.parse("条码 2026012057420");
+                assertFalse(barcodeOnly.hasAnyCandidate(), "long numeric code needs production context");
+
+                DateOcrParser.Result repeatedVariants = DateOcrParser.parse(
+                        "20260120S7420\n2026012057420\n20260120S7420"
+                );
+                assertEquals(3, repeatedVariants.productionDateEvidenceCount("2026-01-20"));
+            }
+        });
+
+        test("DateOcrParser recovers shelf life when Chinese hint is damaged by OCR", new TestCase() {
+            public void run() {
+                DateOcrParser.Result result = DateOcrParser.parse(
+                        "W劇9个月\n产1年月UY MD\n20260120S7420"
+                );
+
+                assertEquals(9, result.shelfLives.get(0).value);
+                assertEquals("month", result.shelfLives.get(0).unit);
+                assertEquals("2026-01-20", result.productionDates.get(0).normalized);
+                assertEquals("2026-10-20", result.calculatedExpiryDates.get(0).normalized);
+
+                DateOcrParser.Result missingMonthGlyph = DateOcrParser.parse(
+                        "保廣明9个\n生产日期年月日YMD\n2026012057420"
+                );
+                assertEquals(9, missingMonthGlyph.shelfLives.get(0).value);
+                assertEquals("month", missingMonthGlyph.shelfLives.get(0).unit);
+                assertEquals("2026-10-20", missingMonthGlyph.calculatedExpiryDates.get(0).normalized);
+
+                DateOcrParser.Result monthReadAsOne = DateOcrParser.parse("保唐呀9个1");
+                assertEquals(9, monthReadAsOne.shelfLives.get(0).value);
+                assertEquals("month", monthReadAsOne.shelfLives.get(0).unit);
+
+                DateOcrParser.Result supplemented = DateOcrParser.parseFocusedWithDateOnlySupplement(
+                        "保廣明9个",
+                        "2026012057420"
+                );
+                assertEquals("2026-01-20", supplemented.productionDates.get(0).normalized);
+                assertEquals("2026-10-20", supplemented.calculatedExpiryDates.get(0).normalized);
+
+                DateOcrParser.Result datePairOnly = DateOcrParser.parseFocusedWithDateOnlySupplement(
+                        "",
+                        "20260612 20270611 204日"
+                );
+                assertEquals("2026-06-12", datePairOnly.productionDates.get(0).normalized);
+                assertEquals("2027-06-11", datePairOnly.expiryDates.get(0).normalized);
+                assertEquals(0, datePairOnly.shelfLives.size());
+
+                DateOcrParser.Result clippedDatePair = DateOcrParser.parse(
+                        "0260612/20270611"
+                );
+                assertEquals("2026-06-12", clippedDatePair.productionDates.get(0).normalized);
+                assertEquals("2027-06-11", clippedDatePair.expiryDates.get(0).normalized);
+                List<DateOcrParser.Result> clippedFrames = new ArrayList<DateOcrParser.Result>();
+                clippedFrames.add(clippedDatePair);
+                DateOcrFrameVoter.VoteResult clippedVote = DateOcrFrameVoter.vote(clippedFrames, 3);
+                assertEquals("2026-06-12", clippedVote.productionDate.value);
+                assertEquals("2027-06-11", clippedVote.expiryDate.value);
+
+                DateOcrParser.Result age = DateOcrParser.parse("适用年龄 9个月以上");
+                assertFalse(age.hasAnyCandidate(), "baby age must not become shelf life");
+            }
+        });
     }
 
     private void runDateOcrFrameVoterTests() {
@@ -1380,6 +1454,22 @@ public final class LocalLogicTest {
                 assertEquals("day", result.shelfLife.unit);
                 assertEquals("2026-07-08", result.calculatedExpiryDate.value);
                 assertTrue(result.calculatedExpiryDate.candidateOnly, "calculated expiry must not be saved directly");
+            }
+        });
+
+        test("DateOcrFrameVoter combines stable production date with one clear shelf-life read", new TestCase() {
+            public void run() {
+                List<DateOcrParser.Result> frames = new ArrayList<DateOcrParser.Result>();
+                frames.add(DateOcrParser.parse("20260120S7420 W劇9个月"));
+                frames.add(DateOcrParser.parse("20260120S7420"));
+                frames.add(DateOcrParser.parse("20260120S7420"));
+
+                DateOcrFrameVoter.VoteResult result = DateOcrFrameVoter.vote(frames, 3);
+                assertEquals("2026-01-20", result.productionDate.value);
+                assertEquals(9, result.shelfLife.value);
+                assertEquals("month", result.shelfLife.unit);
+                assertEquals("2026-10-20", result.calculatedExpiryDate.value);
+                assertTrue(result.calculatedExpiryDate.calculated, "expiry should be derived from confirmed inputs");
             }
         });
 
@@ -1594,6 +1684,8 @@ public final class LocalLogicTest {
                 assertEquals(0, RecognitionTextCleaner.productNameScore("水化合物 三就食"));
                 assertEquals(0, RecognitionTextCleaner.productNameScore("配料表 小麦粉 饮用水"));
                 assertEquals(0, RecognitionTextCleaner.productNameScore("厂家地址：北京市朝阳区"));
+                assertEquals(0, RecognitionTextCleaner.productNameScore("如您有宝贵建议请拨打公司服务电话"));
+                assertEquals(0, RecognitionTextCleaner.productNameScore("受委托生产 产地黑龙江哈尔滨市"));
                 assertTrue(RecognitionTextCleaner.productNameScore("BLUE") > 0,
                         "Latin packaging brands should remain available as candidates");
                 assertTrue(
@@ -1641,6 +1733,7 @@ public final class LocalLogicTest {
                 assertEquals("", RecognitionTextCleaner.extractProductCodeFromOcr("生产日期 2026-07-05"));
                 assertEquals("", RecognitionTextCleaner.extractProductCodeFromOcr("有效期至 20260705"));
                 assertEquals("", RecognitionTextCleaner.extractProductCodeFromOcr("20260612/20270611"));
+                assertEquals("", RecognitionTextCleaner.extractProductCodeFromOcr("L (0211 59898584"));
                 assertEquals("96385074", RecognitionTextCleaner.extractProductCodeFromOcr("商品码：96385074"));
                 assertEquals("4006381333931", RecognitionTextCleaner.extractProductCodeFromOcr("4006381333931"));
             }
@@ -2004,7 +2097,7 @@ public final class LocalLogicTest {
             }
         });
 
-        test("UnifiedRecognitionPayload keeps barcode-only result savable without manual name input", new TestCase() {
+        test("UnifiedRecognitionPayload keeps barcode-only date unknown instead of no-expiry", new TestCase() {
             public void run() {
                 FoodItem draft = UnifiedRecognitionPayload.toDraft(
                         "036000291452",
@@ -2019,13 +2112,13 @@ public final class LocalLogicTest {
                 );
 
                 assertEquals("条码商品 036000291452", draft.name);
-                assertEquals("none", draft.dateSource);
+                assertEquals("unknown", draft.dateSource);
                 assertTrue(draft.notes.contains("036000291452"), "barcode-only result should be preserved in notes");
                 assertTrue(UnifiedRecognitionPayload.hasUsableDraft(draft), "barcode-only draft should be editable");
             }
         });
 
-        test("UnifiedRecognitionPayload keeps packaging-text-only result savable without manual date input", new TestCase() {
+        test("UnifiedRecognitionPayload keeps packaging-text-only date unknown instead of no-expiry", new TestCase() {
             public void run() {
                 FoodItem draft = UnifiedRecognitionPayload.toDraft(
                         "",
@@ -2040,7 +2133,7 @@ public final class LocalLogicTest {
                 );
 
                 assertEquals("大董老北京 炸酱面", draft.name);
-                assertEquals("none", draft.dateSource);
+                assertEquals("unknown", draft.dateSource);
                 assertTrue(UnifiedRecognitionPayload.hasUsableDraft(draft), "text-only draft should be editable");
             }
         });
