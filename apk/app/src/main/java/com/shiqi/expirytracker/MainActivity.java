@@ -71,13 +71,14 @@ public final class MainActivity extends Activity {
     private static final String EXTRA_QA_FORCE_IMPORT_SAVE_FAILURE =
             "com.shiqi.expirytracker.QA_FORCE_IMPORT_SAVE_FAILURE";
 
-    private static final int COLOR_BG = Color.rgb(246, 247, 242);
+    private static final int COLOR_BG = Color.rgb(246, 247, 248);
     private static final int COLOR_CARD = Color.WHITE;
-    private static final int COLOR_TEXT = Color.rgb(34, 42, 34);
-    private static final int COLOR_MUTED = Color.rgb(91, 105, 91);
-    private static final int COLOR_PRIMARY = Color.rgb(63, 111, 83);
+    private static final int COLOR_TEXT = Color.rgb(28, 34, 31);
+    private static final int COLOR_MUTED = Color.rgb(94, 103, 99);
+    private static final int COLOR_PRIMARY = Color.rgb(38, 104, 76);
     private static final int COLOR_DANGER = Color.rgb(159, 53, 46);
-    private static final int COLOR_LINE = Color.rgb(222, 228, 218);
+    private static final int COLOR_LINE = Color.rgb(224, 228, 226);
+    private static final int COLOR_SOFT = Color.rgb(239, 242, 241);
 
     private FoodStore store;
     private List<FoodItem> foods = new ArrayList<FoodItem>();
@@ -85,6 +86,8 @@ public final class MainActivity extends Activity {
     private LinearLayout stickySearchBar;
     private EditText pinnedSearchInput;
     private LinearLayout filterCard;
+    private LinearLayout advancedFilterBody;
+    private Button filterToggleButton;
     private LinearLayout dailyBriefingContainer;
     private LinearLayout listContainer;
     private LinearLayout activeFilterBar;
@@ -114,6 +117,7 @@ public final class MainActivity extends Activity {
     private boolean activeCategoryAllExpanded = false;
     private boolean activeLocationAllExpanded = false;
     private boolean syncingSearchText = false;
+    private boolean filterPanelExpanded = false;
     private boolean qaForceNextImportSaveFailure = false;
 
     @Override
@@ -155,18 +159,11 @@ public final class MainActivity extends Activity {
         stickySearchBar.setVisibility(View.GONE);
         root.addView(stickySearchBar, matchWrap());
 
-        pinnedSearchInput = input("", "搜索食品：中文、拼音或首字母", InputType.TYPE_CLASS_TEXT);
+        pinnedSearchInput = input("", "搜索食品", InputType.TYPE_CLASS_TEXT);
         pinnedSearchInput.addTextChangedListener(new TextWatcher() {
-            @Override
-            public void beforeTextChanged(CharSequence value, int start, int count, int after) {
-            }
-
-            @Override
-            public void onTextChanged(CharSequence value, int start, int before, int count) {
-            }
-
-            @Override
-            public void afterTextChanged(Editable value) {
+            @Override public void beforeTextChanged(CharSequence value, int start, int count, int after) { }
+            @Override public void onTextChanged(CharSequence value, int start, int before, int count) { }
+            @Override public void afterTextChanged(Editable value) {
                 applySearchText(value == null ? "" : value.toString(), pinnedSearchInput);
             }
         });
@@ -174,18 +171,15 @@ public final class MainActivity extends Activity {
 
         activeFilterBar = new LinearLayout(this);
         activeFilterBar.setOrientation(LinearLayout.VERTICAL);
-        activeFilterBar.setPadding(dp(14), dp(10), dp(14), dp(10));
+        activeFilterBar.setPadding(dp(14), dp(8), dp(14), dp(8));
         activeFilterBar.setBackground(rounded(COLOR_CARD, 0, COLOR_LINE));
         activeFilterBar.setVisibility(View.GONE);
         root.addView(activeFilterBar, matchWrap());
 
         mainScrollView = new ScrollView(this);
-        mainScrollView.setFillViewport(false);
         mainScrollView.setBackgroundColor(COLOR_BG);
         root.addView(mainScrollView, new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT,
-                0,
-                1
+                ViewGroup.LayoutParams.MATCH_PARENT, 0, 1
         ));
         mainScrollView.setOnScrollChangeListener(new View.OnScrollChangeListener() {
             @Override
@@ -206,208 +200,184 @@ public final class MainActivity extends Activity {
 
         LinearLayout content = new LinearLayout(this);
         content.setOrientation(LinearLayout.VERTICAL);
-        content.setPadding(dp(18), dp(18), dp(18), dp(28));
+        content.setPadding(dp(16), dp(16), dp(16), dp(28));
         mainScrollView.addView(content, new ScrollView.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
                 ViewGroup.LayoutParams.WRAP_CONTENT
         ));
 
-        TextView title = text("食期管家", 28, COLOR_TEXT, Typeface.BOLD);
-        content.addView(title, matchWrap());
+        LinearLayout heading = new LinearLayout(this);
+        heading.setOrientation(LinearLayout.HORIZONTAL);
+        heading.setGravity(android.view.Gravity.BOTTOM);
+        content.addView(heading, matchWrap());
 
-        TextView subtitle = text("本地安卓版", 14, COLOR_MUTED, Typeface.NORMAL);
-        subtitle.setPadding(0, dp(4), 0, dp(10));
+        TextView title = text("食期管家", 26, COLOR_TEXT, Typeface.BOLD);
+        heading.addView(title, weightWrap(1));
+
+        TextView localBadge = text("仅本机", 12, COLOR_MUTED, Typeface.BOLD);
+        localBadge.setGravity(android.view.Gravity.CENTER);
+        localBadge.setPadding(dp(9), dp(4), dp(9), dp(4));
+        localBadge.setBackground(rounded(COLOR_SOFT, dp(8), 0));
+        heading.addView(localBadge, wrapWrap());
+
+        TextView subtitle = text("按到期时间管理，需要优先处理的食品一眼可见", 13, COLOR_MUTED, Typeface.NORMAL);
+        subtitle.setPadding(0, dp(4), 0, dp(14));
         content.addView(subtitle, matchWrap());
-
-        TextView notice = text("当前数据保存在本机应用内，暂不支持多设备同步。", 14, COLOR_MUTED, Typeface.NORMAL);
-        notice.setPadding(dp(12), dp(10), dp(12), dp(10));
-        notice.setBackground(rounded(Color.rgb(239, 244, 235), dp(8), 0));
-        content.addView(notice, withMargins(matchWrap(), 0, 0, 0, dp(14)));
 
         dailyBriefingContainer = new LinearLayout(this);
         dailyBriefingContainer.setOrientation(LinearLayout.VERTICAL);
-        content.addView(dailyBriefingContainer, withMargins(matchWrap(), 0, 0, 0, dp(14)));
-
-        content.addView(reminderCard(), withMargins(matchWrap(), 0, 0, 0, dp(14)));
+        content.addView(dailyBriefingContainer, withMargins(matchWrap(), 0, 0, 0, dp(10)));
 
         LinearLayout actionRow = new LinearLayout(this);
         actionRow.setOrientation(LinearLayout.HORIZONTAL);
         actionRow.setGravity(android.view.Gravity.CENTER_VERTICAL);
         content.addView(actionRow, matchWrap());
 
-        Button addButton = button("新增食品", COLOR_PRIMARY);
-        addButton.setOnClickListener(new View.OnClickListener() {
-            @Override
-            public void onClick(View view) {
-                showFoodForm(null);
-            }
-        });
-        actionRow.addView(addButton, withMargins(weightWrap(1), 0, 0, dp(8), 0));
-
-        Button scanButton = button("智能识别", Color.rgb(93, 111, 73));
+        Button scanButton = button("智能识别", COLOR_PRIMARY);
         scanButton.setOnClickListener(new View.OnClickListener() {
-            @Override
-            public void onClick(View view) {
-                startDateOcrScanner();
-            }
+            @Override public void onClick(View view) { startDateOcrScanner(); }
         });
-        actionRow.addView(scanButton, weightWrap(1));
+        actionRow.addView(scanButton, withMargins(weightWrap(1), 0, 0, dp(8), 0));
 
-        LinearLayout excelRow = new LinearLayout(this);
-        excelRow.setOrientation(LinearLayout.HORIZONTAL);
-        excelRow.setGravity(android.view.Gravity.CENTER_VERTICAL);
-
-        Button importExcelButton = outlineButton("导入 Excel");
-        importExcelButton.setTextColor(COLOR_PRIMARY);
-        importExcelButton.setOnClickListener(new View.OnClickListener() {
-            @Override
-            public void onClick(View view) {
-                startExcelImport();
-            }
+        Button addButton = outlineButton("手动新增");
+        addButton.setOnClickListener(new View.OnClickListener() {
+            @Override public void onClick(View view) { showFoodForm(null); }
         });
-        excelRow.addView(importExcelButton, withMargins(weightWrap(1), 0, 0, dp(8), 0));
+        actionRow.addView(addButton, weightWrap(1));
 
-        Button exportExcelButton = outlineButton("导出 Excel");
-        exportExcelButton.setTextColor(COLOR_PRIMARY);
-        exportExcelButton.setOnClickListener(new View.OnClickListener() {
-            @Override
-            public void onClick(View view) {
-                startExcelExport();
-            }
+        LinearLayout utilityRow = new LinearLayout(this);
+        utilityRow.setOrientation(LinearLayout.HORIZONTAL);
+        utilityRow.setGravity(android.view.Gravity.CENTER_VERTICAL);
+        content.addView(utilityRow, withMargins(matchWrap(), 0, dp(8), 0, 0));
+
+        Button importButton = utilityButton("导入");
+        importButton.setOnClickListener(new View.OnClickListener() {
+            @Override public void onClick(View view) { startExcelImport(); }
         });
-        excelRow.addView(exportExcelButton, weightWrap(1));
-        content.addView(excelRow, withMargins(matchWrap(), 0, dp(10), 0, 0));
+        utilityRow.addView(importButton, withMargins(weightWrap(1), 0, 0, dp(8), 0));
 
-        statsText = text("", 15, COLOR_TEXT, Typeface.BOLD);
-        statsText.setPadding(0, dp(16), 0, dp(8));
+        Button exportButton = utilityButton("导出");
+        exportButton.setOnClickListener(new View.OnClickListener() {
+            @Override public void onClick(View view) { startExcelExport(); }
+        });
+        utilityRow.addView(exportButton, withMargins(weightWrap(1), 0, 0, dp(8), 0));
+
+        Button reminderUtilityButton = utilityButton("提醒设置");
+        reminderUtilityButton.setOnClickListener(new View.OnClickListener() {
+            @Override public void onClick(View view) { showReminderSettingsDialog(); }
+        });
+        utilityRow.addView(reminderUtilityButton, weightWrap(1));
+
+        content.addView(reminderCard(), withMargins(matchWrap(), 0, 0, 0, dp(10)));
+
+        statsText = text("", 14, COLOR_TEXT, Typeface.BOLD);
+        statsText.setPadding(0, dp(4), 0, dp(8));
         content.addView(statsText, matchWrap());
 
-        filterCard = card();
-        content.addView(filterCard, withMargins(matchWrap(), 0, dp(4), 0, dp(12)));
+        filterCard = new LinearLayout(this);
+        filterCard.setOrientation(LinearLayout.VERTICAL);
+        content.addView(filterCard, withMargins(matchWrap(), 0, 0, 0, dp(12)));
 
-        TextView filterTitle = text("筛选食品", 17, COLOR_TEXT, Typeface.BOLD);
-        filterCard.addView(filterTitle, matchWrap());
+        LinearLayout searchRow = new LinearLayout(this);
+        searchRow.setOrientation(LinearLayout.HORIZONTAL);
+        searchRow.setGravity(android.view.Gravity.CENTER_VERTICAL);
+        filterCard.addView(searchRow, matchWrap());
 
-        filterCard.addView(label("搜索食品"), withMargins(matchWrap(), 0, dp(10), 0, dp(4)));
-        searchInput = input("", "输入中文、拼音或首字母", InputType.TYPE_CLASS_TEXT);
+        searchInput = input("", "搜索食品", InputType.TYPE_CLASS_TEXT);
         searchInput.addTextChangedListener(new TextWatcher() {
-            @Override
-            public void beforeTextChanged(CharSequence value, int start, int count, int after) {
-            }
-
-            @Override
-            public void onTextChanged(CharSequence value, int start, int before, int count) {
-            }
-
-            @Override
-            public void afterTextChanged(Editable value) {
+            @Override public void beforeTextChanged(CharSequence value, int start, int count, int after) { }
+            @Override public void onTextChanged(CharSequence value, int start, int before, int count) { }
+            @Override public void afterTextChanged(Editable value) {
                 applySearchText(value == null ? "" : value.toString(), searchInput);
             }
         });
-        filterCard.addView(searchInput, matchWrap());
+        searchRow.addView(searchInput, withMargins(weightWrap(1), 0, 0, dp(8), 0));
 
-        TextView searchHint = text("搜索只会在当前状态和分类筛选结果内继续匹配。", 12, COLOR_MUTED, Typeface.NORMAL);
-        searchHint.setPadding(0, dp(4), 0, dp(6));
-        filterCard.addView(searchHint, matchWrap());
+        filterToggleButton = utilityButton("筛选");
+        filterToggleButton.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View view) {
+                filterPanelExpanded = !filterPanelExpanded;
+                advancedFilterBody.setVisibility(filterPanelExpanded ? View.VISIBLE : View.GONE);
+                filterToggleButton.setText(filterPanelExpanded ? "收起" : "筛选");
+            }
+        });
+        searchRow.addView(filterToggleButton, new LinearLayout.LayoutParams(dp(76), dp(44)));
 
-        filterCard.addView(label("状态多选"), withMargins(matchWrap(), 0, dp(8), 0, dp(4)));
+        advancedFilterBody = new LinearLayout(this);
+        advancedFilterBody.setOrientation(LinearLayout.VERTICAL);
+        advancedFilterBody.setPadding(0, dp(4), 0, 0);
+        advancedFilterBody.setVisibility(View.GONE);
+        filterCard.addView(advancedFilterBody, matchWrap());
+
+        advancedFilterBody.addView(label("状态"), matchWrap());
         statusFilterContainer = new LinearLayout(this);
         statusFilterContainer.setOrientation(LinearLayout.VERTICAL);
-        filterCard.addView(statusFilterContainer, matchWrap());
+        advancedFilterBody.addView(statusFilterContainer, matchWrap());
 
-        filterCard.addView(label("分类筛选"), withMargins(matchWrap(), 0, dp(10), 0, dp(4)));
+        advancedFilterBody.addView(label("分类"), matchWrap());
         categoryOpenButton = outlineButton("");
         categoryOpenButton.setGravity(android.view.Gravity.CENTER_VERTICAL);
         categoryOpenButton.setOnClickListener(new View.OnClickListener() {
-            @Override
-            public void onClick(View view) {
-                toggleCategoryPanel();
-            }
+            @Override public void onClick(View view) { toggleCategoryPanel(); }
         });
-        filterCard.addView(categoryOpenButton, matchWrap());
+        advancedFilterBody.addView(categoryOpenButton, matchWrap());
 
-        filterCard.addView(label("存放位置筛选"), withMargins(matchWrap(), 0, dp(10), 0, dp(4)));
+        advancedFilterBody.addView(label("存放位置"), matchWrap());
         locationOpenButton = outlineButton("");
         locationOpenButton.setGravity(android.view.Gravity.CENTER_VERTICAL);
         locationOpenButton.setOnClickListener(new View.OnClickListener() {
-            @Override
-            public void onClick(View view) {
-                toggleLocationPanel();
-            }
+            @Override public void onClick(View view) { toggleLocationPanel(); }
         });
-        filterCard.addView(locationOpenButton, matchWrap());
+        advancedFilterBody.addView(locationOpenButton, matchWrap());
 
         listContainer = new LinearLayout(this);
         listContainer.setOrientation(LinearLayout.VERTICAL);
         content.addView(listContainer, matchWrap());
 
         backToTopButton = new Button(this);
-        backToTopButton.setText("↑");
-        backToTopButton.setTextSize(24);
-        backToTopButton.setTextColor(Color.WHITE);
-        backToTopButton.setAllCaps(false);
-        backToTopButton.setMinWidth(0);
-        backToTopButton.setMinHeight(0);
-        backToTopButton.setPadding(0, 0, 0, dp(3));
-        backToTopButton.setBackground(oval(COLOR_PRIMARY, 0));
         backToTopButton.setVisibility(View.GONE);
-        backToTopButton.setOnClickListener(new View.OnClickListener() {
-            @Override
-            public void onClick(View view) {
-                scrollToTop();
-            }
-        });
-        FrameLayout.LayoutParams backToTopParams = new FrameLayout.LayoutParams(dp(54), dp(54));
-        backToTopParams.gravity = android.view.Gravity.BOTTOM | android.view.Gravity.RIGHT;
-        backToTopParams.setMargins(0, 0, dp(18), dp(18));
-        screenRoot.addView(backToTopButton, backToTopParams);
+        screenRoot.addView(backToTopButton, new FrameLayout.LayoutParams(1, 1));
 
         renderFilterControls();
         setContentView(screenRoot);
     }
 
     private View reminderCard() {
-        LinearLayout card = card();
-
-        LinearLayout top = new LinearLayout(this);
-        top.setOrientation(LinearLayout.HORIZONTAL);
-        top.setGravity(android.view.Gravity.CENTER_VERTICAL);
-        card.addView(top, matchWrap());
-
-        TextView title = text("手机提醒", 16, COLOR_TEXT, Typeface.BOLD);
-        top.addView(title, weightWrap(1));
-
-        reminderSettingsButton = outlineButton("设置");
-        reminderSettingsButton.setMinHeight(dp(36));
-        reminderSettingsButton.setMinimumHeight(0);
-        reminderSettingsButton.setPadding(dp(12), 0, dp(12), 0);
-        reminderSettingsButton.setOnClickListener(new View.OnClickListener() {
-            @Override
-            public void onClick(View view) {
-                showReminderSettingsDialog();
-            }
+        LinearLayout row = new LinearLayout(this);
+        row.setOrientation(LinearLayout.HORIZONTAL);
+        row.setGravity(android.view.Gravity.CENTER_VERTICAL);
+        row.setPadding(dp(12), dp(8), dp(10), dp(8));
+        row.setBackground(rounded(COLOR_SOFT, dp(8), 0));
+        row.setOnClickListener(new View.OnClickListener() {
+            @Override public void onClick(View view) { showReminderSettingsDialog(); }
         });
-        top.addView(reminderSettingsButton, withMargins(wrapWrap(), 0, 0, dp(8), 0));
 
-        reminderPermissionButton = outlineButton("开启提醒");
-        reminderPermissionButton.setMinHeight(dp(36));
+        TextView title = text("提醒", 13, COLOR_TEXT, Typeface.BOLD);
+        row.addView(title, withMargins(wrapWrap(), 0, 0, dp(10), 0));
+
+        reminderSettingsButton = utilityButton("设置");
+        reminderSettingsButton.setVisibility(View.GONE);
+
+        reminderStatusText = text("", 12, COLOR_MUTED, Typeface.NORMAL);
+        reminderStatusText.setSingleLine(true);
+        reminderStatusText.setEllipsize(TextUtils.TruncateAt.END);
+        row.addView(reminderStatusText, weightWrap(1));
+
+        reminderPermissionButton = utilityButton("授权");
+        reminderPermissionButton.setMinHeight(dp(32));
         reminderPermissionButton.setMinimumHeight(0);
-        reminderPermissionButton.setPadding(dp(12), 0, dp(12), 0);
+        reminderPermissionButton.setPadding(dp(10), 0, dp(10), 0);
         reminderPermissionButton.setOnClickListener(new View.OnClickListener() {
             @Override
             public void onClick(View view) {
                 requestNotificationPermission(true);
             }
         });
-        top.addView(reminderPermissionButton, wrapWrap());
-
-        reminderStatusText = text("", 13, COLOR_MUTED, Typeface.NORMAL);
-        reminderStatusText.setLineSpacing(dp(2), 1.0f);
-        reminderStatusText.setPadding(0, dp(8), 0, 0);
-        card.addView(reminderStatusText, matchWrap());
+        row.addView(reminderPermissionButton, withMargins(wrapWrap(), 0, 0, dp(6), 0));
 
         updateReminderStatus();
-        return card;
+        return row;
     }
 
     private void setupReminderNotifications() {
@@ -460,15 +430,15 @@ public final class MainActivity extends Activity {
 
         if (!reminderSettings.enabled) {
             reminderPermissionButton.setVisibility(View.GONE);
-            reminderStatusText.setText("已关闭：不会发送手机提醒，食品数据仍保留。点击“设置”可重新开启。");
+            reminderStatusText.setText("已关闭，点击可设置");
             return;
         }
 
         boolean allowed = ReminderScheduler.canPostNotifications(this);
         reminderPermissionButton.setVisibility(allowed ? View.GONE : View.VISIBLE);
         reminderStatusText.setText(allowed
-                ? "已开启：" + ReminderScheduler.reminderTimeLabel(reminderSettings) + "。已用完食品不会触发通知。"
-                : "未开启通知权限：" + ReminderScheduler.reminderTimeLabel(reminderSettings) + "。点击开启提醒并允许通知权限后发送。");
+                ? "已开启，点击查看时段"
+                : "等待通知授权");
     }
 
     private void showReminderSettingsDialog() {
@@ -1043,21 +1013,25 @@ public final class MainActivity extends Activity {
         dailyBriefingContainer.removeAllViews();
         DailyBriefing briefing = ReminderPolicy.dailyBriefing(foods, reminderSettings);
 
-        LinearLayout card = card();
-        TextView title = text("今日简报 · " + DailyBriefing.BRIEFING_TIME, 16, COLOR_TEXT, Typeface.BOLD);
-        card.addView(title, matchWrap());
+        LinearLayout briefingView = new LinearLayout(this);
+        briefingView.setOrientation(LinearLayout.VERTICAL);
+        briefingView.setPadding(dp(12), dp(10), dp(12), dp(10));
+        briefingView.setBackground(rounded(COLOR_CARD, dp(8), COLOR_LINE));
+
+        TextView title = text("今日", 13, COLOR_MUTED, Typeface.BOLD);
+        briefingView.addView(title, matchWrap());
 
         if (briefing.isEmpty()) {
-            TextView empty = text(reminderSettings.enabled ? "今天没有需要特别处理的食品" : "全局提醒已关闭，今日简报不发送通知。", 14, COLOR_MUTED, Typeface.NORMAL);
-            empty.setPadding(0, dp(8), 0, 0);
-            card.addView(empty, matchWrap());
+            TextView empty = text(reminderSettings.enabled ? "没有需要优先处理的食品" : "提醒已关闭，食品仍按日期排序", 15, COLOR_TEXT, Typeface.BOLD);
+            empty.setPadding(0, dp(3), 0, 0);
+            briefingView.addView(empty, matchWrap());
         } else {
-            addBriefingSection(card, "昨日过期", briefing.yesterdayExpired);
-            addBriefingSection(card, "今日到期", briefing.todayDue);
-            addBriefingSection(card, "临近保质期", briefing.upcoming);
+            addBriefingSection(briefingView, "昨日过期", briefing.yesterdayExpired);
+            addBriefingSection(briefingView, "今日到期", briefing.todayDue);
+            addBriefingSection(briefingView, "临近保质期", briefing.upcoming);
         }
 
-        dailyBriefingContainer.addView(card, matchWrap());
+        dailyBriefingContainer.addView(briefingView, matchWrap());
     }
 
     private void addBriefingSection(LinearLayout card, String title, List<DailyBriefing.Entry> entries) {
@@ -1065,7 +1039,7 @@ public final class MainActivity extends Activity {
             return;
         }
 
-        TextView line = text(title + "：" + briefingEntryText(entries), 14, COLOR_TEXT, Typeface.NORMAL);
+        TextView line = text(title + "：" + briefingEntryText(entries), 14, COLOR_TEXT, Typeface.BOLD);
         line.setLineSpacing(dp(2), 1.0f);
         line.setPadding(0, dp(8), 0, 0);
         card.addView(line, matchWrap());
@@ -1205,22 +1179,27 @@ public final class MainActivity extends Activity {
             }
         }
 
-        addFilterButtonGrid(statusFilterContainer, options, new FilterButtonBinder() {
-            @Override
-            public Button createButton(final Option option) {
-                boolean selected = statusFilterActive
-                        ? selectedStatuses.contains(option.value)
-                        : !DateRules.STATUS_FINISHED.equals(option.value);
-                Button button = filterButton(option.label, selected);
-                button.setOnClickListener(new View.OnClickListener() {
-                    @Override
-                    public void onClick(View view) {
-                        toggleStatusFilter(option.value);
-                    }
-                });
-                return button;
-            }
-        });
+        HorizontalScrollView scrollView = new HorizontalScrollView(this);
+        scrollView.setHorizontalScrollBarEnabled(false);
+        LinearLayout row = new LinearLayout(this);
+        row.setOrientation(LinearLayout.HORIZONTAL);
+        scrollView.addView(row, new HorizontalScrollView.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT
+        ));
+        statusFilterContainer.addView(scrollView, matchWrap());
+
+        for (final Option option : options) {
+            boolean selected = statusFilterActive && selectedStatuses.contains(option.value);
+            Button button = filterButton(option.label, selected);
+            button.setOnClickListener(new View.OnClickListener() {
+                @Override
+                public void onClick(View view) {
+                    toggleStatusFilter(option.value);
+                }
+            });
+            row.addView(button, withMargins(wrapWrap(), 0, 0, dp(6), 0));
+        }
     }
 
     private void renderCategoryFilterButtons() {
@@ -1253,7 +1232,7 @@ public final class MainActivity extends Activity {
                 : selectedCategories.isEmpty()
                         ? "未选分类"
                         : joinCategoryLabels(selectedCategories, FoodData.categoryFilterOptions(foods));
-        return "当前分类：" + categoryText + "    选择分类";
+        return "分类 · " + categoryText;
     }
 
     private String buildLocationOpenButtonText() {
@@ -1262,7 +1241,7 @@ public final class MainActivity extends Activity {
                 : selectedLocations.isEmpty()
                         ? "未选位置"
                         : joinLocationLabels(selectedLocations, FoodData.locationFilterOptions(foods));
-        return "当前位置：" + locationText + "    选择位置";
+        return "位置 · " + locationText;
     }
 
     private void showCategoryFilterDialog() {
@@ -2119,11 +2098,15 @@ public final class MainActivity extends Activity {
     private Button filterButton(String value, boolean selected) {
         Button button = new Button(this);
         button.setText(value);
-        button.setTextSize(14);
+        button.setTextSize(13);
         button.setAllCaps(false);
-        button.setMinHeight(dp(44));
-        button.setTextColor(selected ? Color.WHITE : COLOR_PRIMARY);
-        button.setBackgroundTintList(ColorStateList.valueOf(selected ? COLOR_PRIMARY : Color.rgb(238, 244, 235)));
+        button.setMinWidth(0);
+        button.setMinimumWidth(0);
+        button.setMinHeight(dp(38));
+        button.setMinimumHeight(0);
+        button.setPadding(dp(12), 0, dp(12), 0);
+        button.setTextColor(selected ? Color.WHITE : Color.rgb(55, 67, 62));
+        button.setBackground(rounded(selected ? COLOR_PRIMARY : COLOR_SOFT, dp(8), 0));
         return button;
     }
 
@@ -2342,19 +2325,19 @@ public final class MainActivity extends Activity {
 
     private View emptyGuideCard() {
         LinearLayout card = card();
-        TextView heading = text("还没有食品记录", 20, COLOR_TEXT, Typeface.BOLD);
+        TextView heading = text("还没有食品", 18, COLOR_TEXT, Typeface.BOLD);
         card.addView(heading, matchWrap());
 
-        TextView copy = text("可以先添加一件食品。不知道生产日期也没关系，可以直接填写最终可食用日期。食品会按最终可食用日期自动排序。", 15, COLOR_MUTED, Typeface.NORMAL);
+        TextView copy = text("识别包装或手动新增，保存前都可以确认和修改。", 14, COLOR_MUTED, Typeface.NORMAL);
         copy.setLineSpacing(dp(2), 1.0f);
-        copy.setPadding(0, dp(8), 0, dp(12));
+        copy.setPadding(0, dp(6), 0, dp(10));
         card.addView(copy, matchWrap());
 
-        Button first = button("新增第一件食品", COLOR_PRIMARY);
+        Button first = button("开始智能识别", COLOR_PRIMARY);
         first.setOnClickListener(new View.OnClickListener() {
             @Override
             public void onClick(View view) {
-                showFoodForm(null);
+                startDateOcrScanner();
             }
         });
         card.addView(first, matchWrap());
@@ -2377,7 +2360,9 @@ public final class MainActivity extends Activity {
         top.setGravity(android.view.Gravity.CENTER_VERTICAL);
         card.addView(top, matchWrap());
 
-        TextView name = text(food.name, 19, COLOR_TEXT, Typeface.BOLD);
+        TextView name = text(food.name, 18, COLOR_TEXT, Typeface.BOLD);
+        name.setMaxLines(2);
+        name.setEllipsize(TextUtils.TruncateAt.END);
         top.addView(name, weightWrap(1));
 
         TextView status = text(FoodData.statusLabel(foodStatus(food)), 13, statusColor(food), Typeface.BOLD);
@@ -2395,14 +2380,15 @@ public final class MainActivity extends Activity {
                 COLOR_MUTED,
                 Typeface.NORMAL
         );
-        meta.setPadding(0, dp(8), 0, 0);
+        meta.setPadding(0, dp(6), 0, 0);
+        meta.setMaxLines(2);
         card.addView(meta, matchWrap());
 
         String dateLine = isNoExpiryFood(food)
                 ? "已生产时长：" + DateRules.productionAgeLabel(food.productionDate)
                 : "最终可食用日期：" + food.expiryDate;
         TextView expiry = text(dateLine, 15, COLOR_TEXT, Typeface.NORMAL);
-        expiry.setPadding(0, dp(8), 0, dp(6));
+        expiry.setPadding(0, dp(6), 0, dp(4));
         card.addView(expiry, matchWrap());
 
         String afterOpenLine = afterOpenCardLine(food);
@@ -2414,57 +2400,25 @@ public final class MainActivity extends Activity {
 
         TextView reminderHint = text(reminderPlan.cardHint, 14, food.isFinished ? COLOR_MUTED : COLOR_PRIMARY, Typeface.BOLD);
         reminderHint.setLineSpacing(dp(2), 1.0f);
-        reminderHint.setPadding(0, 0, 0, dp(10));
+        reminderHint.setPadding(0, 0, 0, dp(8));
         card.addView(reminderHint, matchWrap());
 
         LinearLayout quickActions = new LinearLayout(this);
         quickActions.setOrientation(LinearLayout.HORIZONTAL);
         if (food.isFinished) {
-            Button copy = outlineButton("复制食品");
-            copy.setOnClickListener(new FoodActionClickListener(food, FOOD_ACTION_COPY));
-            quickActions.addView(copy, weightWrap(1));
+            Button restore = outlineButton("恢复提醒");
+            restore.setOnClickListener(new FoodActionClickListener(food, FOOD_ACTION_RESTORE));
+            quickActions.addView(restore, withMargins(weightWrap(1), 0, 0, dp(8), 0));
         } else {
             Button decrease = outlineButton("减少 1");
             decrease.setOnClickListener(new FoodActionClickListener(food, FOOD_ACTION_DECREASE_ONE));
             quickActions.addView(decrease, withMargins(weightWrap(1), 0, 0, dp(8), 0));
-
-            Button replenish = outlineButton("补货");
-            replenish.setOnClickListener(new FoodActionClickListener(food, FOOD_ACTION_REPLENISH));
-            quickActions.addView(replenish, weightWrap(1));
         }
+
+        Button more = utilityButton("更多操作");
+        more.setOnClickListener(new FoodActionClickListener(food, FOOD_ACTION_MORE));
+        quickActions.addView(more, weightWrap(1));
         card.addView(quickActions, matchWrap());
-
-        LinearLayout actions = new LinearLayout(this);
-        actions.setOrientation(LinearLayout.HORIZONTAL);
-        card.addView(actions, withMargins(matchWrap(), 0, dp(8), 0, 0));
-
-        if (food.isFinished) {
-            Button restore = outlineButton("恢复提醒");
-            restore.setOnClickListener(new FoodActionClickListener(food, FOOD_ACTION_RESTORE));
-            actions.addView(restore, withMargins(weightWrap(1), 0, 0, dp(8), 0));
-
-            Button delete = outlineButton("删除");
-            delete.setTextColor(COLOR_DANGER);
-            delete.setOnClickListener(new FoodActionClickListener(food, FOOD_ACTION_DELETE_CONFIRM));
-            actions.addView(delete, weightWrap(1));
-        } else {
-            Button edit = outlineButton("编辑");
-            edit.setOnClickListener(new FoodActionClickListener(food, FOOD_ACTION_EDIT));
-            actions.addView(edit, withMargins(weightWrap(1), 0, 0, dp(8), 0));
-
-            Button finish = outlineButton("已用完");
-            finish.setOnClickListener(new FoodActionClickListener(food, FOOD_ACTION_FINISH));
-            actions.addView(finish, weightWrap(1));
-
-            LinearLayout deleteRow = new LinearLayout(this);
-            deleteRow.setOrientation(LinearLayout.HORIZONTAL);
-            card.addView(deleteRow, withMargins(matchWrap(), 0, dp(8), 0, 0));
-
-            Button delete = outlineButton("删除");
-            delete.setTextColor(COLOR_DANGER);
-            delete.setOnClickListener(new FoodActionClickListener(food, FOOD_ACTION_DELETE_CONFIRM));
-            deleteRow.addView(delete, weightWrap(1));
-        }
         return card;
     }
 
@@ -2698,16 +2652,6 @@ public final class MainActivity extends Activity {
         form.setOrientation(LinearLayout.VERTICAL);
         form.setPadding(dp(2), dp(2), dp(2), dp(8));
 
-        TextView intro = text(
-                isEdit ? "调整食品信息后会重新按最终可食用日期排序。" : "记录食品后，会按最终可食用日期自动排序。",
-                13,
-                COLOR_MUTED,
-                Typeface.NORMAL
-        );
-        intro.setPadding(dp(12), dp(10), dp(12), dp(10));
-        intro.setBackground(rounded(Color.rgb(239, 244, 235), dp(8), 0));
-        form.addView(intro, withMargins(matchWrap(), 0, 0, 0, dp(10)));
-
         LinearLayout basicSection = formSection("基本信息");
         addFormField(basicSection, "食品名称", nameInput);
         addFormField(basicSection, "分类", categoryInput);
@@ -2719,9 +2663,7 @@ public final class MainActivity extends Activity {
 
         addFormField(basicSection, "单位", unitInput);
         addFormField(basicSection, "保存方式", storageInput);
-        addFormField(basicSection, "存放位置", locationInput);
-        addFormField(basicSection, "自定义位置", customLocationInput);
-        form.addView(basicSection, withMargins(matchWrap(), 0, 0, 0, dp(10)));
+        form.addView(basicSection, withMargins(matchWrap(), 0, 0, 0, dp(4)));
 
         LinearLayout dateSection = formSection("日期信息");
         addFormField(dateSection, "生产日期", productionDateInput);
@@ -2740,8 +2682,9 @@ public final class MainActivity extends Activity {
         final LinearLayout expiryDateField = formField("最终可食用日期", expiryDateInput);
         dateSection.addView(expiryDateField, matchWrap());
 
-        final TextView hint = text("可直接选择最终可食用日期；如果不选择，则使用生产日期 + 保质期计算。", 12, COLOR_MUTED, Typeface.NORMAL);
+        final TextView hint = text("", 12, COLOR_MUTED, Typeface.NORMAL);
         hint.setPadding(0, dp(8), 0, 0);
+        hint.setVisibility(View.GONE);
         dateSection.addView(hint, matchWrap());
 
         final Runnable updateNoExpiryViews = new Runnable() {
@@ -2752,9 +2695,8 @@ public final class MainActivity extends Activity {
                 expiryDateField.setVisibility(noExpiry ? View.GONE : View.VISIBLE);
                 productionAgePreview.setVisibility(noExpiry ? View.VISIBLE : View.GONE);
                 productionAgePreview.setText("已生产时长：" + DateRules.productionAgeLabel(clean(productionDateInput)));
-                hint.setText(noExpiry
-                        ? "无过期时间食品不会参与到期提醒；生产日期可留空。"
-                        : "可直接选择最终可食用日期；如果不选择，则使用生产日期 + 保质期计算。");
+                hint.setVisibility(noExpiry ? View.VISIBLE : View.GONE);
+                hint.setText(noExpiry ? "无过期时间食品不会参与到期提醒；生产日期可留空。" : "");
             }
         };
         noExpiryInput.setOnCheckedChangeListener(new CompoundButton.OnCheckedChangeListener() {
@@ -2781,7 +2723,15 @@ public final class MainActivity extends Activity {
         });
         updateNoExpiryViews.run();
 
-        form.addView(dateSection, withMargins(matchWrap(), 0, 0, 0, dp(10)));
+        form.addView(dateSection, withMargins(matchWrap(), 0, 0, 0, dp(4)));
+
+        final LinearLayout optionalSection = new LinearLayout(this);
+        optionalSection.setOrientation(LinearLayout.VERTICAL);
+
+        LinearLayout locationSection = formSection("存放位置");
+        addFormField(locationSection, "位置", locationInput);
+        addFormField(locationSection, "自定义位置", customLocationInput);
+        optionalSection.addView(locationSection, withMargins(matchWrap(), 0, 0, 0, dp(4)));
 
         LinearLayout openedSection = formSection("开封信息（可选）");
         TextView openedIntro = text("默认不填。填写后只用于提醒和展示开封后建议处理日，不会自动改最终可食用日期。", 12, COLOR_MUTED, Typeface.NORMAL);
@@ -2847,11 +2797,29 @@ public final class MainActivity extends Activity {
             }
         });
         openedSection.addView(clearAfterOpenButton, withMargins(matchWrap(), 0, dp(8), 0, 0));
-        form.addView(openedSection, withMargins(matchWrap(), 0, 0, 0, dp(10)));
+        optionalSection.addView(openedSection, withMargins(matchWrap(), 0, 0, 0, dp(4)));
 
         LinearLayout noteSection = formSection("备注");
         addFormField(noteSection, "备注", notesInput);
-        form.addView(noteSection, matchWrap());
+        optionalSection.addView(noteSection, matchWrap());
+
+        boolean hasOptionalValues = !FoodData.LOCATION_UNSPECIFIED.equals(normalizedLocation)
+                || FoodItem.cleanText(draft.openedDate).length() > 0
+                || draft.afterOpenShelfLifeValue != null
+                || FoodItem.cleanText(draft.notes).length() > 0;
+        optionalSection.setVisibility(hasOptionalValues ? View.VISIBLE : View.GONE);
+
+        final Button optionalToggle = utilityButton(hasOptionalValues ? "收起更多信息" : "更多信息");
+        optionalToggle.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View view) {
+                boolean show = optionalSection.getVisibility() != View.VISIBLE;
+                optionalSection.setVisibility(show ? View.VISIBLE : View.GONE);
+                optionalToggle.setText(show ? "收起更多信息" : "更多信息");
+            }
+        });
+        form.addView(optionalToggle, withMargins(matchWrap(), 0, dp(4), 0, dp(4)));
+        form.addView(optionalSection, matchWrap());
 
         ScrollView scrollView = new ScrollView(this);
         scrollView.addView(form);
@@ -3324,7 +3292,11 @@ public final class MainActivity extends Activity {
 
         boolean showStickyControls = scrollY > filterCard.getBottom() - dp(6);
         stickySearchBar.setVisibility(showStickyControls ? View.VISIBLE : View.GONE);
-        activeFilterBar.setVisibility(showStickyControls ? View.VISIBLE : View.GONE);
+        boolean hasActiveFilters = FoodItem.cleanText(searchQuery).length() > 0
+                || statusFilterActive
+                || categoryFilterActive
+                || locationFilterActive;
+        activeFilterBar.setVisibility(showStickyControls && hasActiveFilters ? View.VISIBLE : View.GONE);
     }
 
     private void clearSearchFocusForUserScroll() {
@@ -3358,11 +3330,10 @@ public final class MainActivity extends Activity {
     private LinearLayout formSection(String title) {
         LinearLayout section = new LinearLayout(this);
         section.setOrientation(LinearLayout.VERTICAL);
-        section.setPadding(dp(12), dp(10), dp(12), dp(12));
-        section.setBackground(rounded(Color.rgb(250, 251, 248), dp(8), COLOR_LINE));
+        section.setPadding(dp(10), dp(6), dp(10), dp(10));
 
-        TextView titleView = text(title, 15, COLOR_TEXT, Typeface.BOLD);
-        titleView.setPadding(0, 0, 0, dp(2));
+        TextView titleView = text(title, 14, COLOR_TEXT, Typeface.BOLD);
+        titleView.setPadding(0, dp(2), 0, dp(2));
         section.addView(titleView, matchWrap());
         return section;
     }
@@ -3395,7 +3366,8 @@ public final class MainActivity extends Activity {
         button.setTextColor(Color.WHITE);
         button.setTextSize(15);
         button.setAllCaps(false);
-        button.setBackgroundTintList(ColorStateList.valueOf(color));
+        button.setMinHeight(dp(46));
+        button.setBackground(rounded(color, dp(8), 0));
         return button;
     }
 
@@ -3403,9 +3375,25 @@ public final class MainActivity extends Activity {
         Button button = new Button(this);
         button.setText(value);
         button.setTextColor(COLOR_PRIMARY);
-        button.setTextSize(15);
+        button.setTextSize(14);
         button.setAllCaps(false);
-        button.setBackgroundTintList(ColorStateList.valueOf(Color.rgb(238, 244, 235)));
+        button.setMinHeight(dp(44));
+        button.setBackground(rounded(Color.WHITE, dp(8), COLOR_LINE));
+        return button;
+    }
+
+    private Button utilityButton(String value) {
+        Button button = new Button(this);
+        button.setText(value);
+        button.setTextColor(Color.rgb(55, 67, 62));
+        button.setTextSize(13);
+        button.setAllCaps(false);
+        button.setMinWidth(0);
+        button.setMinimumWidth(0);
+        button.setMinHeight(dp(40));
+        button.setMinimumHeight(0);
+        button.setPadding(dp(10), 0, dp(10), 0);
+        button.setBackground(rounded(COLOR_SOFT, dp(8), 0));
         return button;
     }
 
@@ -3416,10 +3404,10 @@ public final class MainActivity extends Activity {
         editText.setSingleLine((inputType & InputType.TYPE_TEXT_FLAG_MULTI_LINE) == 0);
         editText.setInputType(inputType);
         editText.setTextColor(COLOR_TEXT);
-        editText.setHintTextColor(Color.rgb(125, 139, 125));
+        editText.setHintTextColor(Color.rgb(128, 135, 132));
         editText.setTextSize(15);
         editText.setMinHeight(dp(44));
-        editText.setBackground(rounded(Color.WHITE, dp(8), COLOR_LINE));
+        editText.setBackground(rounded(Color.WHITE, dp(6), COLOR_LINE));
         editText.setPadding(dp(10), 0, dp(10), 0);
         return editText;
     }
@@ -3641,7 +3629,7 @@ public final class MainActivity extends Activity {
     private LinearLayout card() {
         LinearLayout card = new LinearLayout(this);
         card.setOrientation(LinearLayout.VERTICAL);
-        card.setPadding(dp(14), dp(14), dp(14), dp(14));
+        card.setPadding(dp(12), dp(12), dp(12), dp(12));
         card.setBackground(rounded(COLOR_CARD, dp(8), COLOR_LINE));
         return card;
     }
