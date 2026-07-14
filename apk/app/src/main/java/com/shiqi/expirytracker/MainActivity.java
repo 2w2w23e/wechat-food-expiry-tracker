@@ -993,27 +993,18 @@ public final class MainActivity extends Activity {
                 data.getStringExtra(DateOcrResultPayload.EXTRA_SHELF_LIFE_UNIT)
         );
         if (!UnifiedRecognitionPayload.hasUsableDraft(draft)) {
-            toast("识别候选不足，请手动新增");
+            String rawText = dateOcrSnippet(data.getStringExtra(DateOcrResultPayload.EXTRA_RAW_TEXT), 260);
+            new AlertDialog.Builder(this)
+                    .setTitle("没有可填入的候选")
+                    .setMessage("已读取到包装文字，但没有形成商品名、条码或日期候选。"
+                            + "请返回识别页继续选择更稳定的候选。\n\n原始片段：\n" + rawText)
+                    .setPositiveButton("知道了", null)
+                    .show();
             return;
         }
 
-        String summary = FoodItem.cleanText(data.getStringExtra(UnifiedRecognitionPayload.EXTRA_SUMMARY));
-        String rawText = dateOcrSnippet(data.getStringExtra(DateOcrResultPayload.EXTRA_RAW_TEXT), 260);
-        String message = "识别结果只会填入新增表单，确认前不会保存到食品列表。\n\n"
-                + "候选：\n" + (summary.length() == 0 ? dateOcrDraftSummary(draft) : summary)
-                + "\n\n原始 OCR 片段：\n" + rawText;
-
-        new AlertDialog.Builder(this)
-                .setTitle("识别结果待确认")
-                .setMessage(message)
-                .setNegativeButton("取消", null)
-                .setPositiveButton("填入新增表单", new DialogInterface.OnClickListener() {
-                    @Override
-                    public void onClick(DialogInterface dialogInterface, int which) {
-                        showFoodForm(draft, false);
-                    }
-                })
-                .show();
+        showFoodForm(draft, false);
+        toast("已填入识别候选，请检查后保存");
     }
 
     private String dateOcrDraftSummary(FoodItem draft) {
@@ -2658,7 +2649,7 @@ public final class MainActivity extends Activity {
 
         final EditText quantityInput = input(isEdit ? formatNumber(draft.quantity) : "", "数量", InputType.TYPE_CLASS_NUMBER | InputType.TYPE_NUMBER_FLAG_DECIMAL);
         final EditText remainingInput = input(isEdit ? formatNumber(draft.remainingQuantity) : "", "剩余数量", InputType.TYPE_CLASS_NUMBER | InputType.TYPE_NUMBER_FLAG_DECIMAL);
-        final EditText unitInput = input(isEdit ? displayUnit(draft.unit) : "", "单位，例如 盒、瓶、袋", InputType.TYPE_CLASS_TEXT);
+        final EditText unitInput = input(displayUnit(draft.unit), "单位，例如 盒、瓶、袋", InputType.TYPE_CLASS_TEXT);
 
         final Spinner storageInput = spinner(FoodData.STORAGE_METHODS);
         storageInput.setSelection(indexOf(FoodData.STORAGE_METHODS, draft.storageMethod, "room_temp"));

@@ -60,6 +60,7 @@ $MainSources = @(
   'DateOcrFrameVoter.java',
   'DateOcrResultPayload.java',
   'RecognitionTextCleaner.java',
+  'PackagingTextAnalyzer.java',
   'UnifiedRecognitionStabilizer.java',
   'UnifiedRecognitionPayload.java',
   'BarcodeUtils.java',

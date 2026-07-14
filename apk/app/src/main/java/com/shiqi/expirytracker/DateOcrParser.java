@@ -15,6 +15,9 @@ final class DateOcrParser {
             "(?<!\\d)((?:20\\d{2}|\\d{2})\\s*(?:年|[./-])\\s*\\d{1,2}\\s*(?:月|[./-])\\s*\\d{1,2}\\s*(?:日)?)(?!\\d)"
     );
     private static final Pattern COMPACT_DATE = Pattern.compile("(?<!\\d)((?:20\\d{6})|(?:\\d{6}))(?!\\d)");
+    private static final Pattern COMPACT_DATE_RANGE = Pattern.compile(
+            "(?<!\\d)(20\\d{6})\\s*(?:(?:[/|~～]|至)\\s*)?(20\\d{6})(?!\\d)"
+    );
     private static final Pattern NUMBER = Pattern.compile("\\d+");
     private static final Pattern PRODUCTION_HINT = Pattern.compile(
             "(生产日期|生产时间|生产批号|包装日期|制造日期|灌装日期|出厂日期|喷码|prod(?:uction)?\\.?\\s*date|mfg\\.?\\s*date|made\\s*on)",
@@ -39,6 +42,7 @@ final class DateOcrParser {
 
         collectDates(text, DATE_WITH_SEPARATOR, productionDates, expiryDates);
         collectDates(text, COMPACT_DATE, productionDates, expiryDates);
+        promoteCompactDateRange(text, productionDates, expiryDates);
         collectShelfLives(text, shelfLives);
 
         dedupeDateCandidates(productionDates);
@@ -85,9 +89,60 @@ final class DateOcrParser {
             }
             if (!productionHint && !expiryHint) {
                 productionDates.add(new DateCandidate("productionDate", raw, normalized, context, 0.45d, true, false));
-                expiryDates.add(new DateCandidate("expiryDate", raw, normalized, context, 0.45d, true, false));
             }
         }
+    }
+
+    private static void promoteCompactDateRange(
+            String text,
+            List<DateCandidate> productionDates,
+            List<DateCandidate> expiryDates
+    ) {
+        if (hasStrongDateCandidate(productionDates) || hasStrongDateCandidate(expiryDates)) {
+            return;
+        }
+        Matcher matcher = COMPACT_DATE_RANGE.matcher(text);
+        if (!matcher.find()) {
+            return;
+        }
+        String production = normalizeDate(matcher.group(1));
+        String expiry = normalizeDate(matcher.group(2));
+        if (!DateRules.isValidDateString(production)
+                || !DateRules.isValidDateString(expiry)
+                || production.compareTo(expiry) >= 0) {
+            return;
+        }
+
+        String context = nearbyText(text, matcher.start(), matcher.end(), 30);
+        productionDates.clear();
+        expiryDates.clear();
+        productionDates.add(new DateCandidate(
+                "productionDate",
+                matcher.group(1),
+                production,
+                context,
+                0.76d,
+                false,
+                false
+        ));
+        expiryDates.add(new DateCandidate(
+                "expiryDate",
+                matcher.group(2),
+                expiry,
+                context,
+                0.76d,
+                false,
+                false
+        ));
+    }
+
+    private static boolean hasStrongDateCandidate(List<DateCandidate> candidates) {
+        for (DateCandidate candidate : candidates) {
+            if (!candidate.weakHint) {
+                return true;
+            }
+        }
+        return false;
     }
 
     private static void collectShelfLives(String text, List<ShelfLifeCandidate> shelfLives) {
@@ -326,6 +381,21 @@ final class DateOcrParser {
                     || !expiryDates.isEmpty()
                     || !shelfLives.isEmpty()
                     || !calculatedExpiryDates.isEmpty();
+        }
+
+        int strongDatePairEvidenceCount() {
+            Matcher matcher = COMPACT_DATE_RANGE.matcher(normalizedText);
+            int count = 0;
+            while (matcher.find()) {
+                String production = normalizeDate(matcher.group(1));
+                String expiry = normalizeDate(matcher.group(2));
+                if (DateRules.isValidDateString(production)
+                        && DateRules.isValidDateString(expiry)
+                        && production.compareTo(expiry) < 0) {
+                    count++;
+                }
+            }
+            return count;
         }
 
         boolean hasDateConflict() {

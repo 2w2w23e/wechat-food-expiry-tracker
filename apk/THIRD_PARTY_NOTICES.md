@@ -33,6 +33,22 @@ Project: https://developer.android.com/jetpack/androidx/releases/camera
 
 Project: https://developers.google.com/ml-kit/vision/text-recognition/v2/android
 
+## ML Kit Text Recognition Latin
+
+- Package: `com.google.mlkit:text-recognition:16.0.1`
+- License: Apache License 2.0
+- Use: on-device Latin brand and mixed Chinese/Latin package-label recognition.
+
+Project: https://developers.google.com/ml-kit/vision/text-recognition/v2/android
+
+## OpenCV Android
+
+- Package: `org.opencv:opencv:4.13.0`
+- License: Apache License 2.0
+- Use: local CLAHE contrast enhancement and sharpening for low-contrast laser-printed dates before OCR.
+
+Project: https://opencv.org/
+
 ## ML Kit Barcode Scanning
 
 - Package: `com.google.mlkit:barcode-scanning:17.3.0`

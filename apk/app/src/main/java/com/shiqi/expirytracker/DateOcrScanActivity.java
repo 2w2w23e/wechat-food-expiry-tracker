@@ -10,6 +10,7 @@ import android.graphics.BitmapFactory;
 import android.graphics.Canvas;
 import android.graphics.Color;
 import android.graphics.Paint;
+import android.graphics.Rect;
 import android.graphics.RectF;
 import android.graphics.Typeface;
 import android.graphics.drawable.GradientDrawable;
@@ -18,6 +19,7 @@ import android.media.MediaMetadataRetriever;
 import android.net.Uri;
 import android.os.Bundle;
 import android.os.SystemClock;
+import android.util.Log;
 import android.view.Gravity;
 import android.view.View;
 import android.view.ViewGroup;
@@ -25,6 +27,7 @@ import android.view.Window;
 import android.view.WindowManager;
 import android.widget.Button;
 import android.widget.FrameLayout;
+import android.widget.HorizontalScrollView;
 import android.widget.ImageView;
 import android.widget.LinearLayout;
 import android.widget.TextView;
@@ -50,6 +53,7 @@ import com.google.mlkit.vision.text.Text;
 import com.google.mlkit.vision.text.TextRecognition;
 import com.google.mlkit.vision.text.TextRecognizer;
 import com.google.mlkit.vision.text.chinese.ChineseTextRecognizerOptions;
+import com.google.mlkit.vision.text.latin.TextRecognizerOptions;
 
 import java.io.InputStream;
 import java.util.ArrayList;
@@ -69,7 +73,7 @@ public final class DateOcrScanActivity extends ComponentActivity {
     private static final int REQUEST_VIDEO_REPLAY = 6202;
     private static final int REQUEST_IMAGE_RECOGNITION = 6203;
     private static final long ANALYZE_INTERVAL_MS = 420L;
-    private static final long VIDEO_FRAME_INTERVAL_US = 420000L;
+    private static final long VIDEO_FRAME_INTERVAL_US = 300000L;
     private static final int VIDEO_MAX_FRAME_SIDE = 1280;
 
     private PreviewView previewView;
@@ -79,13 +83,13 @@ public final class DateOcrScanActivity extends ComponentActivity {
     private TextView barcodeValue;
     private TextView productValue;
     private TextView productionDateValue;
-    private TextView shelfLifeValue;
-    private TextView expiryDateValue;
     private TextView rawPreviewText;
+    private LinearLayout productCandidateContainer;
     private Button fillButton;
 
     private ExecutorService cameraExecutor;
     private TextRecognizer textRecognizer;
+    private TextRecognizer latinTextRecognizer;
     private BarcodeScanner barcodeScanner;
     private ProcessCameraProvider cameraProvider;
     private final UnifiedRecognitionStabilizer stabilizer = new UnifiedRecognitionStabilizer();
@@ -95,9 +99,13 @@ public final class DateOcrScanActivity extends ComponentActivity {
     private String productLookupInFlightBarcode = "";
     private String productLookupError = "";
     private String latestRawText = "";
+    private String selectedPackagingName = "";
+    private int recognitionGeneration;
     private long lastAnalyzeAt;
     private volatile boolean analysisInFlight;
     private volatile boolean videoReplayActive;
+    private volatile boolean longVideoProfile;
+    private int analyzedFrameSequence;
     private boolean cameraBound;
     private Bitmap lastReplayFrame;
 
@@ -119,6 +127,7 @@ public final class DateOcrScanActivity extends ComponentActivity {
 
         cameraExecutor = Executors.newSingleThreadExecutor();
         textRecognizer = TextRecognition.getClient(new ChineseTextRecognizerOptions.Builder().build());
+        latinTextRecognizer = TextRecognition.getClient(TextRecognizerOptions.DEFAULT_OPTIONS);
         barcodeScanner = BarcodeScanning.getClient(new BarcodeScannerOptions.Builder()
                 .setBarcodeFormats(
                         Barcode.FORMAT_EAN_13,
@@ -156,6 +165,10 @@ public final class DateOcrScanActivity extends ComponentActivity {
             textRecognizer.close();
             textRecognizer = null;
         }
+        if (latinTextRecognizer != null) {
+            latinTextRecognizer.close();
+            latinTextRecognizer = null;
+        }
         if (barcodeScanner != null) {
             barcodeScanner.close();
             barcodeScanner = null;
@@ -179,7 +192,7 @@ public final class DateOcrScanActivity extends ComponentActivity {
         ));
 
         replayFrameView = new ImageView(this);
-        replayFrameView.setScaleType(ImageView.ScaleType.FIT_CENTER);
+        replayFrameView.setScaleType(ImageView.ScaleType.CENTER_CROP);
         replayFrameView.setBackgroundColor(Color.BLACK);
         replayFrameView.setVisibility(View.GONE);
         root.addView(replayFrameView, new FrameLayout.LayoutParams(
@@ -194,8 +207,8 @@ public final class DateOcrScanActivity extends ComponentActivity {
 
         LinearLayout topPanel = new LinearLayout(this);
         topPanel.setOrientation(LinearLayout.VERTICAL);
-        topPanel.setPadding(dp(16), dp(12), dp(16), dp(10));
-        topPanel.setBackgroundColor(Color.argb(176, 14, 20, 17));
+        topPanel.setPadding(dp(14), dp(10), dp(14), dp(8));
+        topPanel.setBackgroundColor(Color.argb(205, 18, 25, 21));
         FrameLayout.LayoutParams topParams = new FrameLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
                 ViewGroup.LayoutParams.WRAP_CONTENT
@@ -207,7 +220,7 @@ public final class DateOcrScanActivity extends ComponentActivity {
         topActions.setGravity(Gravity.CENTER_VERTICAL);
         topPanel.addView(topActions, matchWrap());
 
-        Button closeButton = overlayButton("返回", Color.rgb(48, 60, 52));
+        Button closeButton = overlayButton("返回", Color.rgb(45, 57, 49));
         closeButton.setOnClickListener(new View.OnClickListener() {
             @Override
             public void onClick(View view) {
@@ -215,12 +228,12 @@ public final class DateOcrScanActivity extends ComponentActivity {
                 finish();
             }
         });
-        topActions.addView(closeButton, fixed(72, 40));
+        topActions.addView(closeButton, fixed(68, 38));
 
         TextView title = new TextView(this);
         title.setText("智能识别");
         title.setTextColor(Color.WHITE);
-        title.setTextSize(19);
+        title.setTextSize(18);
         title.setTypeface(Typeface.DEFAULT, Typeface.BOLD);
         title.setGravity(Gravity.CENTER);
         topActions.addView(title, weightWrap(1));
@@ -228,26 +241,28 @@ public final class DateOcrScanActivity extends ComponentActivity {
         statusBadge = new TextView(this);
         statusBadge.setText("待识别");
         statusBadge.setTextColor(Color.rgb(226, 246, 232));
-        statusBadge.setTextSize(12);
+        statusBadge.setTextSize(11);
         statusBadge.setGravity(Gravity.CENTER);
         statusBadge.setTypeface(Typeface.DEFAULT, Typeface.BOLD);
         statusBadge.setBackground(rounded(Color.rgb(51, 92, 68), dp(8), Color.argb(80, 255, 255, 255)));
-        topActions.addView(statusBadge, fixed(86, 34));
+        topActions.addView(statusBadge, fixed(82, 32));
 
         statusText = new TextView(this);
         statusText.setTextColor(Color.rgb(221, 234, 224));
         statusText.setTextSize(13);
         statusText.setGravity(Gravity.CENTER);
-        statusText.setPadding(0, dp(8), 0, 0);
+        statusText.setPadding(0, dp(6), 0, 0);
         topPanel.addView(statusText, matchWrap());
 
         LinearLayout bottomPanel = new LinearLayout(this);
         bottomPanel.setOrientation(LinearLayout.VERTICAL);
-        bottomPanel.setPadding(dp(16), dp(12), dp(16), dp(16));
-        bottomPanel.setBackgroundColor(Color.argb(226, 246, 249, 244));
+        bottomPanel.setPadding(dp(14), dp(10), dp(14), dp(12));
+        bottomPanel.setBackgroundColor(Color.rgb(248, 250, 247));
+        int maxPanelHeight = Math.round(getResources().getDisplayMetrics().heightPixels * 0.40f);
+        int panelHeight = Math.min(dp(292), maxPanelHeight);
         FrameLayout.LayoutParams bottomParams = new FrameLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
-                ViewGroup.LayoutParams.WRAP_CONTENT
+                panelHeight
         );
         bottomParams.gravity = Gravity.BOTTOM;
         root.addView(bottomPanel, bottomParams);
@@ -257,39 +272,59 @@ public final class DateOcrScanActivity extends ComponentActivity {
         bottomPanel.addView(resultHeader, matchWrap());
 
         TextView resultTitle = new TextView(this);
-        resultTitle.setText("识别结果");
+        resultTitle.setText("识别候选");
         resultTitle.setTextColor(Color.rgb(32, 42, 34));
-        resultTitle.setTextSize(16);
+        resultTitle.setTextSize(15);
         resultTitle.setTypeface(Typeface.DEFAULT, Typeface.BOLD);
         resultHeader.addView(resultTitle, weightWrap(1));
 
-        Button rawButton = plainButton("原文");
+        Button rawButton = plainButton("查看原文");
         rawButton.setOnClickListener(new View.OnClickListener() {
             @Override
             public void onClick(View view) {
                 showRawTextDialog();
             }
         });
-        resultHeader.addView(rawButton, fixed(58, 36));
+        resultHeader.addView(rawButton, fixed(76, 34));
 
-        bottomPanel.addView(resultRow("商品码", true), matchWrap());
-        bottomPanel.addView(resultRow("商品名", false), matchWrap());
-        bottomPanel.addView(resultRow("生产日期", false), matchWrap());
-        bottomPanel.addView(resultRow("保质期", false), matchWrap());
-        bottomPanel.addView(resultRow("最终日期", false), matchWrap());
+        productValue = new TextView(this);
+        productValue.setText("正在寻找中文商品名");
+        productValue.setTextColor(Color.rgb(26, 37, 29));
+        productValue.setTextSize(18);
+        productValue.setTypeface(Typeface.DEFAULT, Typeface.BOLD);
+        productValue.setMaxLines(2);
+        productValue.setPadding(0, dp(4), 0, dp(4));
+        bottomPanel.addView(productValue, matchWrap());
+
+        HorizontalScrollView candidateScroll = new HorizontalScrollView(this);
+        candidateScroll.setHorizontalScrollBarEnabled(false);
+        candidateScroll.setFillViewport(false);
+        productCandidateContainer = new LinearLayout(this);
+        productCandidateContainer.setOrientation(LinearLayout.HORIZONTAL);
+        candidateScroll.addView(productCandidateContainer, new HorizontalScrollView.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT
+        ));
+        bottomPanel.addView(candidateScroll, fixedHeight(38));
+
+        barcodeValue = compactResultText();
+        bottomPanel.addView(barcodeValue, matchWrap());
+
+        productionDateValue = compactResultText();
+        bottomPanel.addView(productionDateValue, matchWrap());
 
         rawPreviewText = new TextView(this);
         rawPreviewText.setTextColor(Color.rgb(86, 99, 88));
-        rawPreviewText.setTextSize(12);
-        rawPreviewText.setMaxLines(2);
-        rawPreviewText.setPadding(0, dp(6), 0, dp(8));
+        rawPreviewText.setTextSize(11);
+        rawPreviewText.setMaxLines(1);
+        rawPreviewText.setPadding(0, dp(3), 0, dp(5));
         bottomPanel.addView(rawPreviewText, matchWrap());
 
         LinearLayout actionRow = new LinearLayout(this);
         actionRow.setGravity(Gravity.CENTER_VERTICAL);
-        bottomPanel.addView(actionRow, fixedHeight(48));
+        bottomPanel.addView(actionRow, fixedHeight(42));
 
-        Button cameraButton = sourceButton("相机");
+        Button cameraButton = sourceButton("拍摄");
         cameraButton.setOnClickListener(new View.OnClickListener() {
             @Override
             public void onClick(View view) {
@@ -316,17 +351,7 @@ public final class DateOcrScanActivity extends ComponentActivity {
         });
         actionRow.addView(imageButton, withMargins(weightWrap(1), 0, 0, dp(6), 0));
 
-        Button manualButton = sourceButton("手动");
-        manualButton.setOnClickListener(new View.OnClickListener() {
-            @Override
-            public void onClick(View view) {
-                setResult(RESULT_CANCELED);
-                finish();
-            }
-        });
-        actionRow.addView(manualButton, weightWrap(1));
-
-        fillButton = overlayButton("填入新增表单", Color.rgb(63, 111, 83));
+        fillButton = overlayButton("确认候选并填入表单", Color.rgb(40, 105, 71));
         fillButton.setEnabled(false);
         fillButton.setAlpha(0.45f);
         fillButton.setOnClickListener(new View.OnClickListener() {
@@ -335,42 +360,18 @@ public final class DateOcrScanActivity extends ComponentActivity {
                 finishWithCandidate();
             }
         });
-        bottomPanel.addView(fillButton, withMargins(fixedHeight(48), 0, dp(10), 0, 0));
+        bottomPanel.addView(fillButton, withMargins(fixedHeight(46), 0, dp(8), 0, 0));
 
         setContentView(root);
     }
 
-    private View resultRow(String label, boolean barcodeRow) {
-        LinearLayout row = new LinearLayout(this);
-        row.setGravity(Gravity.CENTER_VERTICAL);
-        row.setPadding(0, dp(7), 0, 0);
-
-        TextView labelView = new TextView(this);
-        labelView.setText(label);
-        labelView.setTextColor(Color.rgb(88, 101, 90));
-        labelView.setTextSize(13);
-        labelView.setTypeface(Typeface.DEFAULT, Typeface.BOLD);
-        row.addView(labelView, fixed(72, 28));
-
-        TextView valueView = new TextView(this);
-        valueView.setText("待识别");
-        valueView.setTextColor(Color.rgb(30, 40, 32));
-        valueView.setTextSize(14);
-        valueView.setSingleLine(false);
-        row.addView(valueView, weightWrap(1));
-
-        if (barcodeRow) {
-            barcodeValue = valueView;
-        } else if (productValue == null) {
-            productValue = valueView;
-        } else if (productionDateValue == null) {
-            productionDateValue = valueView;
-        } else if (shelfLifeValue == null) {
-            shelfLifeValue = valueView;
-        } else {
-            expiryDateValue = valueView;
-        }
-        return row;
+    private TextView compactResultText() {
+        TextView value = new TextView(this);
+        value.setTextColor(Color.rgb(70, 82, 73));
+        value.setTextSize(13);
+        value.setMaxLines(2);
+        value.setPadding(0, dp(2), 0, 0);
+        return value;
     }
 
     private void showInputChoiceState() {
@@ -385,7 +386,7 @@ public final class DateOcrScanActivity extends ComponentActivity {
             replayFrameView.setImageBitmap(null);
         }
         statusBadge.setText("待识别");
-        statusText.setText("选择相机、视频或图片。系统会同时寻找条码和包装文字。");
+        statusText.setText("选择拍摄、视频或图片，让中文商品名和日期尽量清晰。");
         updateResultUi(stabilizer.snapshot());
     }
 
@@ -435,9 +436,6 @@ public final class DateOcrScanActivity extends ComponentActivity {
     }
 
     private void startVideoReplayPicker() {
-        stopCamera();
-        stopVideoReplay();
-        resetRecognitionState();
         Intent intent = new Intent(Intent.ACTION_OPEN_DOCUMENT);
         intent.addCategory(Intent.CATEGORY_OPENABLE);
         intent.setType("video/*");
@@ -457,9 +455,6 @@ public final class DateOcrScanActivity extends ComponentActivity {
     }
 
     private void startImagePicker() {
-        stopCamera();
-        stopVideoReplay();
-        resetRecognitionState();
         Intent intent = new Intent(Intent.ACTION_OPEN_DOCUMENT);
         intent.addCategory(Intent.CATEGORY_OPENABLE);
         intent.setType("image/*");
@@ -517,7 +512,7 @@ public final class DateOcrScanActivity extends ComponentActivity {
             replayFrameView.setVisibility(View.VISIBLE);
         }
         statusBadge.setText(badge);
-        statusText.setText("正在模拟实时识别，条码和日期候选都需要确认后才会进入表单。");
+        statusText.setText("正在分析中英文包装，条码、商品名和日期会自动合并。");
     }
 
     private void replayVideoFrames(Uri uri, String path) {
@@ -534,7 +529,11 @@ public final class DateOcrScanActivity extends ComponentActivity {
                 durationUs = 30000000L;
             }
 
-            for (long frameUs = 0; videoReplayActive && frameUs <= durationUs; frameUs += VIDEO_FRAME_INTERVAL_US) {
+            longVideoProfile = durationUs > 20000000L;
+            int targetIntervals = longVideoProfile ? 15 : 27;
+            long frameIntervalUs = Math.max(VIDEO_FRAME_INTERVAL_US, durationUs / targetIntervals);
+            final int expectedFrames = Math.max(1, (int) (durationUs / frameIntervalUs) + 1);
+            for (long frameUs = 0; videoReplayActive && frameUs <= durationUs; frameUs += frameIntervalUs) {
                 Bitmap frame = retriever.getFrameAtTime(frameUs, MediaMetadataRetriever.OPTION_CLOSEST);
                 if (frame == null) {
                     continue;
@@ -547,6 +546,7 @@ public final class DateOcrScanActivity extends ComponentActivity {
                 showReplayFrame(scaled);
                 analyzeBitmapFrame(scaled, false);
                 analyzedFrames++;
+                updateVideoReplayProgress(analyzedFrames, expectedFrames);
                 SystemClock.sleep(Math.max(110L, ANALYZE_INTERVAL_MS / 2L));
             }
 
@@ -558,16 +558,29 @@ public final class DateOcrScanActivity extends ComponentActivity {
                 }
             });
         } catch (final Exception error) {
+            final int partialFrameCount = analyzedFrames;
+            Log.w("ShiqiRecognition", "Video replay stopped after readable frames", error);
             runOnUiThread(new Runnable() {
                 @Override
                 public void run() {
-                    statusBadge.setText("读取失败");
-                    statusText.setText("视频模拟识别失败，请换一个更清晰的本地视频或图片。");
-                    Toast.makeText(DateOcrScanActivity.this, "视频读取失败", Toast.LENGTH_SHORT).show();
+                    if (partialFrameCount > 0) {
+                        statusBadge.setText("部分完成");
+                        updateVideoReplayCompleteState(partialFrameCount);
+                        Toast.makeText(
+                                DateOcrScanActivity.this,
+                                "视频后段读取中断，已保留前面识别候选",
+                                Toast.LENGTH_SHORT
+                        ).show();
+                    } else {
+                        statusBadge.setText("读取失败");
+                        statusText.setText("视频读取失败，请换一个更清晰的本地视频或图片。");
+                        Toast.makeText(DateOcrScanActivity.this, "视频读取失败", Toast.LENGTH_SHORT).show();
+                    }
                 }
             });
         } finally {
             videoReplayActive = false;
+            longVideoProfile = false;
             try {
                 retriever.release();
             } catch (Exception ignored) {
@@ -690,23 +703,55 @@ public final class DateOcrScanActivity extends ComponentActivity {
         }
         String barcode = "";
         StringBuilder rawText = new StringBuilder();
+        List<PackagingTextAnalyzer.Observation> textObservations =
+                new ArrayList<PackagingTextAnalyzer.Observation>();
         List<FrameVariant> variants = buildFrameVariants(bitmap);
         try {
             for (FrameVariant variant : variants) {
                 InputImage image = InputImage.fromBitmap(variant.bitmap, variant.rotationDegrees);
+                List<Task<?>> variantTasks = new ArrayList<Task<?>>();
+                Task<List<Barcode>> barcodeTask = null;
+                Task<Text> textTask = null;
+                Task<Text> latinTextTask = null;
                 if (variant.scanBarcode && barcode.length() == 0) {
-                    Task<List<Barcode>> barcodeTask = barcodeScanner.process(image);
-                    Tasks.await(barcodeTask, 8, TimeUnit.SECONDS);
-                    if (barcodeTask.isSuccessful()) {
-                        barcode = extractProductBarcode(barcodeTask.getResult());
-                    }
+                    barcodeTask = barcodeScanner.process(image);
+                    variantTasks.add(barcodeTask);
                 }
                 if (variant.scanText) {
-                    Task<Text> textTask = textRecognizer.process(image);
-                    Tasks.await(textTask, 8, TimeUnit.SECONDS);
-                    if (textTask.isSuccessful() && textTask.getResult() != null) {
-                        appendRecognizedText(rawText, textTask.getResult().getText());
-                    }
+                    textTask = textRecognizer.process(image);
+                    variantTasks.add(textTask);
+                }
+                if (variant.scanLatinText && latinTextRecognizer != null) {
+                    latinTextTask = latinTextRecognizer.process(image);
+                    variantTasks.add(latinTextTask);
+                }
+                if (!variantTasks.isEmpty()) {
+                    awaitRecognitionTask(Tasks.whenAllComplete(variantTasks), "recognition-variant");
+                }
+                if (barcodeTask != null && barcodeTask.isSuccessful()) {
+                    barcode = extractProductBarcode(barcodeTask.getResult());
+                }
+                if (textTask != null && textTask.isSuccessful() && textTask.getResult() != null) {
+                    Text recognizedText = textTask.getResult();
+                    appendRecognizedText(rawText, recognizedText.getText());
+                    appendTextObservations(
+                            textObservations,
+                            recognizedText,
+                            variant.bitmap.getWidth(),
+                            variant.bitmap.getHeight(),
+                            variant.sourceQuality
+                    );
+                }
+                if (latinTextTask != null && latinTextTask.isSuccessful() && latinTextTask.getResult() != null) {
+                    Text latinText = latinTextTask.getResult();
+                    appendRecognizedText(rawText, latinText.getText());
+                    appendTextObservations(
+                            textObservations,
+                            latinText,
+                            variant.bitmap.getWidth(),
+                            variant.bitmap.getHeight(),
+                            Math.min(1d, variant.sourceQuality + 0.05d)
+                    );
                 }
             }
         } finally {
@@ -716,33 +761,72 @@ public final class DateOcrScanActivity extends ComponentActivity {
         handleRecognitionResult(
                 barcode,
                 rawText.toString(),
+                PackagingTextAnalyzer.analyze(textObservations),
                 singleFrameConfirmation
         );
     }
 
+    private boolean awaitRecognitionTask(Task<?> task, String label) {
+        try {
+            Tasks.await(task, longVideoProfile ? 4 : 8, TimeUnit.SECONDS);
+            return task.isSuccessful();
+        } catch (Exception error) {
+            Log.w("ShiqiRecognition", label + " timed out for one variant", error);
+            return false;
+        }
+    }
+
+    private void updateVideoReplayProgress(final int analyzedFrames, final int expectedFrames) {
+        if (analyzedFrames > 1 && analyzedFrames % 2 != 0 && analyzedFrames < expectedFrames) {
+            return;
+        }
+        runOnUiThread(new Runnable() {
+            @Override
+            public void run() {
+                statusBadge.setText("分析中");
+                statusText.setText("正在分析中英文包装 " + Math.min(analyzedFrames, expectedFrames)
+                        + "/" + expectedFrames + " 帧，候选稳定后可选择。");
+            }
+        });
+    }
+
     private List<FrameVariant> buildFrameVariants(Bitmap bitmap) {
         List<FrameVariant> variants = new ArrayList<FrameVariant>();
-        variants.add(new FrameVariant(bitmap, 0, true, false, false));
-        addFrameCrop(variants, bitmap, 0.04f, 0.13f, 0.92f, 0.50f, 1100, 0, true, true);
-        addFrameCrop(variants, bitmap, 0.06f, 0.27f, 0.88f, 0.35f, 1100, 0, true, true);
-        addFrameCrop(variants, bitmap, 0.16f, 0.31f, 0.72f, 0.25f, 1000, 0, true, true);
-        addFrameCrop(variants, bitmap, 0.24f, 0.37f, 0.46f, 0.22f, 1000, 0, true, false);
-        addFrameCrop(variants, bitmap, 0.24f, 0.37f, 0.46f, 0.22f, 1000, 90, true, false);
-        addFrameCrop(variants, bitmap, 0.24f, 0.37f, 0.46f, 0.22f, 1000, 270, true, false);
+        variants.add(new FrameVariant(
+                bitmap,
+                0,
+                true,
+                !longVideoProfile,
+                !longVideoProfile,
+                false,
+                0.68d
+        ));
+        addFrameCrop(variants, bitmap, 0.04f, 0.13f, 0.92f, 0.50f, 1100, 0, true, true, true);
+        addFrameCrop(variants, bitmap, 0.24f, 0.37f, 0.46f, 0.22f, 1000, 0, true, true, true);
+        addFrameCrop(variants, bitmap, 0.24f, 0.37f, 0.46f, 0.22f, 1000, 90, true, false, false);
+        if (!longVideoProfile) {
+            addFrameCrop(variants, bitmap, 0.24f, 0.37f, 0.46f, 0.22f, 1000, 270, true, false, false);
+        }
+        analyzedFrameSequence++;
+        if (analyzedFrameSequence % 2 == 1) {
+            Bitmap enhanced = LowContrastTextPreprocessor.enhanceLaserPrintedText(bitmap);
+            if (enhanced != null) {
+                variants.add(new FrameVariant(enhanced, 0, false, true, false, true, 0.88d));
+            }
+        } else {
+            addEnhancedFrameCrop(variants, bitmap, 0.12f, 0.22f, 0.76f, 0.55f, 1280);
+        }
         return variants;
     }
 
-    private void addFrameCrop(
+    private void addEnhancedFrameCrop(
             List<FrameVariant> variants,
             Bitmap source,
             float leftRatio,
             float topRatio,
             float widthRatio,
             float heightRatio,
-            int minLargestSide,
-            int rotationDegrees,
-            boolean scanBarcode,
-            boolean scanText
+            int minLargestSide
     ) {
         int sourceWidth = source.getWidth();
         int sourceHeight = source.getHeight();
@@ -755,7 +839,47 @@ public final class DateOcrScanActivity extends ComponentActivity {
         if (prepared != crop) {
             crop.recycle();
         }
-        variants.add(new FrameVariant(prepared, rotationDegrees, scanBarcode, scanText, true));
+        Bitmap enhanced = LowContrastTextPreprocessor.enhanceLaserPrintedText(prepared);
+        prepared.recycle();
+        if (enhanced != null) {
+            variants.add(new FrameVariant(enhanced, 0, false, true, true, true, 0.94d));
+        }
+    }
+
+    private void addFrameCrop(
+            List<FrameVariant> variants,
+            Bitmap source,
+            float leftRatio,
+            float topRatio,
+            float widthRatio,
+            float heightRatio,
+            int minLargestSide,
+            int rotationDegrees,
+            boolean scanBarcode,
+            boolean scanText,
+            boolean scanLatinText
+    ) {
+        int sourceWidth = source.getWidth();
+        int sourceHeight = source.getHeight();
+        int left = clamp(Math.round(sourceWidth * leftRatio), 0, sourceWidth - 1);
+        int top = clamp(Math.round(sourceHeight * topRatio), 0, sourceHeight - 1);
+        int width = clamp(Math.round(sourceWidth * widthRatio), 1, sourceWidth - left);
+        int height = clamp(Math.round(sourceHeight * heightRatio), 1, sourceHeight - top);
+        Bitmap crop = Bitmap.createBitmap(source, left, top, width, height);
+        Bitmap prepared = upscaleIfNeeded(crop, minLargestSide);
+        if (prepared != crop) {
+            crop.recycle();
+        }
+        double sourceQuality = Math.min(1d, 0.72d + (widthRatio * heightRatio * 0.45d));
+        variants.add(new FrameVariant(
+                prepared,
+                rotationDegrees,
+                scanBarcode,
+                scanText,
+                scanLatinText,
+                true,
+                sourceQuality
+        ));
     }
 
     private Bitmap upscaleIfNeeded(Bitmap bitmap, int minLargestSide) {
@@ -781,6 +905,63 @@ public final class DateOcrScanActivity extends ComponentActivity {
             builder.append('\n');
         }
         builder.append(cleaned);
+    }
+
+    private List<PackagingTextAnalyzer.Observation> observationsFromText(
+            Text text,
+            int imageWidth,
+            int imageHeight,
+            double sourceQuality
+    ) {
+        List<PackagingTextAnalyzer.Observation> observations =
+                new ArrayList<PackagingTextAnalyzer.Observation>();
+        appendTextObservations(observations, text, imageWidth, imageHeight, sourceQuality);
+        return observations;
+    }
+
+    private void appendTextObservations(
+            List<PackagingTextAnalyzer.Observation> target,
+            Text text,
+            int imageWidth,
+            int imageHeight,
+            double sourceQuality
+    ) {
+        if (target == null || text == null || imageWidth <= 0 || imageHeight <= 0) {
+            return;
+        }
+        int added = 0;
+        for (Text.TextBlock block : text.getTextBlocks()) {
+            for (Text.Line line : block.getLines()) {
+                Rect box = line.getBoundingBox();
+                String value = FoodItem.cleanText(line.getText());
+                if (box == null || value.length() == 0) {
+                    continue;
+                }
+                double normalizedHeight = box.height() / (double) imageHeight;
+                double normalizedWidth = box.width() / (double) imageWidth;
+                double centerX = box.exactCenterX() / imageWidth;
+                double centerY = box.exactCenterY() / imageHeight;
+                target.add(new PackagingTextAnalyzer.Observation(
+                        value,
+                        normalizedHeight,
+                        normalizedWidth,
+                        centerX,
+                        centerY,
+                        sourceQuality
+                ));
+                added++;
+            }
+        }
+        if (added == 0 && FoodItem.cleanText(text.getText()).length() > 0) {
+            target.add(new PackagingTextAnalyzer.Observation(
+                    text.getText(),
+                    0.03d,
+                    0.70d,
+                    0.50d,
+                    0.50d,
+                    sourceQuality * 0.65d
+            ));
+        }
     }
 
     private void recycleVariants(List<FrameVariant> variants) {
@@ -836,10 +1017,24 @@ public final class DateOcrScanActivity extends ComponentActivity {
 
     private void updateVideoReplayCompleteState(int analyzedFrames) {
         UnifiedRecognitionStabilizer.Snapshot snapshot = stabilizer.snapshot();
+        if (!RecognitionTextCleaner.isCanonicalFoodName(selectedPackagingName)) {
+            for (PackagingTextAnalyzer.Candidate candidate : snapshot.rankedPackagingCandidates) {
+                if (RecognitionTextCleaner.isCanonicalFoodName(candidate.text)) {
+                    selectedPackagingName = candidate.text;
+                    updateResultUi(snapshot);
+                    break;
+                }
+            }
+        }
+        if (!"部分完成".equals(statusBadge.getText().toString())) {
+            statusBadge.setText("已完成");
+        }
         if (snapshot.hasFillableCandidate()) {
-            statusText.setText("视频模拟完成，候选已可用；确认前不会保存到食品列表。");
+            statusText.setText("视频分析完成，候选已可用；请选择后填入表单。");
+        } else if (!snapshot.rankedPackagingCandidates.isEmpty()) {
+            statusText.setText("视频分析完成，请从下方候选中选择最符合包装的名称。");
         } else if (analyzedFrames > 0) {
-            statusText.setText("视频模拟完成，但候选还不稳定，可换更清晰视频或图片。");
+            statusText.setText("视频分析完成，但没有形成可用候选，可换更清晰的视频或图片。");
         } else {
             statusText.setText("视频没有可用画面，请换一个更清晰的本地视频。");
         }
@@ -847,12 +1042,16 @@ public final class DateOcrScanActivity extends ComponentActivity {
 
     private void stopVideoReplay() {
         videoReplayActive = false;
+        longVideoProfile = false;
     }
 
     private void resetRecognitionState() {
         stabilizer.reset();
         latestSnapshot = stabilizer.snapshot();
         latestRawText = "";
+        selectedPackagingName = "";
+        recognitionGeneration++;
+        analyzedFrameSequence = 0;
         analysisInFlight = false;
         lastAnalyzeAt = 0L;
         latestProductInfo = null;
@@ -891,7 +1090,7 @@ public final class DateOcrScanActivity extends ComponentActivity {
                     bindCameraUseCases(cameraProvider);
                     cameraBound = true;
                     statusBadge.setText("相机");
-                    statusText.setText("正在同时寻找条码和日期文字，请让包装信息进入识别框。");
+                    statusText.setText("正在寻找条码、中文商品名和日期，请让包装主体占满识别框。");
                 } catch (Exception error) {
                     showCameraUnavailable("相机启动失败，可使用视频、图片或手动新增。");
                     Toast.makeText(DateOcrScanActivity.this, "相机启动失败", Toast.LENGTH_SHORT).show();
@@ -978,9 +1177,16 @@ public final class DateOcrScanActivity extends ComponentActivity {
                         try {
                             List<Barcode> barcodes = barcodeTask.isSuccessful() ? barcodeTask.getResult() : null;
                             Text text = textTask.isSuccessful() ? textTask.getResult() : null;
+                            List<PackagingTextAnalyzer.Observation> observations = observationsFromText(
+                                    text,
+                                    imageProxy.getWidth(),
+                                    imageProxy.getHeight(),
+                                    0.90d
+                            );
                             handleRecognitionResult(
                                     extractProductBarcode(barcodes),
                                     text == null ? "" : text.getText(),
+                                    PackagingTextAnalyzer.analyze(observations),
                                     false
                             );
                         } catch (Exception ignored) {
@@ -1019,13 +1225,35 @@ public final class DateOcrScanActivity extends ComponentActivity {
     }
 
     private void handleRecognitionResult(String barcode, String rawText, boolean singleFrameConfirmation) {
+        handleRecognitionResult(
+                barcode,
+                rawText,
+                PackagingTextAnalyzer.analyze(observationsFromRawText(rawText)),
+                singleFrameConfirmation
+        );
+    }
+
+    private void handleRecognitionResult(
+            String barcode,
+            String rawText,
+            List<PackagingTextAnalyzer.Candidate> packagingCandidates,
+            boolean singleFrameConfirmation
+    ) {
         String cleanedText = FoodItem.cleanText(rawText);
         if (!BarcodeUtils.isSupportedProductCode(barcode)) {
             barcode = RecognitionTextCleaner.extractProductCodeFromOcr(cleanedText);
         }
         DateOcrParser.Result parsed = DateOcrParser.parse(cleanedText);
-        latestSnapshot = stabilizer.addFrame(barcode, parsed, cleanedText, singleFrameConfirmation);
-        latestRawText = cleanedText;
+        latestSnapshot = stabilizer.addFrame(
+                barcode,
+                parsed,
+                cleanedText,
+                packagingCandidates,
+                singleFrameConfirmation
+        );
+        if (cleanedText.length() > 0) {
+            latestRawText = cleanedText;
+        }
         final UnifiedRecognitionStabilizer.Snapshot snapshot = latestSnapshot;
         runOnUiThread(new Runnable() {
             @Override
@@ -1034,6 +1262,26 @@ public final class DateOcrScanActivity extends ComponentActivity {
                 startProductLookupIfNeeded(snapshot);
             }
         });
+    }
+
+    private List<PackagingTextAnalyzer.Observation> observationsFromRawText(String rawText) {
+        List<PackagingTextAnalyzer.Observation> observations =
+                new ArrayList<PackagingTextAnalyzer.Observation>();
+        String cleaned = RecognitionTextCleaner.cleanForPackagingOcr(rawText);
+        for (String line : cleaned.split("\\r?\\n")) {
+            String value = FoodItem.cleanText(line);
+            if (value.length() > 0) {
+                observations.add(new PackagingTextAnalyzer.Observation(
+                        value,
+                        0.035d,
+                        Math.min(0.9d, 0.12d + value.length() * 0.035d),
+                        0.5d,
+                        0.5d,
+                        0.55d
+                ));
+            }
+        }
+        return observations;
     }
 
     private void startProductLookupIfNeeded(final UnifiedRecognitionStabilizer.Snapshot snapshot) {
@@ -1049,6 +1297,7 @@ public final class DateOcrScanActivity extends ComponentActivity {
         latestProductBarcode = "";
         productLookupError = "";
         productLookupInFlightBarcode = barcode;
+        final int lookupGeneration = recognitionGeneration;
         updateResultUi(snapshot);
 
         new Thread(new Runnable() {
@@ -1059,6 +1308,10 @@ public final class DateOcrScanActivity extends ComponentActivity {
                     runOnUiThread(new Runnable() {
                         @Override
                         public void run() {
+                            if (lookupGeneration != recognitionGeneration
+                                    || !barcode.equals(stabilizer.snapshot().stableBarcode)) {
+                                return;
+                            }
                             productLookupInFlightBarcode = "";
                             latestProductBarcode = barcode;
                             latestProductInfo = info;
@@ -1072,6 +1325,10 @@ public final class DateOcrScanActivity extends ComponentActivity {
                     runOnUiThread(new Runnable() {
                         @Override
                         public void run() {
+                            if (lookupGeneration != recognitionGeneration
+                                    || !barcode.equals(stabilizer.snapshot().stableBarcode)) {
+                                return;
+                            }
                             productLookupInFlightBarcode = "";
                             latestProductBarcode = barcode;
                             productLookupError = FoodItem.cleanText(error.getMessage());
@@ -1094,35 +1351,26 @@ public final class DateOcrScanActivity extends ComponentActivity {
 
         if (barcodeValue != null) {
             barcodeValue.setText(snapshot.hasStableBarcode()
-                    ? snapshot.stableBarcode + "（已锁定）"
-                    : "未发现稳定条码");
+                    ? "商品码  " + snapshot.stableBarcode + " · 已识别"
+                    : "商品码  暂未识别");
         }
 
         if (productValue != null) {
             productValue.setText(productDisplayText(snapshot));
         }
+        renderProductCandidates(snapshot);
 
         FoodItem dateDraft = DateOcrResultPayload.toDraft(snapshot.stableDateVote);
         if (productionDateValue != null) {
-            productionDateValue.setText(dateDraft.productionDate.length() > 0
-                    ? dateDraft.productionDate + "（已稳定）"
-                    : "待确认");
-        }
-        if (shelfLifeValue != null) {
-            shelfLifeValue.setText(dateDraft.shelfLifeValue != null
-                    ? dateDraft.shelfLifeValue + FoodData.shelfLifeUnitLabel(dateDraft.shelfLifeUnit)
-                    : "待确认");
-        }
-        if (expiryDateValue != null) {
-            expiryDateValue.setText(dateDraft.expiryDate.length() > 0
-                    ? dateDraft.expiryDate
-                    : "待确认");
+            productionDateValue.setText(compactDateSummary(dateDraft));
         }
 
-        String rawSnippet = snippet(latestRawText, 96);
-        rawPreviewText.setText("原文片段：" + rawSnippet);
+        int recognizedChars = FoodItem.cleanText(latestRawText).replace(" ", "").length();
+        rawPreviewText.setText(recognizedChars > 0
+                ? "已读取 " + recognizedChars + " 个字符 · 原文可查看"
+                : "尚未读取到清晰文字");
 
-        boolean fillable = snapshot.hasFillableCandidate();
+        boolean fillable = snapshot.hasFillableCandidate() || selectedPackagingName.length() > 0;
         fillButton.setEnabled(fillable);
         fillButton.setAlpha(fillable ? 1f : 0.45f);
 
@@ -1130,49 +1378,137 @@ public final class DateOcrScanActivity extends ComponentActivity {
     }
 
     private String productDisplayText(UnifiedRecognitionStabilizer.Snapshot snapshot) {
-        if (snapshot != null && snapshot.hasStablePackagingName() && !snapshot.hasStableBarcode()) {
-            return snapshot.stablePackagingName + "（包装文字候选）";
-        }
         if (latestProductInfo != null && latestProductInfo.found) {
             String name = latestProductInfo.displayName();
-            return name.length() > 0 ? name + "（条码查询）" : "已查询到商品";
+            return name.length() > 0 ? name : "已查询到商品";
+        }
+        if (selectedPackagingName.length() > 0) {
+            return selectedPackagingName;
+        }
+        if (snapshot != null && snapshot.hasStablePackagingName()) {
+            return snapshot.stablePackagingName;
+        }
+        if (snapshot != null && !snapshot.rankedPackagingCandidates.isEmpty()) {
+            return snapshot.rankedPackagingCandidates.get(0).text;
         }
         if (snapshot.hasStableBarcode() && productLookupInFlightBarcode.length() > 0) {
-            return "正在查询商品信息";
+            return "正在查询条码商品信息";
         }
         if (snapshot.hasStableBarcode() && productLookupError.length() > 0) {
-            return "未完成查询，将使用条码候选名";
+            return "条码查询暂不可用";
         }
         if (snapshot.hasStableBarcode() && latestProductBarcode.length() > 0) {
-            return "未查到商品名，将使用条码候选名";
+            return "未查到商品名";
         }
-        return "等待条码或包装文字";
+        return "正在寻找中文商品名";
+    }
+
+    private void renderProductCandidates(final UnifiedRecognitionStabilizer.Snapshot snapshot) {
+        if (productCandidateContainer == null) {
+            return;
+        }
+        productCandidateContainer.removeAllViews();
+        if (snapshot == null || snapshot.rankedPackagingCandidates.isEmpty()) {
+            TextView hint = compactResultText();
+            hint.setText("候选出现后可在这里选择");
+            productCandidateContainer.addView(hint, fixed(190, 36));
+            return;
+        }
+
+        if (selectedPackagingName.length() == 0 && snapshot.hasStablePackagingName()) {
+            selectedPackagingName = snapshot.stablePackagingName;
+        }
+        for (final PackagingTextAnalyzer.Candidate candidate : snapshot.rankedPackagingCandidates) {
+            final String candidateName = FoodItem.cleanText(candidate.text);
+            if (candidateName.length() == 0) {
+                continue;
+            }
+            boolean active = RecognitionTextCleaner.productNamesSimilar(selectedPackagingName, candidateName);
+            Button button = new Button(this);
+            button.setText(candidateName + (candidate.votes > 1 ? " · " + candidate.votes + "帧" : ""));
+            button.setTextSize(13);
+            button.setTextColor(active ? Color.WHITE : Color.rgb(44, 65, 51));
+            button.setAllCaps(false);
+            button.setMinWidth(0);
+            button.setMinHeight(0);
+            button.setPadding(dp(12), 0, dp(12), 0);
+            button.setBackground(rounded(
+                    active ? Color.rgb(47, 112, 76) : Color.rgb(232, 239, 231),
+                    dp(8),
+                    active ? Color.rgb(47, 112, 76) : Color.rgb(196, 210, 198)
+            ));
+            button.setOnClickListener(new View.OnClickListener() {
+                @Override
+                public void onClick(View view) {
+                    selectedPackagingName = candidateName;
+                    updateResultUi(latestSnapshot);
+                }
+            });
+            LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.WRAP_CONTENT,
+                    dp(34)
+            );
+            params.setMargins(0, 0, dp(7), 0);
+            productCandidateContainer.addView(button, params);
+        }
+    }
+
+    private String compactDateSummary(FoodItem draft) {
+        List<String> values = new ArrayList<String>();
+        if (draft.productionDate.length() > 0) {
+            values.add("生产 " + draft.productionDate);
+        }
+        if (draft.shelfLifeValue != null) {
+            values.add("保质期 " + draft.shelfLifeValue + FoodData.shelfLifeUnitLabel(draft.shelfLifeUnit));
+        }
+        if (draft.expiryDate.length() > 0) {
+            values.add("最终可食用 " + draft.expiryDate);
+        }
+        if (values.isEmpty()) {
+            return "日期  暂未识别，可继续扫描或先使用商品名";
+        }
+        StringBuilder builder = new StringBuilder("日期  ");
+        for (int index = 0; index < values.size(); index++) {
+            if (index > 0) {
+                builder.append(" · ");
+            }
+            builder.append(values.get(index));
+        }
+        return builder.toString();
     }
 
     private void updateStatus(UnifiedRecognitionStabilizer.Snapshot snapshot) {
+        if (selectedPackagingName.length() > 0) {
+            statusBadge.setText("已选择");
+            statusText.setText("已选择商品名候选，可继续识别日期或直接填入表单。");
+            return;
+        }
         if (snapshot != null
                 && snapshot.hasStablePackagingName()
                 && !snapshot.hasStableBarcode()
                 && !snapshot.hasStableDateCandidate()) {
-            statusBadge.setText("文字已锁");
-            statusText.setText("已锁定包装文字候选；可先填入表单，确认前不会保存。");
+            statusBadge.setText("名称较稳");
+            statusText.setText("中文商品名已多帧重复出现，请核对后使用。");
             return;
         }
         if (snapshot.hasStableBarcode() && snapshot.hasStableDateCandidate()) {
-            statusBadge.setText("已稳定");
-            statusText.setText("已锁定条码和日期候选，可确认后填入新增表单。");
+            statusBadge.setText("结果较稳");
+            statusText.setText("条码和日期已多帧重复出现，请核对后使用。");
         } else if (snapshot.hasStableBarcode()) {
-            statusBadge.setText("条码已锁");
-            statusText.setText("已锁定条码；可继续找日期，也可以先填入表单。");
+            statusBadge.setText("条码已识别");
+            statusText.setText("已识别商品码，可继续寻找中文商品名和日期。");
         } else if (snapshot.hasStableDateCandidate()) {
-            statusBadge.setText("日期已稳");
-            statusText.setText("日期候选已稳定；未发现条码，可确认后填入表单。");
+            statusBadge.setText("日期较稳");
+            statusText.setText("日期已多帧重复出现，请核对后使用。");
+        } else if (!snapshot.rankedPackagingCandidates.isEmpty()) {
+            statusBadge.setText("请选择");
+            statusText.setText("识别到多个中文名称，请从下方选择最符合包装的一项。");
         } else if (snapshot.latestDateVote != null && snapshot.latestDateVote.hasConflict) {
             statusBadge.setText("需确认");
-            statusText.setText("出现多个日期候选，继续保持清晰或改用手动修正。");
+            statusText.setText("出现多个日期候选，可继续保持清晰后再核对。");
         } else if (latestRawText.length() > 0) {
             statusBadge.setText("识别中");
-            statusText.setText("已看到包装文字，继续保持稳定直到候选锁定。");
+            statusText.setText("已看到包装文字，继续保持稳定以提高候选可靠度。");
         } else {
             statusBadge.setText("识别中");
             statusText.setText("把条码、生产日期或保质期放入识别框，系统会自动合并结果。");
@@ -1195,14 +1531,16 @@ public final class DateOcrScanActivity extends ComponentActivity {
         UnifiedRecognitionStabilizer.Snapshot snapshot = latestSnapshot == null
                 ? stabilizer.snapshot()
                 : latestSnapshot;
-        if (!snapshot.hasFillableCandidate()) {
+        if (!snapshot.hasFillableCandidate() && selectedPackagingName.length() == 0) {
             Toast.makeText(this, "还没有可填入字段", Toast.LENGTH_SHORT).show();
             return;
         }
 
         FoodItem dateDraft = DateOcrResultPayload.toDraft(snapshot.stableDateVote);
-        BarcodeProductInfo info = latestProductInfo;
-        String productName = info != null && info.found ? info.displayName() : snapshot.stablePackagingName;
+        BarcodeProductInfo info = latestProductBarcode.equals(snapshot.stableBarcode) ? latestProductInfo : null;
+        String productName = info != null && info.found
+                ? info.displayName()
+                : (selectedPackagingName.length() > 0 ? selectedPackagingName : snapshot.stablePackagingName);
         String productCategory = info != null && info.found ? BarcodeCategoryClassifier.inferCategory(info) : "";
         String productNotes = info != null && info.found ? info.notes() : "";
 
@@ -1327,20 +1665,26 @@ public final class DateOcrScanActivity extends ComponentActivity {
         final int rotationDegrees;
         final boolean scanBarcode;
         final boolean scanText;
+        final boolean scanLatinText;
         final boolean recycleBitmap;
+        final double sourceQuality;
 
         FrameVariant(
                 Bitmap bitmap,
                 int rotationDegrees,
                 boolean scanBarcode,
                 boolean scanText,
-                boolean recycleBitmap
+                boolean scanLatinText,
+                boolean recycleBitmap,
+                double sourceQuality
         ) {
             this.bitmap = bitmap;
             this.rotationDegrees = rotationDegrees;
             this.scanBarcode = scanBarcode;
             this.scanText = scanText;
+            this.scanLatinText = scanLatinText;
             this.recycleBitmap = recycleBitmap;
+            this.sourceQuality = sourceQuality;
         }
     }
 
@@ -1358,9 +1702,9 @@ public final class DateOcrScanActivity extends ComponentActivity {
             int height = getHeight();
             RectF frame = new RectF(
                     width * 0.07f,
-                    height * 0.28f,
+                    height * 0.15f,
                     width * 0.93f,
-                    height * 0.61f
+                    height * 0.58f
             );
 
             paint.setStyle(Paint.Style.FILL);

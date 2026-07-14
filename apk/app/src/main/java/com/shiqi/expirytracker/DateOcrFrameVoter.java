@@ -44,8 +44,13 @@ final class DateOcrFrameVoter {
             addShelfLifeCandidates(shelfLives, frame.shelfLives, frameIndex);
         }
 
-        StableDate productionDate = stableDate(productionDates, requiredVotes);
-        StableDate expiryDate = stableDate(expiryDates, requiredVotes);
+        StableDatePair strongPair = stableStrongDatePair(safeFrames, Math.min(requiredVotes, 2));
+        StableDate productionDate = strongPair == null
+                ? stableDate(productionDates, requiredVotes)
+                : strongPair.productionDate;
+        StableDate expiryDate = strongPair == null
+                ? stableDate(expiryDates, requiredVotes)
+                : strongPair.expiryDate;
         StableDate calculatedExpiryDate = stableDate(calculatedExpiryDates, requiredVotes);
         StableShelfLife shelfLife = stableShelfLife(shelfLives, requiredVotes);
 
@@ -97,8 +102,65 @@ final class DateOcrFrameVoter {
         }
     }
 
+    private static StableDatePair stableStrongDatePair(
+            List<DateOcrParser.Result> frames,
+            int minVotes
+    ) {
+        Map<String, DatePairAccumulator> pairs = new LinkedHashMap<String, DatePairAccumulator>();
+        for (int frameIndex = 0; frameIndex < frames.size(); frameIndex++) {
+            DateOcrParser.Result frame = frames.get(frameIndex);
+            if (frame == null) {
+                continue;
+            }
+            DateOcrParser.DateCandidate production = firstStrongDate(frame.productionDates);
+            DateOcrParser.DateCandidate expiry = firstStrongDate(frame.expiryDates);
+            if (production == null || expiry == null
+                    || production.normalized.compareTo(expiry.normalized) >= 0) {
+                continue;
+            }
+            String key = production.normalized + "|" + expiry.normalized;
+            DatePairAccumulator pair = pairs.get(key);
+            if (pair == null) {
+                pair = new DatePairAccumulator(production.normalized, expiry.normalized);
+                pairs.put(key, pair);
+            }
+            pair.add(
+                    production,
+                    expiry,
+                    frameIndex,
+                    Math.max(1, Math.min(2, frame.strongDatePairEvidenceCount()))
+            );
+        }
+
+        DatePairAccumulator best = null;
+        boolean tied = false;
+        for (DatePairAccumulator pair : pairs.values()) {
+            if (best == null || pair.votes > best.votes
+                    || (pair.votes == best.votes && pair.score > best.score)) {
+                best = pair;
+                tied = false;
+            } else if (best != null && pair.votes == best.votes && pair.score == best.score) {
+                tied = true;
+            }
+        }
+        return best == null || tied || best.votes < Math.max(2, minVotes)
+                ? null
+                : best.toStableDatePair();
+    }
+
+    private static DateOcrParser.DateCandidate firstStrongDate(
+            List<DateOcrParser.DateCandidate> candidates
+    ) {
+        for (DateOcrParser.DateCandidate candidate : candidates) {
+            if (!candidate.weakHint) {
+                return candidate;
+            }
+        }
+        return null;
+    }
+
     private static StableDate stableDate(Map<String, DateAccumulator> accumulators, int minVotes) {
-        DateAccumulator best = bestDate(accumulators);
+        DateAccumulator best = bestDate(accumulators, minVotes);
         if (best == null || best.votes < minVotes || hasTopVoteTie(accumulators, best.votes)) {
             return null;
         }
@@ -113,11 +175,19 @@ final class DateOcrFrameVoter {
         return best.toStableShelfLife();
     }
 
-    private static DateAccumulator bestDate(Map<String, DateAccumulator> accumulators) {
+    private static DateAccumulator bestDate(
+            Map<String, DateAccumulator> accumulators,
+            final int minVotes
+    ) {
         List<DateAccumulator> values = new ArrayList<DateAccumulator>(accumulators.values());
         Collections.sort(values, new Comparator<DateAccumulator>() {
             @Override
             public int compare(DateAccumulator left, DateAccumulator right) {
+                boolean leftStrong = left.strongVotes >= minVotes;
+                boolean rightStrong = right.strongVotes >= minVotes;
+                if (leftStrong != rightStrong) {
+                    return leftStrong ? -1 : 1;
+                }
                 int votes = Integer.valueOf(right.votes).compareTo(Integer.valueOf(left.votes));
                 if (votes != 0) {
                     return votes;
@@ -149,9 +219,18 @@ final class DateOcrFrameVoter {
     }
 
     private static boolean hasDateConflict(Map<String, DateAccumulator> accumulators, int minVotes) {
+        boolean hasStrongCandidate = false;
+        for (DateAccumulator accumulator : accumulators.values()) {
+            if (accumulator.strongVotes >= minVotes) {
+                hasStrongCandidate = true;
+                break;
+            }
+        }
         int contenders = 0;
         for (DateAccumulator accumulator : accumulators.values()) {
-            if (accumulator.votes >= minVotes) {
+            if (hasStrongCandidate
+                    ? accumulator.strongVotes >= minVotes
+                    : accumulator.votes >= minVotes) {
                 contenders++;
             }
         }
@@ -201,11 +280,13 @@ final class DateOcrFrameVoter {
         int votes = 0;
         double score = 0.0d;
         boolean weakHint = false;
+        int strongVotes = 0;
         boolean calculated = false;
         String bestRaw = "";
         String bestContext = "";
         double bestConfidence = 0.0d;
         private int lastFrameIndex = -1;
+        private int lastStrongFrameIndex = -1;
 
         DateAccumulator(String type, String value) {
             this.type = type;
@@ -218,7 +299,11 @@ final class DateOcrFrameVoter {
                 lastFrameIndex = frameIndex;
             }
             score += candidate.confidence;
-            weakHint = weakHint || candidate.weakHint;
+            if (!candidate.weakHint && frameIndex != lastStrongFrameIndex) {
+                strongVotes++;
+                lastStrongFrameIndex = frameIndex;
+            }
+            weakHint = strongVotes == 0;
             calculated = calculated || candidate.calculated;
             if (bestContext.length() == 0 || candidate.confidence > bestConfidence) {
                 bestRaw = candidate.raw;
@@ -238,6 +323,60 @@ final class DateOcrFrameVoter {
                     weakHint,
                     calculated
             );
+        }
+    }
+
+    private static final class DatePairAccumulator {
+        final String productionValue;
+        final String expiryValue;
+        int votes = 0;
+        double score = 0.0d;
+        String productionRaw = "";
+        String expiryRaw = "";
+        String context = "";
+        private int lastFrameIndex = -1;
+
+        DatePairAccumulator(String productionValue, String expiryValue) {
+            this.productionValue = productionValue;
+            this.expiryValue = expiryValue;
+        }
+
+        void add(
+                DateOcrParser.DateCandidate production,
+                DateOcrParser.DateCandidate expiry,
+                int frameIndex,
+                int evidenceVotes
+        ) {
+            if (frameIndex != lastFrameIndex) {
+                votes += evidenceVotes;
+                lastFrameIndex = frameIndex;
+            }
+            score += production.confidence + expiry.confidence;
+            if (productionRaw.length() == 0) {
+                productionRaw = production.raw;
+                expiryRaw = expiry.raw;
+                context = production.context;
+            }
+        }
+
+        StableDatePair toStableDatePair() {
+            double confidence = confidenceFromScore(score / 2.0d, votes);
+            return new StableDatePair(
+                    new StableDate("productionDate", productionValue, productionRaw, context,
+                            votes, confidence, false, false),
+                    new StableDate("expiryDate", expiryValue, expiryRaw, context,
+                            votes, confidence, false, false)
+            );
+        }
+    }
+
+    private static final class StableDatePair {
+        final StableDate productionDate;
+        final StableDate expiryDate;
+
+        StableDatePair(StableDate productionDate, StableDate expiryDate) {
+            this.productionDate = productionDate;
+            this.expiryDate = expiryDate;
         }
     }
 
