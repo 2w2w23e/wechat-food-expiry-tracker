@@ -6,11 +6,14 @@ import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Set;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipInputStream;
+import java.util.zip.ZipOutputStream;
 
 public final class LocalLogicTest {
     private int passed = 0;
@@ -114,10 +117,10 @@ public final class LocalLogicTest {
                 assertEquals(1, plan.daysLeft);
                 assertEquals(5, plan.totalShelfLifeDays);
                 assertEquals("A", plan.riskLevel);
-                assertListContains(plan.offsets, Integer.valueOf(5));
-                assertListContains(plan.offsets, Integer.valueOf(3));
+                assertEquals(ReminderSettings.MODE_SMART, plan.reminderMode);
                 assertListContains(plan.offsets, Integer.valueOf(1));
                 assertListContains(plan.offsets, Integer.valueOf(0));
+                assertAllOffsetsAtMost(plan.offsets, plan.daysLeft);
                 assertTrue(plan.events.size() >= plan.offsets.size(), "events should include all offsets");
                 assertEventsSorted(plan.events);
             }
@@ -132,7 +135,7 @@ public final class LocalLogicTest {
 
                 assertTrue(plan.enabled, "valid frozen food should be enabled");
                 assertEquals("C", plan.riskLevel);
-                assertEquals(Arrays.asList(Integer.valueOf(30), Integer.valueOf(7), Integer.valueOf(0)), plan.offsets);
+                assertEquals(Arrays.asList(Integer.valueOf(7), Integer.valueOf(0)), plan.offsets);
                 for (ReminderEvent event : plan.events) {
                     assertFalse(event.postExpiry, "low-risk frozen food should not add post-expiry reminders");
                 }
@@ -147,7 +150,7 @@ public final class LocalLogicTest {
                 assertEquals(Arrays.asList("08:30", "12:30", "18:30"), duePlan.dueDayHours);
 
                 FoodItem expiredYesterday = food("Expired yesterday", "produce", "room_temp", DateRules.addDaysString(today, -5), DateRules.addDaysString(today, -1), 1);
-                FoodItem upcoming = food("Upcoming", "staple", "room_temp", DateRules.addDaysString(today, -7), DateRules.addDaysString(today, 3), 1);
+                FoodItem upcoming = food("Upcoming", "staple", "room_temp", DateRules.addDaysString(today, -7), DateRules.addDaysString(today, 1), 1);
 
                 List<FoodItem> foods = new ArrayList<FoodItem>();
                 foods.add(upcoming);
@@ -237,6 +240,10 @@ public final class LocalLogicTest {
                 assertEquals("", item.openedDate);
                 assertEquals(null, item.afterOpenShelfLifeValue);
                 assertEquals("", item.afterOpenShelfLifeUnit);
+                assertEquals(0, item.smartReminderOffsets.size());
+                assertEquals("", item.smartReminderFingerprint);
+                assertEquals(Integer.MIN_VALUE, item.smartReminderPlannedDaysLeft);
+                assertEquals("", item.smartReminderPlannedOn);
             }
         });
 
@@ -315,6 +322,11 @@ public final class LocalLogicTest {
                 source.updatedAt = "old-updated";
                 source.isFinished = true;
                 source.finishedAt = "2026-07-04T08:00:00+0800";
+                source.smartReminderOffsets.add(Integer.valueOf(3));
+                source.smartReminderOffsets.add(Integer.valueOf(0));
+                source.smartReminderFingerprint = "stored-plan";
+                source.smartReminderPlannedDaysLeft = 3;
+                source.smartReminderPlannedOn = "2026-07-05";
 
                 FoodItem copied = source.copyAsNewRecord("new-id", "2026-07-05T08:00:00+0800");
 
@@ -338,6 +350,31 @@ public final class LocalLogicTest {
                 assertEquals(Double.valueOf(4), Double.valueOf(copied.remainingQuantity));
                 assertFalse(copied.isFinished, "copied food should not copy finished status");
                 assertEquals("", copied.finishedAt);
+                assertEquals(0, copied.smartReminderOffsets.size());
+                assertEquals("", copied.smartReminderFingerprint);
+                assertEquals(Integer.MIN_VALUE, copied.smartReminderPlannedDaysLeft);
+                assertEquals("", copied.smartReminderPlannedOn);
+            }
+        });
+
+        test("FoodItem persists a smart reminder snapshot", new TestCase() {
+            public void run() {
+                FoodItem source = new FoodItem();
+                source.smartReminderOffsets.add(Integer.valueOf(7));
+                source.smartReminderOffsets.add(Integer.valueOf(1));
+                source.smartReminderOffsets.add(Integer.valueOf(0));
+                source.smartReminderFingerprint = "category|storage|dates";
+                source.smartReminderPlannedDaysLeft = 10;
+                source.smartReminderPlannedOn = "2026-07-14";
+                try {
+                    FoodItem restored = FoodItem.fromJson(source.toJson());
+                    assertEquals(source.smartReminderOffsets, restored.smartReminderOffsets);
+                    assertEquals(source.smartReminderFingerprint, restored.smartReminderFingerprint);
+                    assertEquals(10, restored.smartReminderPlannedDaysLeft);
+                    assertEquals("2026-07-14", restored.smartReminderPlannedOn);
+                } catch (org.json.JSONException error) {
+                    throw new AssertionError("failed to round-trip reminder snapshot: " + error.getMessage());
+                }
             }
         });
 
@@ -376,6 +413,7 @@ public final class LocalLogicTest {
                 opened.openedDate = today;
                 opened.afterOpenShelfLifeValue = Integer.valueOf(3);
                 opened.afterOpenShelfLifeUnit = "day";
+                ReminderPolicy.ensureSmartSchedule(opened);
 
                 ReminderPlan plan = ReminderPolicy.planFor(opened);
                 assertTrue(plan.enabled, "opened food should have reminders");
@@ -399,6 +437,7 @@ public final class LocalLogicTest {
                 opened.openedDate = today;
                 opened.afterOpenShelfLifeValue = Integer.valueOf(10);
                 opened.afterOpenShelfLifeUnit = "day";
+                ReminderPolicy.ensureSmartSchedule(opened);
 
                 ReminderPlan plan = ReminderPolicy.planFor(opened);
                 assertTrue(plan.enabled, "valid expiryDate should keep reminders enabled");
@@ -419,6 +458,7 @@ public final class LocalLogicTest {
                 opened.openedDate = "2026-02-30";
                 opened.afterOpenShelfLifeValue = Integer.valueOf(1);
                 opened.afterOpenShelfLifeUnit = "day";
+                ReminderPolicy.ensureSmartSchedule(opened);
 
                 ReminderPlan plan = ReminderPolicy.planFor(opened);
                 assertTrue(plan.enabled, "bad openedDate should not disable expiryDate reminders");
@@ -433,6 +473,7 @@ public final class LocalLogicTest {
             public void run() {
                 ReminderSettings settings = ReminderSettings.defaults();
                 assertTrue(settings.enabled, "default reminders should be enabled");
+                assertEquals(ReminderSettings.MODE_SMART, settings.mode);
                 assertEquals(Arrays.asList(Integer.valueOf(7), Integer.valueOf(3), Integer.valueOf(1), Integer.valueOf(0)), settings.advanceDays);
                 assertEquals(Arrays.asList("08:30", "09:00", "12:30", "18:00", "18:30"), settings.todayReminderSlots());
                 assertTrue(settings.usesDefaultAdvanceDays(), "default advance days should keep policy offsets");
@@ -489,6 +530,389 @@ public final class LocalLogicTest {
                 assertEquals(Arrays.asList("08:05", "19:45"), settings.todayReminderSlots());
                 assertEquals(Arrays.asList("08:05", "19:45"), ReminderPolicy.dueDayHours("A", settings));
                 assertEquals(Arrays.asList("08:05", "19:45"), plan.dueDayHours);
+            }
+        });
+
+        test("ReminderSettings loads legacy values as smart mode", new TestCase() {
+            public void run() {
+                ReminderSettings settings = ReminderSettings.fromStoredValues(
+                        true,
+                        "7,3,1,0",
+                        "08:30,18:00"
+                );
+                assertEquals(ReminderSettings.MODE_SMART, settings.mode);
+                assertTrue(settings.isSmartMode(), "legacy settings should preserve risk-based behavior");
+            }
+        });
+
+        test("ReminderSettings keeps legacy custom days as fixed mode", new TestCase() {
+            public void run() {
+                ReminderSettings settings = ReminderSettings.fromStoredValues(
+                        true,
+                        "2,0",
+                        "08:30,18:00"
+                );
+                assertEquals(ReminderSettings.MODE_FIXED, settings.mode);
+                assertFalse(settings.isSmartMode(), "legacy custom offsets should remain fixed after upgrade");
+                assertEquals(Arrays.asList(Integer.valueOf(2), Integer.valueOf(0)), settings.advanceDays);
+            }
+        });
+
+        test("ReminderSettings smart mode ignores invalid hidden fixed input", new TestCase() {
+            public void run() {
+                ReminderSettings settings = ReminderSettings.fromInput(
+                        true,
+                        ReminderSettings.MODE_SMART,
+                        "not-a-day-list",
+                        "09:00"
+                );
+                assertTrue(settings != null, "hidden fixed input should not block smart settings");
+                assertEquals(ReminderSettings.MODE_SMART, settings.mode);
+                assertEquals(Arrays.asList(
+                        Integer.valueOf(7),
+                        Integer.valueOf(3),
+                        Integer.valueOf(1),
+                        Integer.valueOf(0)
+                ), settings.advanceDays);
+            }
+        });
+
+        test("ReminderSettings explicit fixed mode keeps configured dates", new TestCase() {
+            public void run() {
+                ReminderSettings settings = ReminderSettings.fromInput(
+                        true,
+                        ReminderSettings.MODE_FIXED,
+                        "7,3,1,0",
+                        "09:00"
+                );
+                String today = DateRules.todayString();
+                FoodItem food = food(
+                        "Fixed schedule",
+                        "dairy",
+                        "refrigerated",
+                        DateRules.addDaysString(today, -5),
+                        DateRules.addDaysString(today, 5),
+                        1
+                );
+                ReminderPlan plan = ReminderPolicy.planFor(food, settings);
+
+                assertEquals(ReminderSettings.MODE_FIXED, plan.reminderMode);
+                assertEquals(Arrays.asList(
+                        Integer.valueOf(7),
+                        Integer.valueOf(3),
+                        Integer.valueOf(1),
+                        Integer.valueOf(0)
+                ), plan.offsets);
+                assertTrue(plan.scheduleReason.indexOf("固定日期") >= 0, "fixed plan should explain its basis");
+            }
+        });
+
+        test("ReminderPolicy next reminder copy describes the future reminder node", new TestCase() {
+            public void run() {
+                String today = DateRules.todayString();
+                ReminderSettings settings = ReminderSettings.fromInput(
+                        true,
+                        ReminderSettings.MODE_FIXED,
+                        "3,0",
+                        "09:00"
+                );
+                FoodItem food = food(
+                        "Clear reminder copy",
+                        "other",
+                        "room_temp",
+                        DateRules.addDaysString(today, -3),
+                        DateRules.addDaysString(today, 7),
+                        1
+                );
+
+                ReminderPlan plan = ReminderPolicy.planFor(food, settings);
+
+                assertEquals("4 天后提醒：到期前 3 天", plan.nextReminderSummary);
+            }
+        });
+
+        test("ReminderPolicy fixed mode does not promise missing future reminders", new TestCase() {
+            public void run() {
+                String today = DateRules.todayString();
+                ReminderSettings settings = ReminderSettings.fromInput(
+                        true,
+                        ReminderSettings.MODE_FIXED,
+                        "3",
+                        "09:00"
+                );
+                FoodItem tomorrow = food(
+                        "No future node",
+                        "other",
+                        "room_temp",
+                        DateRules.addDaysString(today, -5),
+                        DateRules.addDaysString(today, 1),
+                        1
+                );
+                FoodItem dueToday = food(
+                        "No due-day node",
+                        "other",
+                        "room_temp",
+                        DateRules.addDaysString(today, -6),
+                        today,
+                        1
+                );
+
+                ReminderPlan tomorrowPlan = ReminderPolicy.planFor(tomorrow, settings);
+                ReminderPlan todayPlan = ReminderPolicy.planFor(dueToday, settings);
+
+                assertEquals("暂无后续提醒", tomorrowPlan.nextReminderSummary);
+                assertTrue(tomorrowPlan.cardHint.indexOf("暂无后续提醒") >= 0, "card should not promise a missing reminder");
+                assertEquals("暂无后续提醒", todayPlan.nextReminderSummary);
+                assertTrue(todayPlan.cardHint.indexOf("暂无后续提醒") >= 0, "due-day card should stay quiet without offset zero");
+            }
+        });
+
+        test("ReminderPolicy fixed mode stays on expiryDate after opening", new TestCase() {
+            public void run() {
+                String today = DateRules.todayString();
+                String expiry = DateRules.addDaysString(today, 20);
+                FoodItem opened = food(
+                        "Fixed opened food",
+                        "meat_egg_seafood",
+                        "refrigerated",
+                        DateRules.addDaysString(today, -2),
+                        expiry,
+                        1
+                );
+                opened.openedDate = today;
+                opened.afterOpenShelfLifeValue = Integer.valueOf(3);
+                opened.afterOpenShelfLifeUnit = "day";
+                ReminderSettings fixed = ReminderSettings.fromInput(
+                        true,
+                        ReminderSettings.MODE_FIXED,
+                        "7,0",
+                        "09:00"
+                );
+
+                ReminderPlan plan = ReminderPolicy.planFor(opened, fixed);
+                assertFalse(plan.usesAfterOpenDate, "fixed dates should remain relative to expiryDate");
+                assertEquals(expiry, plan.effectiveReminderDate);
+                assertEquals(Arrays.asList(Integer.valueOf(7), Integer.valueOf(0)), plan.offsets);
+                assertEquals(2, plan.events.size());
+            }
+        });
+
+        test("ReminderPolicy fixed briefing triggers only on configured date", new TestCase() {
+            public void run() {
+                String today = DateRules.todayString();
+                ReminderSettings fixed = ReminderSettings.fromInput(
+                        true,
+                        ReminderSettings.MODE_FIXED,
+                        "3,0",
+                        "09:00"
+                );
+                FoodItem oneDayBeforeNode = food(
+                        "Not today",
+                        "other",
+                        "room_temp",
+                        DateRules.addDaysString(today, -6),
+                        DateRules.addDaysString(today, 4),
+                        1
+                );
+                FoodItem onNode = food(
+                        "Today node",
+                        "other",
+                        "room_temp",
+                        DateRules.addDaysString(today, -7),
+                        DateRules.addDaysString(today, 3),
+                        1
+                );
+
+                List<FoodItem> foods = new ArrayList<FoodItem>();
+                foods.add(oneDayBeforeNode);
+                DailyBriefing before = ReminderPolicy.dailyBriefing(foods, fixed);
+                assertEquals(0, before.upcoming.size());
+
+                foods.add(onNode);
+                DailyBriefing onDate = ReminderPolicy.dailyBriefing(foods, fixed);
+                assertEquals(1, onDate.upcoming.size());
+                assertEquals("Today node", onDate.upcoming.get(0).food.name);
+            }
+        });
+
+        test("ReminderPolicy smart mode combines horizon category and storage", new TestCase() {
+            public void run() {
+                String today = DateRules.todayString();
+                String expiry = DateRules.addDaysString(today, 10);
+                String production = DateRules.addDaysString(today, -20);
+
+                ReminderPlan high = ReminderPolicy.planFor(food(
+                        "Fresh meal", "cooked", "refrigerated", production, expiry, 1
+                ), ReminderSettings.defaults());
+                ReminderPlan medium = ReminderPolicy.planFor(food(
+                        "Fruit", "produce", "room_temp", production, expiry, 1
+                ), ReminderSettings.defaults());
+                ReminderPlan low = ReminderPolicy.planFor(food(
+                        "Frozen beans", "frozen", "frozen", production, expiry, 1
+                ), ReminderSettings.defaults());
+
+                assertTrue(high.offsets.size() > medium.offsets.size(), "higher-attention food should get denser dates");
+                assertTrue(medium.offsets.size() > low.offsets.size(), "frozen low-attention food should get fewer dates");
+                assertAllOffsetsAtMost(high.offsets, high.daysLeft);
+                assertAllOffsetsAtMost(medium.offsets, medium.daysLeft);
+                assertAllOffsetsAtMost(low.offsets, low.daysLeft);
+                assertListContains(high.offsets, Integer.valueOf(0));
+                assertListContains(medium.offsets, Integer.valueOf(0));
+                assertListContains(low.offsets, Integer.valueOf(0));
+            }
+        });
+
+        test("ReminderPolicy smart mode increases attention after opening", new TestCase() {
+            public void run() {
+                String today = DateRules.todayString();
+                FoodItem opened = food(
+                        "Opened sauce",
+                        "condiment",
+                        "cool_dry",
+                        DateRules.addDaysString(today, -30),
+                        DateRules.addDaysString(today, 60),
+                        1
+                );
+                opened.openedDate = today;
+                opened.afterOpenShelfLifeValue = Integer.valueOf(4);
+                opened.afterOpenShelfLifeUnit = "day";
+                ReminderPolicy.ensureSmartSchedule(opened);
+
+                ReminderPlan plan = ReminderPolicy.planFor(opened, ReminderSettings.defaults());
+                assertTrue(plan.usesAfterOpenDate, "opened schedule should use the earlier opened date");
+                assertEquals(Arrays.asList(
+                        Integer.valueOf(3),
+                        Integer.valueOf(2),
+                        Integer.valueOf(1),
+                        Integer.valueOf(0)
+                ), plan.offsets);
+                assertTrue(plan.scheduleReason.indexOf("开封后期限优先") >= 0, "opened plan should explain the adjustment");
+            }
+        });
+
+        test("ReminderPolicy smart mode does not create a moving today node", new TestCase() {
+            public void run() {
+                String today = DateRules.todayString();
+                FoodItem fourDaysLeft = food(
+                        "Stable high schedule",
+                        "cooked",
+                        "refrigerated",
+                        DateRules.addDaysString(today, -2),
+                        DateRules.addDaysString(today, 4),
+                        1
+                );
+                ReminderPlan plan = ReminderPolicy.planFor(fourDaysLeft, ReminderSettings.defaults());
+
+                assertEquals(Arrays.asList(
+                        Integer.valueOf(3),
+                        Integer.valueOf(2),
+                        Integer.valueOf(1),
+                        Integer.valueOf(0)
+                ), plan.offsets);
+                assertFalse(plan.hasReminderToday(), "remaining-day value must not become a rolling reminder node");
+            }
+        });
+
+        test("ReminderPolicy keeps a smart schedule fixed as time passes", new TestCase() {
+            public void run() {
+                String planningDay = "2026-07-01";
+                FoodItem item = food("Frozen schedule", "frozen", "frozen", "2026-01-01", "2026-07-31", 1);
+                clearSmartScheduleForTest(item);
+                assertTrue(ReminderPolicy.ensureSmartScheduleAt(item, planningDay), "first input should create a plan");
+                List<Integer> plannedOffsets = new ArrayList<Integer>(item.smartReminderOffsets);
+                String fingerprint = item.smartReminderFingerprint;
+
+                assertFalse(ReminderPolicy.ensureSmartScheduleAt(item, "2026-07-24"),
+                        "time passing alone must not recalculate the plan");
+                assertEquals(plannedOffsets, item.smartReminderOffsets);
+                assertEquals(fingerprint, item.smartReminderFingerprint);
+                assertEquals(planningDay, item.smartReminderPlannedOn);
+                assertEquals(30, item.smartReminderPlannedDaysLeft);
+            }
+        });
+
+        test("ReminderPolicy never invents an unpersisted smart plan while rendering", new TestCase() {
+            public void run() {
+                String today = DateRules.todayString();
+                FoodItem item = food(
+                        "Unsaved plan",
+                        "other",
+                        "room_temp",
+                        today,
+                        DateRules.addDaysString(today, 10),
+                        1
+                );
+                clearSmartScheduleForTest(item);
+
+                ReminderPlan plan = ReminderPolicy.planFor(item, ReminderSettings.defaults());
+                assertFalse(plan.enabled, "a missing snapshot must not be recalculated during rendering");
+                assertEquals(0, item.smartReminderOffsets.size());
+                assertEquals("", item.smartReminderPlannedOn);
+                assertTrue(plan.disabledReason.indexOf("尚未保存") >= 0, "the failure should be explainable");
+            }
+        });
+
+        test("ReminderPolicy recalculates only after reminder inputs change", new TestCase() {
+            public void run() {
+                String today = DateRules.todayString();
+                FoodItem item = food(
+                        "Drink",
+                        "beverage",
+                        "room_temp",
+                        DateRules.addDaysString(today, -20),
+                        DateRules.addDaysString(today, 10),
+                        1
+                );
+                clearSmartScheduleForTest(item);
+                assertTrue(ReminderPolicy.ensureSmartSchedule(item), "new food should get a smart plan");
+                List<Integer> original = new ArrayList<Integer>(item.smartReminderOffsets);
+                String originalFingerprint = item.smartReminderFingerprint;
+
+                item.name = "Renamed drink";
+                item.notes = "updated note";
+                item.location = "fridge";
+                item.remainingQuantity = 0;
+                assertFalse(ReminderPolicy.ensureSmartSchedule(item),
+                        "name notes location and quantity must not recalculate reminder dates");
+                assertEquals(original, item.smartReminderOffsets);
+                assertEquals(originalFingerprint, item.smartReminderFingerprint);
+
+                item.storageMethod = "refrigerated";
+                assertTrue(ReminderPolicy.ensureSmartSchedule(item), "storage changes should recalculate reminder dates");
+                assertTrue(item.smartReminderOffsets.contains(Integer.valueOf(2)),
+                        "refrigerated medium-attention food should add the 2-day node");
+
+                item.openedDate = today;
+                item.afterOpenShelfLifeValue = Integer.valueOf(4);
+                item.afterOpenShelfLifeUnit = "day";
+                assertTrue(ReminderPolicy.ensureSmartSchedule(item), "opening state should recalculate reminder dates");
+                assertEquals(4, item.smartReminderPlannedDaysLeft);
+                assertEquals(Arrays.asList(
+                        Integer.valueOf(3),
+                        Integer.valueOf(2),
+                        Integer.valueOf(1),
+                        Integer.valueOf(0)
+                ), item.smartReminderOffsets);
+            }
+        });
+
+        test("ReminderPolicy smart mode adjusts medium tier by storage", new TestCase() {
+            public void run() {
+                String today = DateRules.todayString();
+                String expiry = DateRules.addDaysString(today, 10);
+                String production = DateRules.addDaysString(today, -20);
+                ReminderPlan chilled = ReminderPolicy.planFor(food(
+                        "Chilled drink", "beverage", "refrigerated", production, expiry, 1
+                ), ReminderSettings.defaults());
+                ReminderPlan room = ReminderPolicy.planFor(food(
+                        "Room drink", "beverage", "room_temp", production, expiry, 1
+                ), ReminderSettings.defaults());
+
+                assertEquals("B", chilled.riskLevel);
+                assertEquals("B", room.riskLevel);
+                assertListContains(chilled.offsets, Integer.valueOf(2));
+                assertFalse(room.offsets.contains(Integer.valueOf(2)), "room-temperature medium tier should stay sparser");
+                assertTrue(chilled.offsets.size() > room.offsets.size(), "refrigerated medium tier should add a reminder date");
             }
         });
 
@@ -580,6 +1004,29 @@ public final class LocalLogicTest {
                 assertTrue(booleanField(result, "primaryHasFutureSchema"), "future schema should be identified");
                 assertFalse(booleanField(result, "restoredFromBackup"), "older backup must not replace future primary");
                 assertFalse(booleanField(result, "needsPrimaryWriteBack"), "future primary must not be overwritten");
+            }
+        });
+
+        test("FoodStoreMigration preserves legacy expiry when calculated inputs are incomplete", new TestCase() {
+            public void run() {
+                String raw = "{\"schemaVersion\":1,\"foods\":[{"
+                        + "\"id\":\"legacy-calculated\",\"name\":\"Legacy milk\","
+                        + "\"productionDate\":\"\",\"shelfLifeValue\":null,\"shelfLifeUnit\":\"\","
+                        + "\"expiryDate\":\"2026-07-25\",\"dateSource\":\"calculated\"}]}";
+
+                Object result = loadFoodStoreWithBackups(
+                        migrationClass,
+                        raw,
+                        new ArrayList<String>(),
+                        1
+                );
+
+                assertTrue(booleanField(result, "loaded"), "legacy calculated item should load");
+                assertTrue(booleanField(result, "needsPrimaryWriteBack"), "repaired source should be written back");
+                List<?> foods = foodStoreFoods(result);
+                assertEquals(1, foods.size());
+                assertEquals("2026-07-25", fieldText(foods.get(0), "expiryDate"));
+                assertEquals("manual", fieldText(foods.get(0), "dateSource"));
             }
         });
     }
@@ -689,6 +1136,129 @@ public final class LocalLogicTest {
                 FoodItem imported = preview.importableFoods().get(0);
                 assertEquals("2026-02-28", imported.expiryDate);
                 assertEquals("calculated", imported.dateSource);
+            }
+        });
+
+        test("FoodExcelImporter preserves calculated date source on export round-trip", new TestCase() {
+            public void run() {
+                FoodItem item = food("Calculated round-trip", "dairy", "refrigerated", "2026-07-14", "2026-07-21", 1);
+                item.shelfLifeValue = Integer.valueOf(7);
+                item.shelfLifeUnit = "day";
+                item.dateSource = "calculated";
+
+                FoodExcelImporter.ImportPreview preview = readWorkbookPreview(Arrays.asList(item));
+
+                assertEquals(1, preview.importableRows);
+                FoodItem imported = preview.importableFoods().get(0);
+                assertEquals("2026-07-21", imported.expiryDate);
+                assertEquals("calculated", imported.dateSource);
+            }
+        });
+
+        test("FoodExcelImporter converts inconsistent calculated date source to manual", new TestCase() {
+            public void run() {
+                FoodItem item = food("Inconsistent calculated", "dairy", "refrigerated", "2026-07-14", "2026-07-25", 1);
+                item.shelfLifeValue = Integer.valueOf(7);
+                item.shelfLifeUnit = "day";
+                item.dateSource = "calculated";
+
+                FoodExcelImporter.ImportPreview preview = readWorkbookPreview(Arrays.asList(item));
+
+                assertEquals(1, preview.importableRows);
+                assertEquals(1, preview.warningRows);
+                FoodItem imported = preview.importableFoods().get(0);
+                assertEquals("2026-07-25", imported.expiryDate);
+                assertEquals("manual", imported.dateSource);
+            }
+        });
+
+        test("FoodExcelImporter converts incomplete calculated date source to manual", new TestCase() {
+            public void run() {
+                FoodItem item = food("Incomplete calculated", "dairy", "refrigerated", "", "2026-07-25", 1);
+                item.dateSource = "calculated";
+
+                FoodExcelImporter.ImportPreview preview = readWorkbookPreview(Arrays.asList(item));
+
+                assertEquals(1, preview.importableRows);
+                assertEquals(1, preview.warningRows);
+                assertEquals("manual", preview.importableFoods().get(0).dateSource);
+            }
+        });
+
+        test("FoodExcelImporter reads numeric Excel date cells", new TestCase() {
+            public void run() {
+                FoodItem item = food("Numeric dates", "dairy", "refrigerated", "2026-07-14", "2026-07-21", 1);
+                item.shelfLifeValue = Integer.valueOf(7);
+                item.shelfLifeUnit = "day";
+                item.dateSource = "calculated";
+                item.openedDate = "2026-07-15";
+                item.afterOpenShelfLifeValue = Integer.valueOf(2);
+                item.afterOpenShelfLifeUnit = "day";
+
+                FoodExcelImporter.ImportPreview preview = readNumericDateWorkbookPreview(item);
+
+                assertEquals(1, preview.importableRows);
+                FoodItem imported = preview.importableFoods().get(0);
+                assertEquals("2026-07-14", imported.productionDate);
+                assertEquals("2026-07-15", imported.openedDate);
+                assertEquals("2026-07-21", imported.expiryDate);
+                assertEquals("calculated", imported.dateSource);
+            }
+        });
+
+        test("FoodExcelImporter reads numeric dates from a 1904 date-system workbook", new TestCase() {
+            public void run() {
+                FoodItem item = food("Numeric dates 1904", "dairy", "refrigerated", "2026-07-14", "2026-07-21", 1);
+                item.shelfLifeValue = Integer.valueOf(7);
+                item.shelfLifeUnit = "day";
+                item.dateSource = "calculated";
+                item.openedDate = "2026-07-15";
+                item.afterOpenShelfLifeValue = Integer.valueOf(2);
+                item.afterOpenShelfLifeUnit = "day";
+
+                FoodExcelImporter.ImportPreview preview = readNumericDateWorkbookPreview(item, true);
+
+                assertEquals(1, preview.importableRows);
+                FoodItem imported = preview.importableFoods().get(0);
+                assertEquals("2026-07-14", imported.productionDate);
+                assertEquals("2026-07-15", imported.openedDate);
+                assertEquals("2026-07-21", imported.expiryDate);
+                assertEquals("calculated", imported.dateSource);
+            }
+        });
+
+        test("FoodIdGenerator reserves unique ids across one import batch", new TestCase() {
+            public void run() {
+                Set<String> reserved = new HashSet<String>();
+                List<FoodItem> existing = new ArrayList<FoodItem>();
+                FoodItem old = food("Existing", "other", "room_temp", "", "", 1);
+                old.id = "food_existing";
+                existing.add(old);
+
+                for (int index = 0; index < 1000; index++) {
+                    String id = FoodIdGenerator.nextId(existing, reserved);
+                    assertTrue(id.startsWith("food_"), "generated id should use the food_ prefix");
+                    assertFalse("food_existing".equals(id), "generated id must not reuse an existing id");
+                }
+                assertEquals(1000, reserved.size());
+            }
+        });
+
+        test("FoodExcelImporter round-trips legacy no-expiry food without losing the row", new TestCase() {
+            public void run() {
+                FoodItem item = food("Legacy pantry item", "other", "room_temp", "", "", 1);
+                item.dateSource = "none";
+
+                FoodExcelImporter.ImportPreview preview = readWorkbookPreview(Arrays.asList(item));
+
+                assertEquals(1, preview.totalRows);
+                assertEquals(1, preview.importableRows);
+                assertEquals(0, preview.errorRows);
+                assertEquals(1, preview.warningRows);
+                FoodItem imported = preview.importableFoods().get(0);
+                assertEquals("none", imported.dateSource);
+                assertEquals("", imported.productionDate);
+                assertEquals("", imported.expiryDate);
             }
         });
 
@@ -1593,6 +2163,7 @@ public final class LocalLogicTest {
         item.dateSource = expiryDate.length() > 0 ? "manual" : "unknown";
         item.quantity = Math.max(remainingQuantity, 1);
         item.remainingQuantity = remainingQuantity;
+        ReminderPolicy.ensureSmartSchedule(item);
         return item;
     }
 
@@ -1644,6 +2215,7 @@ public final class LocalLogicTest {
             item.unit = "item";
             item.createdAt = "2026-07-05T00:00:00+0800";
             item.updatedAt = item.createdAt;
+            ReminderPolicy.ensureSmartSchedule(item);
 
             if (index % 53 == 0) {
                 item.isFinished = true;
@@ -1653,6 +2225,13 @@ public final class LocalLogicTest {
             foods.add(item);
         }
         return foods;
+    }
+
+    private static void clearSmartScheduleForTest(FoodItem item) {
+        item.smartReminderOffsets.clear();
+        item.smartReminderFingerprint = "";
+        item.smartReminderPlannedDaysLeft = Integer.MIN_VALUE;
+        item.smartReminderPlannedOn = "";
     }
 
     private static String foodStoreRaw(int schemaVersion, String id, String name) {
@@ -1722,6 +2301,13 @@ public final class LocalLogicTest {
         assertTrue(values.contains(expected), "expected list to contain " + expected + ", got " + values);
     }
 
+    private static void assertAllOffsetsAtMost(List<Integer> values, int maximum) {
+        for (Integer value : values) {
+            assertTrue(value != null && value.intValue() >= 0 && value.intValue() <= maximum,
+                    "expected offsets between 0 and " + maximum + ", got " + values);
+        }
+    }
+
     private static Class<?> optionalClass(String className) {
         try {
             return Class.forName(className);
@@ -1759,6 +2345,81 @@ public final class LocalLogicTest {
         } catch (Exception error) {
             throw new AssertionError("failed to read workbook preview: " + error.getMessage());
         }
+    }
+
+    private static FoodExcelImporter.ImportPreview readNumericDateWorkbookPreview(FoodItem food) {
+        return readNumericDateWorkbookPreview(food, false);
+    }
+
+    private static FoodExcelImporter.ImportPreview readNumericDateWorkbookPreview(FoodItem food, boolean uses1904DateSystem) {
+        try {
+            ByteArrayOutputStream exported = new ByteArrayOutputStream();
+            FoodExcelExporter.writeWorkbook(exported, Arrays.asList(food));
+            Map<String, byte[]> entries = unzipByteEntries(exported.toByteArray());
+
+            String sheet = new String(entries.get("xl/worksheets/sheet1.xml"), StandardCharsets.UTF_8);
+            sheet = replaceInlineCellWithNumber(sheet, "E2", "2026-07-14", uses1904DateSystem ? "44755" : "46217");
+            sheet = replaceInlineCellWithNumber(sheet, "I2", "2026-07-15", uses1904DateSystem ? "44756" : "46218");
+            sheet = replaceInlineCellWithNumber(sheet, "L2", "2026-07-21", uses1904DateSystem ? "44762" : "46224");
+            entries.put("xl/worksheets/sheet1.xml", sheet.getBytes(StandardCharsets.UTF_8));
+
+            if (uses1904DateSystem) {
+                String workbook = new String(entries.get("xl/workbook.xml"), StandardCharsets.UTF_8);
+                workbook = workbook.replace("<sheets>", "<workbookPr date1904=\"1\"/><sheets>");
+                entries.put("xl/workbook.xml", workbook.getBytes(StandardCharsets.UTF_8));
+            }
+
+            String styles = new String(entries.get("xl/styles.xml"), StandardCharsets.UTF_8);
+            styles = styles.replace(
+                    "<cellXfs count=\"1\"><xf numFmtId=\"0\" fontId=\"0\" fillId=\"0\" borderId=\"0\" xfId=\"0\"/></cellXfs>",
+                    "<cellXfs count=\"2\"><xf numFmtId=\"0\" fontId=\"0\" fillId=\"0\" borderId=\"0\" xfId=\"0\"/>"
+                            + "<xf numFmtId=\"14\" fontId=\"0\" fillId=\"0\" borderId=\"0\" xfId=\"0\" applyNumberFormat=\"1\"/></cellXfs>"
+            );
+            entries.put("xl/styles.xml", styles.getBytes(StandardCharsets.UTF_8));
+
+            ByteArrayOutputStream rewritten = new ByteArrayOutputStream();
+            ZipOutputStream zip = new ZipOutputStream(rewritten);
+            try {
+                for (Map.Entry<String, byte[]> entry : entries.entrySet()) {
+                    zip.putNextEntry(new ZipEntry(entry.getKey()));
+                    zip.write(entry.getValue());
+                    zip.closeEntry();
+                }
+            } finally {
+                zip.close();
+            }
+            return FoodExcelImporter.readWorkbook(new ByteArrayInputStream(rewritten.toByteArray()));
+        } catch (Exception error) {
+            throw new AssertionError("failed to read numeric date workbook: " + error.getMessage());
+        }
+    }
+
+    private static Map<String, byte[]> unzipByteEntries(byte[] bytes) throws Exception {
+        Map<String, byte[]> entries = new HashMap<String, byte[]>();
+        ZipInputStream zip = new ZipInputStream(new ByteArrayInputStream(bytes));
+        try {
+            ZipEntry entry;
+            while ((entry = zip.getNextEntry()) != null) {
+                ByteArrayOutputStream output = new ByteArrayOutputStream();
+                byte[] buffer = new byte[4096];
+                int read;
+                while ((read = zip.read(buffer)) >= 0) {
+                    output.write(buffer, 0, read);
+                }
+                entries.put(entry.getName(), output.toByteArray());
+                zip.closeEntry();
+            }
+        } finally {
+            zip.close();
+        }
+        return entries;
+    }
+
+    private static String replaceInlineCellWithNumber(String sheet, String reference, String text, String serial) {
+        return sheet.replace(
+                "<c r=\"" + reference + "\" t=\"inlineStr\"><is><t>" + text + "</t></is></c>",
+                "<c r=\"" + reference + "\" s=\"1\"><v>" + serial + "</v></c>"
+        );
     }
 
     private static Object newBarcodeHistoryItem(

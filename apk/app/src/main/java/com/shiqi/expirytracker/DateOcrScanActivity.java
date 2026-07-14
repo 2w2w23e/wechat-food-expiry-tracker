@@ -254,8 +254,10 @@ public final class DateOcrScanActivity extends ComponentActivity {
         bottomPanel.setOrientation(LinearLayout.VERTICAL);
         bottomPanel.setPadding(dp(14), dp(10), dp(14), dp(12));
         bottomPanel.setBackground(rounded(Color.rgb(249, 250, 250), dp(8), 0));
-        int maxPanelHeight = Math.round(getResources().getDisplayMetrics().heightPixels * 0.55f);
-        int panelHeight = Math.min(dp(320), maxPanelHeight);
+        float fontScale = Math.max(1f, getResources().getConfiguration().fontScale);
+        int desiredPanelDp = 320 + Math.round(Math.min(0.4f, fontScale - 1f) * 180f);
+        int maxPanelHeight = Math.round(getResources().getDisplayMetrics().heightPixels * 0.62f);
+        int panelHeight = Math.min(dp(desiredPanelDp), maxPanelHeight);
         FrameLayout.LayoutParams bottomParams = new FrameLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
                 panelHeight

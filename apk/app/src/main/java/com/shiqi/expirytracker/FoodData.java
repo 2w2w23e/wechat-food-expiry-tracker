@@ -51,12 +51,12 @@ final class FoodData {
 
     static final List<Option> STATUS_FILTERS = Arrays.asList(
             new Option(ALL, "全部状态"),
+            new Option(DateRules.STATUS_FINISHED, "已用完"),
             new Option(DateRules.STATUS_EXPIRED, "已过期"),
             new Option(DateRules.STATUS_TODAY, "今日到期"),
             new Option(DateRules.STATUS_SOON, "即将到期"),
             new Option(DateRules.STATUS_NORMAL, "正常"),
-            new Option(DateRules.STATUS_UNKNOWN, "暂无到期日"),
-            new Option(DateRules.STATUS_FINISHED, "已用完")
+            new Option(DateRules.STATUS_UNKNOWN, "暂无到期日")
     );
 
     private static boolean pinyinAttempted = false;

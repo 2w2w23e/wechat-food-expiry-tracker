@@ -30,7 +30,7 @@ final class FoodStoreMigration {
         }
 
         if (root instanceof JSONArray) {
-            return new MigrationResult(readFoods((JSONArray) root), true);
+            return new MigrationResult(readFoods((JSONArray) root).foods, true);
         }
 
         if (root instanceof JSONObject) {
@@ -139,11 +139,13 @@ final class FoodStoreMigration {
             throw new JSONException("Food store object is missing foods array.");
         }
 
-        return new MigrationResult(readFoods(foods), schemaVersion != currentSchemaVersion);
+        ReadFoodsResult read = readFoods(foods);
+        return new MigrationResult(read.foods, schemaVersion != currentSchemaVersion || read.repairedDateSource);
     }
 
-    private static List<FoodItem> readFoods(JSONArray array) {
+    private static ReadFoodsResult readFoods(JSONArray array) {
         List<FoodItem> foods = new ArrayList<FoodItem>();
+        boolean repairedDateSource = false;
 
         for (int index = 0; index < array.length(); index++) {
             JSONObject object = array.optJSONObject(index);
@@ -151,13 +153,17 @@ final class FoodStoreMigration {
                 continue;
             }
 
+            String storedDateSource = object.optString("dateSource", "").trim();
             FoodItem item = FoodItem.fromJson(object);
+            if ("calculated".equals(storedDateSource) && "manual".equals(item.dateSource)) {
+                repairedDateSource = true;
+            }
             if (item.id.length() > 0 && item.name.length() > 0) {
                 foods.add(item);
             }
         }
 
-        return foods;
+        return new ReadFoodsResult(foods, repairedDateSource);
     }
 
     private static JSONArray serializeFoods(List<FoodItem> foods) {
@@ -188,6 +194,16 @@ final class FoodStoreMigration {
         MigrationResult(List<FoodItem> foods, boolean needsWriteBack) {
             this.foods = foods;
             this.needsWriteBack = needsWriteBack;
+        }
+    }
+
+    private static final class ReadFoodsResult {
+        final List<FoodItem> foods;
+        final boolean repairedDateSource;
+
+        ReadFoodsResult(List<FoodItem> foods, boolean repairedDateSource) {
+            this.foods = foods;
+            this.repairedDateSource = repairedDateSource;
         }
     }
 

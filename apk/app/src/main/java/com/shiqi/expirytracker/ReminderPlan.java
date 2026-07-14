@@ -9,6 +9,8 @@ final class ReminderPlan {
     String riskLevel = "B";
     String riskLabel = "中风险";
     String riskReason = "";
+    String reminderMode = ReminderSettings.MODE_SMART;
+    String scheduleReason = "";
     int totalShelfLifeDays = 1;
     int expiryDaysLeft = Integer.MIN_VALUE;
     int daysLeft = Integer.MIN_VALUE;
@@ -25,14 +27,13 @@ final class ReminderPlan {
     final List<ReminderEvent> events = new ArrayList<ReminderEvent>();
     final List<String> dueDayHours = new ArrayList<String>();
 
-    boolean hasReminderInNextDays(int days) {
+    boolean hasReminderToday() {
         String today = DateRules.todayString();
         for (ReminderEvent event : events) {
             if (event.postExpiry) {
                 continue;
             }
-            int daysToReminder = DateRules.daysBetween(today, event.reminderDate);
-            if (daysToReminder >= 0 && daysToReminder <= days) {
+            if (today.equals(event.reminderDate)) {
                 return true;
             }
         }
