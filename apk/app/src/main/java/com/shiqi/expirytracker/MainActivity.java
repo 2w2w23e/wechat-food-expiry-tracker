@@ -33,6 +33,8 @@ import android.widget.FrameLayout;
 import android.widget.HorizontalScrollView;
 import android.widget.LinearLayout;
 import android.widget.NumberPicker;
+import android.widget.RadioButton;
+import android.widget.RadioGroup;
 import android.widget.ScrollView;
 import android.widget.Spinner;
 import android.widget.TextView;
@@ -47,8 +49,10 @@ import java.util.Calendar;
 import java.util.Collections;
 import java.util.Comparator;
 import java.util.Date;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Locale;
+import java.util.Set;
 
 public final class MainActivity extends Activity {
     private static final int REQUEST_NOTIFICATION_PERMISSION = 4301;
@@ -70,6 +74,8 @@ public final class MainActivity extends Activity {
     private static final String FOOD_ACTION_MORE = "more";
     private static final String EXTRA_QA_FORCE_IMPORT_SAVE_FAILURE =
             "com.shiqi.expirytracker.QA_FORCE_IMPORT_SAVE_FAILURE";
+    private static final String EXTRA_QA_FORCE_SAVE_FAILURE =
+            "com.shiqi.expirytracker.QA_FORCE_SAVE_FAILURE";
 
     private static final int COLOR_BG = Color.rgb(246, 247, 248);
     private static final int COLOR_CARD = Color.WHITE;
@@ -82,6 +88,7 @@ public final class MainActivity extends Activity {
 
     private FoodStore store;
     private List<FoodItem> foods = new ArrayList<FoodItem>();
+    private List<FoodItem> lastPersistedFoods = new ArrayList<FoodItem>();
     private ScrollView mainScrollView;
     private LinearLayout stickySearchBar;
     private EditText pinnedSearchInput;
@@ -119,6 +126,7 @@ public final class MainActivity extends Activity {
     private boolean syncingSearchText = false;
     private boolean filterPanelExpanded = false;
     private boolean qaForceNextImportSaveFailure = false;
+    private boolean qaForceNextSaveFailure = false;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -131,13 +139,23 @@ public final class MainActivity extends Activity {
         store = new FoodStore(this);
         qaForceNextImportSaveFailure = isDebuggable()
                 && getIntent().getBooleanExtra(EXTRA_QA_FORCE_IMPORT_SAVE_FAILURE, false);
+        qaForceNextSaveFailure = isDebuggable()
+                && getIntent().getBooleanExtra(EXTRA_QA_FORCE_SAVE_FAILURE, false);
         reminderSettings = ReminderScheduler.loadSettings(this);
         ReminderPolicy.useSettings(reminderSettings);
-        foods = new ArrayList<FoodItem>(store.loadFoods());
+        List<FoodItem> loadedFoods = new ArrayList<FoodItem>(store.loadFoods());
+        List<FoodItem> migratedFoods = copyFoods(loadedFoods);
+        boolean reminderSnapshotSaveFailed = ReminderPolicy.ensureSmartSchedules(migratedFoods)
+                && !store.saveFoods(migratedFoods);
+        foods = reminderSnapshotSaveFailed ? loadedFoods : migratedFoods;
+        lastPersistedFoods = copyFoods(foods);
         buildScreen();
         renderFoods();
         setupReminderNotifications();
         scheduleQaRecognitionIfRequested();
+        if (reminderSnapshotSaveFailed) {
+            toast("提醒计划保存失败，原有食品数据未改动");
+        }
     }
 
     private void buildScreen() {
@@ -437,8 +455,12 @@ public final class MainActivity extends Activity {
         boolean allowed = ReminderScheduler.canPostNotifications(this);
         reminderPermissionButton.setVisibility(allowed ? View.GONE : View.VISIBLE);
         reminderStatusText.setText(allowed
-                ? "已开启，点击查看时段"
+                ? currentReminderModeLabel() + "已开启"
                 : "等待通知授权");
+    }
+
+    private String currentReminderModeLabel() {
+        return ReminderSettings.validOrDefault(reminderSettings).isSmartMode() ? "智能提醒" : "固定提醒";
     }
 
     private void showReminderSettingsDialog() {
@@ -454,19 +476,64 @@ public final class MainActivity extends Activity {
         enabledInput.setChecked(current.enabled);
         form.addView(enabledInput, matchWrap());
 
-        TextView note = text("保持默认值时沿用当前风险分级提醒规则；0 表示到期当天。", 12, COLOR_MUTED, Typeface.NORMAL);
-        note.setPadding(0, dp(4), 0, dp(8));
-        form.addView(note, matchWrap());
+        TextView modeLabel = text("提醒日期", 13, COLOR_MUTED, Typeface.BOLD);
+        modeLabel.setPadding(0, dp(8), 0, dp(4));
+        form.addView(modeLabel, matchWrap());
+
+        final RadioGroup modeInput = new RadioGroup(this);
+        modeInput.setOrientation(LinearLayout.HORIZONTAL);
+
+        final RadioButton smartModeInput = new RadioButton(this);
+        smartModeInput.setId(View.generateViewId());
+        smartModeInput.setText("智能提醒");
+        smartModeInput.setTextColor(COLOR_TEXT);
+        smartModeInput.setTextSize(14);
+        modeInput.addView(smartModeInput, weightWrap(1));
+
+        final RadioButton fixedModeInput = new RadioButton(this);
+        fixedModeInput.setId(View.generateViewId());
+        fixedModeInput.setText("固定日期");
+        fixedModeInput.setTextColor(COLOR_TEXT);
+        fixedModeInput.setTextSize(14);
+        modeInput.addView(fixedModeInput, weightWrap(1));
+        form.addView(modeInput, matchWrap());
+
+        final TextView smartNote = text(
+                "新增食品或修改类别、保存方式、日期、开封状态时生成；之后不随剩余天数自动变化，提醒基准日当天始终保留。",
+                12,
+                COLOR_MUTED,
+                Typeface.NORMAL
+        );
+        smartNote.setLineSpacing(dp(2), 1.0f);
+        smartNote.setPadding(dp(10), dp(8), dp(10), dp(8));
+        smartNote.setBackground(rounded(COLOR_SOFT, dp(8), 0));
+        form.addView(smartNote, withMargins(matchWrap(), 0, dp(4), 0, dp(4)));
 
         final EditText advanceDaysInput = input(current.advanceDaysText(), "例如 7,3,1,0", InputType.TYPE_CLASS_TEXT);
-        addFormField(form, "提前天数（英文逗号分隔）", advanceDaysInput);
+        final LinearLayout fixedDaysField = formField("固定提前天数（英文逗号分隔，0 表示到期当天）", advanceDaysInput);
+        form.addView(fixedDaysField, matchWrap());
 
         final EditText todaySlotsInput = input(current.todaySlotsText(), "例如 08:30,18:00", InputType.TYPE_CLASS_TEXT);
-        addFormField(form, "今日提醒时段（英文逗号分隔）", todaySlotsInput);
+        addFormField(form, "到期当天提醒时段（英文逗号分隔）", todaySlotsInput);
+
+        modeInput.setOnCheckedChangeListener(new RadioGroup.OnCheckedChangeListener() {
+            @Override
+            public void onCheckedChanged(RadioGroup group, int checkedId) {
+                boolean fixed = checkedId == fixedModeInput.getId();
+                fixedDaysField.setVisibility(fixed ? View.VISIBLE : View.GONE);
+                smartNote.setText(fixed
+                        ? "固定模式以最终可食用日期为基准，严格使用下方提前天数，不自动增减提醒日期。"
+                        : "新增食品或修改类别、保存方式、日期、开封状态时生成；之后不随剩余天数自动变化，提醒基准日当天始终保留。");
+            }
+        });
+        modeInput.check(current.isSmartMode() ? smartModeInput.getId() : fixedModeInput.getId());
+
+        ScrollView settingsScroll = new ScrollView(this);
+        settingsScroll.addView(form);
 
         final AlertDialog dialog = new AlertDialog.Builder(this)
                 .setTitle("提醒设置")
-                .setView(form)
+                .setView(settingsScroll)
                 .setNegativeButton("取消", null)
                 .setPositiveButton("保存", null)
                 .create();
@@ -478,6 +545,9 @@ public final class MainActivity extends Activity {
                     public void onClick(View view) {
                         ReminderSettings next = ReminderSettings.fromInput(
                                 enabledInput.isChecked(),
+                                modeInput.getCheckedRadioButtonId() == fixedModeInput.getId()
+                                        ? ReminderSettings.MODE_FIXED
+                                        : ReminderSettings.MODE_SMART,
                                 clean(advanceDaysInput),
                                 clean(todaySlotsInput)
                         );
@@ -682,7 +752,7 @@ public final class MainActivity extends Activity {
         message.append("错误行：").append(preview.errorRows).append('\n');
         message.append("警告行：").append(preview.warningRows).append('\n');
         if (preview.errorRows > 0) {
-            message.append("\n错误行不会导入。可点“查看错误行详情”核对。");
+            message.append("\n错误行不会导入。可点“查看问题行详情”核对。");
         }
         if (preview.warningRows > 0) {
             message.append("\n存在警告行。警告行可导入，但部分字段会按默认值处理。");
@@ -698,7 +768,7 @@ public final class MainActivity extends Activity {
         previewLayout.addView(previewText, matchWrap());
 
         if (preview.errorRows > 0 || preview.warningRows > 0) {
-            Button detailsButton = outlineButton("查看错误行详情");
+            Button detailsButton = outlineButton("查看问题行详情");
             detailsButton.setOnClickListener(new View.OnClickListener() {
                 @Override
                 public void onClick(View view) {
@@ -767,7 +837,7 @@ public final class MainActivity extends Activity {
         }
 
         new AlertDialog.Builder(this)
-                .setTitle("Excel 错误行详情")
+                .setTitle("Excel 导入详情")
                 .setMessage(message.toString())
                 .setPositiveButton("知道了", null)
                 .show();
@@ -797,14 +867,16 @@ public final class MainActivity extends Activity {
 
         String now = DateRules.nowIsoLike();
         List<FoodItem> nextFoods = new ArrayList<FoodItem>();
+        Set<String> importedIds = new HashSet<String>();
         for (FoodItem source : imported) {
             FoodItem item = source.copy();
-            item.id = newFoodId();
+            item.id = FoodIdGenerator.nextId(foods, importedIds);
             if (item.createdAt.length() == 0) {
                 item.createdAt = now;
             }
             item.updatedAt = now;
             item.normalizeQuantityBounds();
+            ReminderPolicy.ensureSmartSchedule(item);
             nextFoods.add(item);
         }
 
@@ -818,6 +890,7 @@ public final class MainActivity extends Activity {
         }
 
         foods = nextFoods;
+        lastPersistedFoods = copyFoods(nextFoods);
         ReminderScheduler.scheduleDaily(MainActivity.this, reminderSettings);
         renderFilterControls();
         renderFoods();
@@ -827,7 +900,7 @@ public final class MainActivity extends Activity {
     private boolean saveFoodsForImport(List<FoodItem> nextFoods) {
         if (qaForceNextImportSaveFailure) {
             qaForceNextImportSaveFailure = false;
-            return false;
+            return store.saveFoodsForQaForcedFailure(nextFoods);
         }
         return store.saveFoodsForImport(nextFoods);
     }
@@ -2505,10 +2578,11 @@ public final class MainActivity extends Activity {
             builder.append("已用完时间：").append(emptyFallback(food.finishedAt, "未记录")).append('\n');
             builder.append("提醒：不再提醒").append('\n');
         } else if (reminderPlan.enabled) {
-            builder.append("提醒等级：").append(reminderPlan.priorityBand)
-                    .append("（").append(ReminderPolicy.formattedScore(reminderPlan.priorityScore)).append("）").append('\n');
-            builder.append("风险类型：").append(reminderPlan.riskLabel)
-                    .append("（").append(reminderPlan.riskReason).append("）").append('\n');
+            builder.append("提醒方式：")
+                    .append(ReminderSettings.MODE_SMART.equals(reminderPlan.reminderMode) ? "智能提醒" : "固定日期")
+                    .append('\n');
+            builder.append("提醒计划：").append(reminderPlan.scheduleReason).append('\n');
+            builder.append("提醒日期：").append(formatReminderOffsets(reminderPlan)).append('\n');
             builder.append("下一次提醒：").append(reminderPlan.detailAdvice).append('\n');
             if (!reminderPlan.dueDayHours.isEmpty()) {
                 builder.append("今日提醒时间：").append(joinTexts(reminderPlan.dueDayHours, "、")).append('\n');
@@ -2519,6 +2593,18 @@ public final class MainActivity extends Activity {
         builder.append("日期来源：").append(dateSourceLabel(food.dateSource)).append('\n');
         builder.append("备注：").append(emptyFallback(food.notes, "暂无备注"));
         return builder.toString();
+    }
+
+    private String formatReminderOffsets(ReminderPlan plan) {
+        List<String> values = new ArrayList<String>();
+        for (Integer offset : plan.offsets) {
+            if (offset == null) {
+                continue;
+            }
+            String dueDayLabel = plan.usesAfterOpenDate ? "开封后建议处理日当天" : "到期当天";
+            values.add(offset.intValue() == 0 ? dueDayLabel : "提前 " + offset + " 天");
+        }
+        return values.isEmpty() ? "暂无" : joinTexts(values, "、");
     }
 
     private boolean isNoExpiryFood(FoodItem food) {
@@ -2627,6 +2713,10 @@ public final class MainActivity extends Activity {
         final Spinner shelfLifeUnitInput = spinner(FoodData.SHELF_LIFE_UNITS);
         shelfLifeUnitInput.setSelection(indexOf(FoodData.SHELF_LIFE_UNITS, draft.shelfLifeUnit, "day"));
 
+        final boolean[] manualExpiryOverride = new boolean[] {
+                !"calculated".equals(draft.dateSource) && DateRules.isValidDateString(draft.expiryDate)
+        };
+        final boolean[] updatingCalculatedExpiry = new boolean[] { false };
         final EditText expiryDateInput = dateInput(draft.expiryDate, "选择最终可食用日期");
         final CheckBox noExpiryInput = new CheckBox(this);
         noExpiryInput.setText("无过期时间");
@@ -2684,8 +2774,45 @@ public final class MainActivity extends Activity {
 
         final TextView hint = text("", 12, COLOR_MUTED, Typeface.NORMAL);
         hint.setPadding(0, dp(8), 0, 0);
-        hint.setVisibility(View.GONE);
         dateSection.addView(hint, matchWrap());
+
+        final Button useCalculatedExpiryButton = outlineButton("改用自动计算");
+        dateSection.addView(useCalculatedExpiryButton, withMargins(matchWrap(), 0, dp(8), 0, 0));
+
+        final Runnable updateCalculatedExpiry = new Runnable() {
+            @Override
+            public void run() {
+                if (noExpiryInput.isChecked()) {
+                    useCalculatedExpiryButton.setVisibility(View.GONE);
+                    hint.setText("无过期时间食品不会参与到期提醒；生产日期可留空。");
+                    return;
+                }
+
+                if (manualExpiryOverride[0]) {
+                    useCalculatedExpiryButton.setVisibility(View.VISIBLE);
+                    hint.setText("当前为手动日期；也可以改用生产日期和保质期自动计算。");
+                    return;
+                }
+
+                useCalculatedExpiryButton.setVisibility(View.GONE);
+                String shelfLifeText = clean(shelfLifeInput);
+                Integer shelfLifeValue = shelfLifeText.length() == 0
+                        ? null
+                        : parsePositiveInteger(shelfLifeText);
+                String shelfLifeUnit = selectedOption(FoodData.SHELF_LIFE_UNITS, shelfLifeUnitInput);
+                String calculatedExpiry = DateRules.addShelfLife(
+                        clean(productionDateInput),
+                        shelfLifeValue,
+                        shelfLifeUnit
+                );
+                updatingCalculatedExpiry[0] = true;
+                expiryDateInput.setText(calculatedExpiry);
+                updatingCalculatedExpiry[0] = false;
+                hint.setText(calculatedExpiry.length() > 0
+                        ? "已自动计算；点日期可改为手动日期。"
+                        : "填写生产日期和保质期后自动计算最终可食用日期。");
+            }
+        };
 
         final Runnable updateNoExpiryViews = new Runnable() {
             @Override
@@ -2695,14 +2822,13 @@ public final class MainActivity extends Activity {
                 expiryDateField.setVisibility(noExpiry ? View.GONE : View.VISIBLE);
                 productionAgePreview.setVisibility(noExpiry ? View.VISIBLE : View.GONE);
                 productionAgePreview.setText("已生产时长：" + DateRules.productionAgeLabel(clean(productionDateInput)));
-                hint.setVisibility(noExpiry ? View.VISIBLE : View.GONE);
-                hint.setText(noExpiry ? "无过期时间食品不会参与到期提醒；生产日期可留空。" : "");
             }
         };
         noExpiryInput.setOnCheckedChangeListener(new CompoundButton.OnCheckedChangeListener() {
             @Override
             public void onCheckedChanged(CompoundButton compoundButton, boolean checked) {
                 updateNoExpiryViews.run();
+                updateCalculatedExpiry.run();
             }
         });
         productionDateInput.addTextChangedListener(new TextWatcher() {
@@ -2719,9 +2845,47 @@ public final class MainActivity extends Activity {
                 if (noExpiryInput.isChecked()) {
                     updateNoExpiryViews.run();
                 }
+                updateCalculatedExpiry.run();
+            }
+        });
+        watchText(shelfLifeInput, updateCalculatedExpiry);
+        expiryDateInput.addTextChangedListener(new TextWatcher() {
+            @Override
+            public void beforeTextChanged(CharSequence value, int start, int count, int after) {
+            }
+
+            @Override
+            public void onTextChanged(CharSequence value, int start, int before, int count) {
+            }
+
+            @Override
+            public void afterTextChanged(Editable value) {
+                if (!updatingCalculatedExpiry[0]) {
+                    manualExpiryOverride[0] = clean(expiryDateInput).length() > 0;
+                    updateCalculatedExpiry.run();
+                }
+            }
+        });
+        shelfLifeUnitInput.setOnItemSelectedListener(new android.widget.AdapterView.OnItemSelectedListener() {
+            @Override
+            public void onItemSelected(android.widget.AdapterView<?> parent, View view, int position, long id) {
+                updateCalculatedExpiry.run();
+            }
+
+            @Override
+            public void onNothingSelected(android.widget.AdapterView<?> parent) {
+                updateCalculatedExpiry.run();
+            }
+        });
+        useCalculatedExpiryButton.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View view) {
+                manualExpiryOverride[0] = false;
+                updateCalculatedExpiry.run();
             }
         });
         updateNoExpiryViews.run();
+        updateCalculatedExpiry.run();
 
         form.addView(dateSection, withMargins(matchWrap(), 0, 0, 0, dp(4)));
 
@@ -2852,6 +3016,7 @@ public final class MainActivity extends Activity {
                                 shelfLifeInput,
                                 shelfLifeUnitInput,
                                 expiryDateInput,
+                                manualExpiryOverride[0],
                                 openedDateInput,
                                 afterOpenShelfLifeInput,
                                 afterOpenShelfLifeUnitInput,
@@ -2862,16 +3027,17 @@ public final class MainActivity extends Activity {
                             return;
                         }
 
+                        ReminderPolicy.ensureSmartSchedule(saved);
+
                         if (isEdit) {
                             replaceFood(saved);
                         } else {
                             foods.add(0, saved);
                         }
 
-                        store.saveFoods(foods);
-                        ReminderScheduler.scheduleDaily(MainActivity.this, reminderSettings);
-                        renderFilterControls();
-                        renderFoods();
+                        if (!saveFoodsRefreshReminders()) {
+                            return;
+                        }
                         dialog.dismiss();
                         toast(isEdit ? "已更新食品" : "已新增食品");
                     }
@@ -2897,6 +3063,7 @@ public final class MainActivity extends Activity {
             EditText shelfLifeInput,
             Spinner shelfLifeUnitInput,
             EditText expiryDateInput,
+            boolean manualExpiryOverride,
             EditText openedDateInput,
             EditText afterOpenShelfLifeInput,
             Spinner afterOpenShelfLifeUnitInput,
@@ -2945,7 +3112,7 @@ public final class MainActivity extends Activity {
             shelfLifeUnit = "";
             expiryDate = "";
             dateSource = "none";
-        } else if (manualExpiryDate.length() > 0) {
+        } else if (manualExpiryOverride) {
             if (!DateRules.isValidDateString(manualExpiryDate)) {
                 toast("最终可食用日期格式不正确，请重新选择日期");
                 return null;
@@ -3073,7 +3240,9 @@ public final class MainActivity extends Activity {
         updated.remainingQuantity = FoodItem.clampedRemainingQuantity(updated.remainingQuantity - 1, updated.quantity);
         updated.updatedAt = now;
         replaceFood(updated);
-        saveFoodsRefreshReminders();
+        if (!saveFoodsRefreshReminders()) {
+            return;
+        }
         if (updated.remainingQuantity <= 0) {
             toast("剩余已归 0");
             promptMarkFinishedAfterZero(updated);
@@ -3097,7 +3266,9 @@ public final class MainActivity extends Activity {
         updated.remainingQuantity = 0;
         updated.updatedAt = DateRules.nowIsoLike();
         replaceFood(updated);
-        saveFoodsRefreshReminders();
+        if (!saveFoodsRefreshReminders()) {
+            return;
+        }
         toast("剩余已归 0");
         promptMarkFinishedAfterZero(updated);
     }
@@ -3161,7 +3332,9 @@ public final class MainActivity extends Activity {
                         updated.updatedAt = DateRules.nowIsoLike();
                         updated.normalizeQuantityBounds();
                         replaceFood(updated);
-                        saveFoodsRefreshReminders();
+                        if (!saveFoodsRefreshReminders()) {
+                            return;
+                        }
                         dialog.dismiss();
                         toast("已补货 +" + formatNumber(amount.doubleValue()) + " " + displayUnit(updated.unit));
                     }
@@ -3174,36 +3347,50 @@ public final class MainActivity extends Activity {
 
     private void copyFood(FoodItem food) {
         FoodItem copied = food.copyAsNewRecord(newFoodId(), DateRules.nowIsoLike());
+        ReminderPolicy.ensureSmartSchedule(copied);
         foods.add(0, copied);
-        saveFoodsRefreshReminders();
+        if (!saveFoodsRefreshReminders()) {
+            return;
+        }
         toast("已复制食品");
     }
 
+    private static List<FoodItem> copyFoods(List<FoodItem> source) {
+        List<FoodItem> copies = new ArrayList<FoodItem>();
+        if (source == null) {
+            return copies;
+        }
+        for (FoodItem food : source) {
+            copies.add(food.copy());
+        }
+        return copies;
+    }
+
     private String newFoodId() {
-        String base = "food_" + System.currentTimeMillis();
-        String candidate = base;
-        int suffix = 1;
-        while (hasFoodId(candidate)) {
-            candidate = base + "_" + suffix;
-            suffix++;
-        }
-        return candidate;
+        return FoodIdGenerator.nextId(foods, null);
     }
 
-    private boolean hasFoodId(String id) {
-        for (FoodItem food : foods) {
-            if (food.id.equals(id)) {
-                return true;
-            }
+    private boolean saveFoodsRefreshReminders() {
+        boolean saved;
+        if (qaForceNextSaveFailure) {
+            qaForceNextSaveFailure = false;
+            saved = store.saveFoodsForQaForcedFailure(foods);
+        } else {
+            saved = store.saveFoods(foods);
         }
-        return false;
-    }
-
-    private void saveFoodsRefreshReminders() {
-        store.saveFoods(foods);
+        if (!saved) {
+            foods = copyFoods(lastPersistedFoods);
+            ReminderScheduler.scheduleDaily(this, reminderSettings);
+            renderFilterControls();
+            renderFoods();
+            toast("保存失败，原有食品数据已保留");
+            return false;
+        }
+        lastPersistedFoods = copyFoods(foods);
         ReminderScheduler.scheduleDaily(this, reminderSettings);
         renderFilterControls();
         renderFoods();
+        return true;
     }
 
     private void confirmFinishFood(final FoodItem food) {
@@ -3224,7 +3411,9 @@ public final class MainActivity extends Activity {
         updated.finishedAt = now;
         updated.updatedAt = now;
         replaceFood(updated);
-        saveFoodsRefreshReminders();
+        if (!saveFoodsRefreshReminders()) {
+            return;
+        }
         toast("已移入已用完");
     }
 
@@ -3242,10 +3431,18 @@ public final class MainActivity extends Activity {
         FoodItem updated = food.copy();
         updated.isFinished = false;
         updated.finishedAt = "";
+        if (updated.quantity <= 0) {
+            updated.quantity = 1;
+        }
+        if (updated.remainingQuantity <= 0) {
+            updated.remainingQuantity = Math.min(1, updated.quantity);
+        }
         updated.updatedAt = now;
         updated.normalizeQuantityBounds();
         replaceFood(updated);
-        saveFoodsRefreshReminders();
+        if (!saveFoodsRefreshReminders()) {
+            return;
+        }
         toast("已恢复提醒");
     }
 
@@ -3266,7 +3463,9 @@ public final class MainActivity extends Activity {
             }
         }
         foods = nextFoods;
-        saveFoodsRefreshReminders();
+        if (!saveFoodsRefreshReminders()) {
+            return;
+        }
         toast("已删除食品");
     }
 

@@ -26,6 +26,21 @@ public class JSONArray {
         return value instanceof JSONObject ? (JSONObject) value : null;
     }
 
+    public int optInt(int index, int fallback) {
+        if (index < 0 || index >= values.size()) {
+            return fallback;
+        }
+        Object value = values.get(index);
+        if (value instanceof Number) {
+            return ((Number) value).intValue();
+        }
+        try {
+            return Integer.parseInt(String.valueOf(value));
+        } catch (NumberFormatException ignored) {
+            return fallback;
+        }
+    }
+
     public JSONArray put(Object value) {
         values.add(value == null ? JSONObject.NULL : value);
         return this;

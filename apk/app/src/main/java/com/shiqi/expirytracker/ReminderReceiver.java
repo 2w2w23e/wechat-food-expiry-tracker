@@ -31,12 +31,13 @@ public final class ReminderReceiver extends BroadcastReceiver {
         }
 
         String action = intent == null ? "" : FoodItem.cleanText(intent.getAction());
+        List<FoodItem> foods = loadFoodsWithSchedules(context);
         ReminderContent content;
         if (ReminderScheduler.ACTION_DUE_DAY_REMINDER.equals(action)) {
             String hour = intent.getStringExtra(ReminderScheduler.EXTRA_DUE_DAY_HOUR);
-            content = buildDueDayContent(new FoodStore(context).loadFoods(), hour);
+            content = buildDueDayContent(foods, hour);
         } else {
-            content = buildDailyBriefingContent(new FoodStore(context).loadFoods());
+            content = buildDailyBriefingContent(foods);
         }
 
         if (!content.shouldNotify) {
@@ -50,6 +51,19 @@ public final class ReminderReceiver extends BroadcastReceiver {
 
         ReminderScheduler.ensureNotificationChannel(context);
         manager.notify(content.notificationId, buildNotification(context, content));
+    }
+
+    private static List<FoodItem> loadFoodsWithSchedules(Context context) {
+        FoodStore store = new FoodStore(context);
+        List<FoodItem> foods = store.loadFoods();
+        List<FoodItem> migratedFoods = new java.util.ArrayList<FoodItem>();
+        for (FoodItem food : foods) {
+            migratedFoods.add(food.copy());
+        }
+        if (ReminderPolicy.ensureSmartSchedules(migratedFoods)) {
+            return store.saveFoods(migratedFoods) ? migratedFoods : foods;
+        }
+        return migratedFoods;
     }
 
     private Notification buildNotification(Context context, ReminderContent content) {

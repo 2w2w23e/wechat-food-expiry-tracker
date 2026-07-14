@@ -1,7 +1,11 @@
 package com.shiqi.expirytracker;
 
 import org.json.JSONException;
+import org.json.JSONArray;
 import org.json.JSONObject;
+
+import java.util.ArrayList;
+import java.util.List;
 
 final class FoodItem {
     String id = "";
@@ -25,6 +29,10 @@ final class FoodItem {
     String updatedAt = "";
     boolean isFinished = false;
     String finishedAt = "";
+    final List<Integer> smartReminderOffsets = new ArrayList<Integer>();
+    String smartReminderFingerprint = "";
+    int smartReminderPlannedDaysLeft = Integer.MIN_VALUE;
+    String smartReminderPlannedOn = "";
 
     static FoodItem fromJson(JSONObject json) {
         FoodItem item = new FoodItem();
@@ -51,6 +59,20 @@ final class FoodItem {
         item.updatedAt = optCleanString(json, "updatedAt");
         item.isFinished = json.optBoolean("isFinished", false);
         item.finishedAt = optCleanString(json, "finishedAt");
+        JSONArray reminderOffsets = json.optJSONArray("smartReminderOffsets");
+        if (reminderOffsets != null) {
+            for (int index = 0; index < reminderOffsets.length(); index++) {
+                int value = reminderOffsets.optInt(index, -1);
+                if (value >= 0 && !item.smartReminderOffsets.contains(Integer.valueOf(value))) {
+                    item.smartReminderOffsets.add(Integer.valueOf(value));
+                }
+            }
+        }
+        item.smartReminderFingerprint = optCleanString(json, "smartReminderFingerprint");
+        item.smartReminderPlannedDaysLeft = json.has("smartReminderPlannedDaysLeft")
+                ? json.optInt("smartReminderPlannedDaysLeft", Integer.MIN_VALUE)
+                : Integer.MIN_VALUE;
+        item.smartReminderPlannedOn = optCleanString(json, "smartReminderPlannedOn");
         item.normalizeQuantityBounds();
 
         if (!DateRules.isValidDateString(item.expiryDate)) {
@@ -83,7 +105,24 @@ final class FoodItem {
             item.shelfLifeUnit = "";
         }
 
+        if ("calculated".equals(item.dateSource) && !item.hasValidCalculatedDateSource()) {
+            // Preserve a valid historical expiry date instead of letting the edit form recalculate it.
+            item.dateSource = "manual";
+        }
+
         return item;
+    }
+
+    boolean hasValidCalculatedDateSource() {
+        if (!"calculated".equals(dateSource)
+                || !DateRules.isValidDateString(expiryDate)
+                || !DateRules.isValidDateString(productionDate)
+                || shelfLifeValue == null
+                || shelfLifeValue.intValue() <= 0
+                || !DateRules.isShelfLifeUnit(shelfLifeUnit)) {
+            return false;
+        }
+        return expiryDate.equals(DateRules.addShelfLife(productionDate, shelfLifeValue, shelfLifeUnit));
     }
 
     JSONObject toJson() throws JSONException {
@@ -117,6 +156,20 @@ final class FoodItem {
         json.put("updatedAt", updatedAt);
         json.put("isFinished", isFinished);
         putNullableString(json, "finishedAt", finishedAt);
+        JSONArray reminderOffsets = new JSONArray();
+        for (Integer offset : smartReminderOffsets) {
+            if (offset != null && offset.intValue() >= 0) {
+                reminderOffsets.put(offset.intValue());
+            }
+        }
+        json.put("smartReminderOffsets", reminderOffsets);
+        putNullableString(json, "smartReminderFingerprint", smartReminderFingerprint);
+        if (smartReminderPlannedDaysLeft == Integer.MIN_VALUE) {
+            json.put("smartReminderPlannedDaysLeft", JSONObject.NULL);
+        } else {
+            json.put("smartReminderPlannedDaysLeft", smartReminderPlannedDaysLeft);
+        }
+        putNullableString(json, "smartReminderPlannedOn", smartReminderPlannedOn);
         return json;
     }
 
@@ -143,6 +196,10 @@ final class FoodItem {
         item.updatedAt = updatedAt;
         item.isFinished = isFinished;
         item.finishedAt = finishedAt;
+        item.smartReminderOffsets.addAll(smartReminderOffsets);
+        item.smartReminderFingerprint = smartReminderFingerprint;
+        item.smartReminderPlannedDaysLeft = smartReminderPlannedDaysLeft;
+        item.smartReminderPlannedOn = smartReminderPlannedOn;
         return item;
     }
 
@@ -153,6 +210,10 @@ final class FoodItem {
         item.updatedAt = cleanText(now);
         item.isFinished = false;
         item.finishedAt = "";
+        item.smartReminderOffsets.clear();
+        item.smartReminderFingerprint = "";
+        item.smartReminderPlannedDaysLeft = Integer.MIN_VALUE;
+        item.smartReminderPlannedOn = "";
         item.normalizeQuantityBounds();
         item.remainingQuantity = item.quantity;
         return item;

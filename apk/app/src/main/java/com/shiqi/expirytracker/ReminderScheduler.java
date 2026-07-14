@@ -22,6 +22,7 @@ final class ReminderScheduler {
     private static final String ACTION_LEGACY_DAILY_REMINDER = "com.shiqi.expirytracker.action.DAILY_REMINDER";
     private static final String PREFS_NAME = "shiqi_android_v0";
     private static final String PREF_REMINDER_ENABLED = "reminder_enabled_v0";
+    private static final String PREF_REMINDER_MODE = "reminder_mode_v1";
     private static final String PREF_REMINDER_ADVANCE_DAYS = "reminder_advance_days_v0";
     private static final String PREF_REMINDER_TODAY_SLOTS = "reminder_today_slots_v0";
     private static final int REQUEST_CODE_DAILY_BRIEFING = 7001;
@@ -84,10 +85,17 @@ final class ReminderScheduler {
         }
 
         SharedPreferences preferences = context.getApplicationContext().getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE);
+        boolean enabled = preferences.getBoolean(PREF_REMINDER_ENABLED, ReminderSettings.DEFAULT_ENABLED);
+        String advanceDays = preferences.getString(PREF_REMINDER_ADVANCE_DAYS, ReminderSettings.DEFAULT_ADVANCE_DAYS_TEXT);
+        String todaySlots = preferences.getString(PREF_REMINDER_TODAY_SLOTS, ReminderSettings.DEFAULT_TODAY_SLOTS_TEXT);
+        if (!preferences.contains(PREF_REMINDER_MODE)) {
+            return ReminderSettings.fromStoredValues(enabled, advanceDays, todaySlots);
+        }
         return ReminderSettings.fromStoredValues(
-                preferences.getBoolean(PREF_REMINDER_ENABLED, ReminderSettings.DEFAULT_ENABLED),
-                preferences.getString(PREF_REMINDER_ADVANCE_DAYS, ReminderSettings.DEFAULT_ADVANCE_DAYS_TEXT),
-                preferences.getString(PREF_REMINDER_TODAY_SLOTS, ReminderSettings.DEFAULT_TODAY_SLOTS_TEXT)
+                enabled,
+                preferences.getString(PREF_REMINDER_MODE, ReminderSettings.DEFAULT_MODE),
+                advanceDays,
+                todaySlots
         );
     }
 
@@ -96,6 +104,7 @@ final class ReminderScheduler {
         SharedPreferences preferences = context.getApplicationContext().getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE);
         preferences.edit()
                 .putBoolean(PREF_REMINDER_ENABLED, effectiveSettings.enabled)
+                .putString(PREF_REMINDER_MODE, effectiveSettings.mode)
                 .putString(PREF_REMINDER_ADVANCE_DAYS, effectiveSettings.advanceDaysText())
                 .putString(PREF_REMINDER_TODAY_SLOTS, effectiveSettings.todaySlotsText())
                 .apply();
@@ -145,9 +154,9 @@ final class ReminderScheduler {
             return "全局提醒已关闭";
         }
 
-        String advanceText = effectiveSettings.usesDefaultAdvanceDays()
-                ? "提前天数按当前默认规则"
-                : "提前 " + effectiveSettings.advanceDaysText() + " 天";
+        String advanceText = effectiveSettings.isSmartMode()
+                ? "智能安排提醒日"
+                : "固定提前 " + effectiveSettings.advanceDaysText() + " 天";
         String todayText = effectiveSettings.usesDefaultTodaySlots()
                 ? "今日到期按风险时段 " + joinArray(DEFAULT_DUE_DAY_SLOTS)
                 : "今日到期按 " + effectiveSettings.todaySlotsText();

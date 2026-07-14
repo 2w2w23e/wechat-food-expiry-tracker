@@ -11,11 +11,14 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
+import java.util.Calendar;
+import java.util.GregorianCalendar;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.TimeZone;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipInputStream;
 
@@ -37,15 +40,22 @@ final class FoodExcelImporter {
         }
 
         List<String> sharedStrings = parseSharedStrings(entries.get("xl/sharedStrings.xml"));
+        ExcelStyles styles = parseStyles(entries.get("xl/styles.xml"));
+        boolean uses1904DateSystem = uses1904DateSystem(entries.get("xl/workbook.xml"));
         byte[] sheet = entries.get(findFoodsSheetPath(entries));
         if (sheet == null) {
             throw new IOException("未找到 foods 工作表");
         }
 
-        return parseFoodSheet(sheet, sharedStrings);
+        return parseFoodSheet(sheet, sharedStrings, styles, uses1904DateSystem);
     }
 
-    private static ImportPreview parseFoodSheet(byte[] sheetXml, List<String> sharedStrings) throws IOException {
+    private static ImportPreview parseFoodSheet(
+            byte[] sheetXml,
+            List<String> sharedStrings,
+            ExcelStyles styles,
+            boolean uses1904DateSystem
+    ) throws IOException {
         Document document = parseXml(sheetXml);
         NodeList rows = document.getElementsByTagNameNS("*", "row");
         if (rows.getLength() == 0) {
@@ -58,11 +68,11 @@ final class FoodExcelImporter {
         for (int rowIndex = 0; rowIndex < rows.getLength(); rowIndex++) {
             Element row = (Element) rows.item(rowIndex);
             int rowNumber = parseInt(row.getAttribute("r"), rowIndex + 1);
-            Map<Integer, String> cells = readRowCells(row, sharedStrings);
+            Map<Integer, CellValue> cells = readRowCells(row, sharedStrings, styles);
 
             if (headers.isEmpty()) {
-                for (Map.Entry<Integer, String> cell : cells.entrySet()) {
-                    String header = normalizeHeader(cell.getValue());
+                for (Map.Entry<Integer, CellValue> cell : cells.entrySet()) {
+                    String header = normalizeHeader(cell.getValue().text);
                     if (header.length() > 0) {
                         headers.put(cell.getKey(), header);
                     }
@@ -76,7 +86,11 @@ final class FoodExcelImporter {
             Map<String, String> values = new LinkedHashMap<String, String>();
             boolean hasAnyValue = false;
             for (Map.Entry<Integer, String> header : headers.entrySet()) {
-                String value = clean(cells.get(header.getKey()));
+                CellValue cell = cells.get(header.getKey());
+                String value = cell == null ? "" : clean(cell.text);
+                if (cell != null && cell.dateFormatted && isImportDateHeader(header.getValue())) {
+                    value = excelSerialDate(value, uses1904DateSystem);
+                }
                 if (value.length() > 0) {
                     hasAnyValue = true;
                 }
@@ -135,13 +149,18 @@ final class FoodExcelImporter {
         String manualExpiryDate = clean(value(values, "expirydate"));
         if ("none".equals(item.dateSource)) {
             if (!DateRules.isValidDateString(item.productionDate)) {
-                errors.add("无过期时间食品必须填写生产日期");
+                warnings.add("无过期时间且未填写生产日期，已按暂无到期日导入");
             }
         } else if (manualExpiryDate.length() > 0) {
             if (DateRules.isValidDateString(manualExpiryDate)) {
                 item.expiryDate = manualExpiryDate;
                 if (item.dateSource.length() == 0 || "unknown".equals(item.dateSource)) {
                     item.dateSource = "manual";
+                } else if ("calculated".equals(item.dateSource)) {
+                    if (!item.hasValidCalculatedDateSource()) {
+                        item.dateSource = "manual";
+                        warnings.add("日期来源与生产日期、保质期不一致，已按手动到期日导入");
+                    }
                 }
             } else {
                 errors.add("最终可食用日期格式必须为 yyyy-MM-dd");
@@ -182,8 +201,8 @@ final class FoodExcelImporter {
         return new RowResult(rowNumber, values, item, errors, warnings);
     }
 
-    private static Map<Integer, String> readRowCells(Element row, List<String> sharedStrings) {
-        Map<Integer, String> cells = new LinkedHashMap<Integer, String>();
+    private static Map<Integer, CellValue> readRowCells(Element row, List<String> sharedStrings, ExcelStyles styles) {
+        Map<Integer, CellValue> cells = new LinkedHashMap<Integer, CellValue>();
         NodeList cellNodes = row.getElementsByTagNameNS("*", "c");
         int nextColumn = 1;
         for (int index = 0; index < cellNodes.getLength(); index++) {
@@ -192,7 +211,12 @@ final class FoodExcelImporter {
             if (column <= 0) {
                 column = nextColumn;
             }
-            cells.put(Integer.valueOf(column), cellText(cell, sharedStrings));
+            String type = cell.getAttribute("t");
+            boolean numeric = type.length() == 0 || "n".equals(type);
+            cells.put(Integer.valueOf(column), new CellValue(
+                    cellText(cell, sharedStrings),
+                    numeric && styles.isDateStyle(cell.getAttribute("s"))
+            ));
             nextColumn = column + 1;
         }
         return cells;
@@ -233,6 +257,136 @@ final class FoodExcelImporter {
             values.add(clean(items.item(index).getTextContent()));
         }
         return values;
+    }
+
+    private static ExcelStyles parseStyles(byte[] stylesXml) throws IOException {
+        List<Boolean> dateStyles = new ArrayList<Boolean>();
+        if (stylesXml == null) {
+            return new ExcelStyles(dateStyles);
+        }
+
+        Document document = parseXml(stylesXml);
+        Map<Integer, String> customFormats = new HashMap<Integer, String>();
+        NodeList formatNodes = document.getElementsByTagNameNS("*", "numFmt");
+        for (int index = 0; index < formatNodes.getLength(); index++) {
+            Element format = (Element) formatNodes.item(index);
+            int formatId = parseInt(format.getAttribute("numFmtId"), -1);
+            if (formatId >= 0) {
+                customFormats.put(Integer.valueOf(formatId), format.getAttribute("formatCode"));
+            }
+        }
+
+        NodeList cellXfsNodes = document.getElementsByTagNameNS("*", "cellXfs");
+        if (cellXfsNodes.getLength() == 0) {
+            return new ExcelStyles(dateStyles);
+        }
+        NodeList styleNodes = ((Element) cellXfsNodes.item(0)).getElementsByTagNameNS("*", "xf");
+        for (int index = 0; index < styleNodes.getLength(); index++) {
+            Element style = (Element) styleNodes.item(index);
+            int formatId = parseInt(style.getAttribute("numFmtId"), 0);
+            String customFormat = customFormats.get(Integer.valueOf(formatId));
+            dateStyles.add(Boolean.valueOf(
+                    isBuiltInDateFormat(formatId) || isCustomDateFormat(customFormat)
+            ));
+        }
+        return new ExcelStyles(dateStyles);
+    }
+
+    private static boolean uses1904DateSystem(byte[] workbookXml) throws IOException {
+        Document document = parseXml(workbookXml);
+        NodeList properties = document.getElementsByTagNameNS("*", "workbookPr");
+        if (properties.getLength() == 0) {
+            return false;
+        }
+        String value = ((Element) properties.item(0)).getAttribute("date1904");
+        return "1".equals(value) || "true".equalsIgnoreCase(value);
+    }
+
+    private static boolean isBuiltInDateFormat(int formatId) {
+        return (formatId >= 14 && formatId <= 17)
+                || formatId == 22
+                || (formatId >= 27 && formatId <= 31)
+                || formatId == 36
+                || (formatId >= 50 && formatId <= 54)
+                || formatId == 57
+                || formatId == 58;
+    }
+
+    private static boolean isCustomDateFormat(String formatCode) {
+        if (formatCode == null || formatCode.length() == 0) {
+            return false;
+        }
+        boolean quoted = false;
+        for (int index = 0; index < formatCode.length(); index++) {
+            char ch = Character.toLowerCase(formatCode.charAt(index));
+            if (ch == '"') {
+                quoted = !quoted;
+                continue;
+            }
+            if (quoted) {
+                continue;
+            }
+            if (ch == '\\' || ch == '_' || ch == '*') {
+                index++;
+                continue;
+            }
+            if (ch == '[') {
+                int closingBracket = formatCode.indexOf(']', index + 1);
+                if (closingBracket >= 0) {
+                    index = closingBracket;
+                    continue;
+                }
+            }
+            if (ch == 'y' || ch == 'd') {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private static boolean isImportDateHeader(String header) {
+        return "productiondate".equals(header)
+                || "openeddate".equals(header)
+                || "expirydate".equals(header);
+    }
+
+    private static String excelSerialDate(String value, boolean uses1904DateSystem) {
+        double serial;
+        try {
+            serial = Double.parseDouble(clean(value));
+        } catch (NumberFormatException error) {
+            return value;
+        }
+        if (Double.isNaN(serial) || Double.isInfinite(serial)) {
+            return value;
+        }
+
+        double wholeDaysValue = Math.floor(serial);
+        double minimum = uses1904DateSystem ? 0.0 : 1.0;
+        if (wholeDaysValue < minimum || wholeDaysValue > Integer.MAX_VALUE) {
+            return value;
+        }
+
+        int wholeDays = (int) wholeDaysValue;
+        int year = uses1904DateSystem ? 1904 : 1899;
+        int month = uses1904DateSystem ? Calendar.JANUARY : Calendar.DECEMBER;
+        int day = uses1904DateSystem ? 1 : 31;
+        if (!uses1904DateSystem && wholeDays >= 60) {
+            // Excel serial 60 is the fictitious 1900-02-29; skip that inserted day.
+            wholeDays--;
+        }
+
+        Calendar date = new GregorianCalendar(TimeZone.getTimeZone("UTC"), Locale.US);
+        date.clear();
+        date.set(year, month, day, 0, 0, 0);
+        date.add(Calendar.DAY_OF_MONTH, wholeDays);
+        return String.format(
+                Locale.US,
+                "%04d-%02d-%02d",
+                date.get(Calendar.YEAR),
+                date.get(Calendar.MONTH) + 1,
+                date.get(Calendar.DAY_OF_MONTH)
+        );
     }
 
     private static String findFoodsSheetPath(Map<String, byte[]> entries) throws IOException {
@@ -462,6 +616,33 @@ final class FoodExcelImporter {
 
     private static String utf8(byte[] bytes) {
         return bytes == null ? "" : new String(bytes, StandardCharsets.UTF_8);
+    }
+
+    private static final class CellValue {
+        final String text;
+        final boolean dateFormatted;
+
+        CellValue(String text, boolean dateFormatted) {
+            this.text = text;
+            this.dateFormatted = dateFormatted;
+        }
+    }
+
+    private static final class ExcelStyles {
+        final List<Boolean> dateStyles;
+
+        ExcelStyles(List<Boolean> dateStyles) {
+            this.dateStyles = dateStyles;
+        }
+
+        boolean isDateStyle(String styleValue) {
+            int styleIndex = styleValue == null || styleValue.length() == 0
+                    ? 0
+                    : parseInt(styleValue, -1);
+            return styleIndex >= 0
+                    && styleIndex < dateStyles.size()
+                    && dateStyles.get(styleIndex).booleanValue();
+        }
     }
 
     static final class ImportPreview {
