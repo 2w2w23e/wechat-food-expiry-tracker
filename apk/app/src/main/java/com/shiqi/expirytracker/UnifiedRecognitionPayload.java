@@ -45,11 +45,6 @@ final class UnifiedRecognitionPayload {
         if (cleanName.length() > 0 || cleanBarcode.length() > 0) {
             draft.unit = "件";
         }
-        if ((BarcodeUtils.isSupportedProductCode(cleanBarcode) || cleanName.length() > 0)
-                && !DateOcrResultPayload.hasUsableDraft(draft)) {
-            draft.dateSource = "none";
-        }
-
         StringBuilder notes = new StringBuilder();
         if (cleanNotes.length() > 0) {
             notes.append(cleanNotes);

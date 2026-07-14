@@ -49,6 +49,9 @@ final class RecognitionTextCleaner {
             boolean hasBarcodeContext = containsAny(compact, new String[] {
                     "条码", "商品码", "barcode", "gtin", "ean", "upc"
             });
+            if (!hasBarcodeContext && candidate.startsWith("0")) {
+                continue;
+            }
             if (candidate.length() == 8 && !hasBarcodeContext) {
                 continue;
             }
@@ -402,7 +405,8 @@ final class RecognitionTextCleaner {
                 "生产日期", "制造日期", "包装日期", "生产批号", "批次", "保质期", "有效期",
                 "净含量", "净重", "规格", "贮存", "储存", "保存方法", "保存条件",
                 "厂家地址", "厂址", "地址", "电话", "客服", "网址", "委托方", "委托商",
-                "生产商", "制造商", "经销商", "食用方法", "冲调方法", "使用方法", "请勿",
+                "生产商", "制造商", "经销商", "委托生产", "受委托生产", "产地", "建议", "公司服务",
+                "食用方法", "冲调方法", "使用方法", "请勿",
                 "二维码", "条形码", "扫码", "公众号", "合格", "检验", "温馨提示"
         };
         for (String token : blockTokens) {

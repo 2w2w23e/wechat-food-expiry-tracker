@@ -6,7 +6,7 @@
 
 ## 构建
 
-当前 APK 版本号：`versionName 0.3.8`，`versionCode 11`。每次生成新的可交付 APK 时，都需要同步提升 `AndroidManifest.xml` 和 `apk/app/build.gradle` 里的 `versionName` 和 `versionCode`。
+当前 APK 版本号：`versionName 0.3.9`，`versionCode 12`。每次生成新的可交付 APK 时，都需要同步提升 `apk/app/build.gradle` 里的 `versionName` 和 `versionCode`。
 
 构建脚本依赖本机 Android SDK 命令行工具。若当前机器缺少 Android SDK，APK 构建应标记为环境阻塞，待补齐环境后再验证。
 
