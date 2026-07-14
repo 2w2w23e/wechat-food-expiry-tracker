@@ -758,14 +758,13 @@ public final class LocalLogicTest {
             }
         });
 
-        test("DateOcrParser marks unhinted dates as weak conflicting candidates", new TestCase() {
+        test("DateOcrParser keeps unhinted dates ambiguous without inventing expiry", new TestCase() {
             public void run() {
                 DateOcrParser.Result result = DateOcrParser.parse("画面里看到 20260705 和 20260706");
 
                 assertEquals(2, result.productionDates.size());
-                assertEquals(2, result.expiryDates.size());
+                assertEquals(0, result.expiryDates.size());
                 assertTrue(result.productionDates.get(0).weakHint, "unhinted production date should be weak");
-                assertTrue(result.expiryDates.get(0).weakHint, "unhinted expiry date should be weak");
                 assertTrue(result.hasDateConflict(), "different dates should be a conflict");
             }
         });
@@ -956,6 +955,180 @@ public final class LocalLogicTest {
             }
         });
 
+        test("DateOcrFrameVoter prefers a repeated laser date pair over more weak single-date frames", new TestCase() {
+            public void run() {
+                List<DateOcrParser.Result> frames = new ArrayList<DateOcrParser.Result>();
+                for (int index = 0; index < 7; index++) {
+                    frames.add(DateOcrParser.parse("20260612"));
+                }
+                for (int index = 0; index < 4; index++) {
+                    frames.add(DateOcrParser.parse("20260612/20270611"));
+                }
+
+                DateOcrFrameVoter.VoteResult result = DateOcrFrameVoter.vote(frames, 3);
+                assertEquals("2026-06-12", result.productionDate.value);
+                assertEquals("2027-06-11", result.expiryDate.value);
+                assertFalse(result.hasConflict, "strong chronological-pair evidence should resolve weak ambiguity");
+            }
+        });
+
+        test("DateOcrFrameVoter accepts two matching laser pairs over incomplete date reads", new TestCase() {
+            public void run() {
+                List<DateOcrParser.Result> frames = new ArrayList<DateOcrParser.Result>();
+                frames.add(DateOcrParser.parse("20260612"));
+                frames.add(DateOcrParser.parse("20260612/2027061"));
+                frames.add(DateOcrParser.parse("20260612"));
+                frames.add(DateOcrParser.parse("20260612/20270611"));
+                frames.add(DateOcrParser.parse("20260612/20270611"));
+
+                DateOcrFrameVoter.VoteResult result = DateOcrFrameVoter.vote(frames, 3);
+                assertEquals("2026-06-12", result.productionDate.value);
+                assertEquals("2027-06-11", result.expiryDate.value);
+                assertFalse(result.hasConflict, "matching explicit pairs should beat incomplete weak reads");
+            }
+        });
+
+        test("DateOcrFrameVoter accepts a laser pair repeated by independent OCR variants", new TestCase() {
+            public void run() {
+                List<DateOcrParser.Result> frames = new ArrayList<DateOcrParser.Result>();
+                frames.add(DateOcrParser.parse(
+                        "20260612/20270611\n酸酸爽爽\n20260612/20270611"
+                ));
+
+                DateOcrFrameVoter.VoteResult result = DateOcrFrameVoter.vote(frames, 3);
+                assertEquals("2026-06-12", result.productionDate.value);
+                assertEquals("2027-06-11", result.expiryDate.value);
+                assertFalse(result.hasConflict, "matching OCR variants should corroborate the date pair");
+            }
+        });
+
+        test("DateOcrParser maps a laser-printed compact date range chronologically", new TestCase() {
+            public void run() {
+                DateOcrParser.Result result = DateOcrParser.parse("20260612/20270611");
+
+                assertEquals(1, result.productionDates.size());
+                assertEquals(1, result.expiryDates.size());
+                assertEquals("2026-06-12", result.productionDates.get(0).normalized);
+                assertEquals("2027-06-11", result.expiryDates.get(0).normalized);
+                assertFalse(result.hasDateConflict(), "a chronological laser-code pair should not conflict");
+
+                DateOcrParser.Result missingSlash = DateOcrParser.parse("2026061220270611");
+                assertEquals("2026-06-12", missingSlash.productionDates.get(0).normalized);
+                assertEquals("2027-06-11", missingSlash.expiryDates.get(0).normalized);
+            }
+        });
+
+        test("RecognitionTextCleaner rejects Chinese packaging metadata and matches OCR variants", new TestCase() {
+            public void run() {
+                assertEquals(0, RecognitionTextCleaner.productNameScore("营养表"));
+                assertEquals(0, RecognitionTextCleaner.productNameScore("水化合物 三就食"));
+                assertEquals(0, RecognitionTextCleaner.productNameScore("配料表 小麦粉 饮用水"));
+                assertEquals(0, RecognitionTextCleaner.productNameScore("厂家地址：北京市朝阳区"));
+                assertTrue(RecognitionTextCleaner.productNameScore("BLUE") > 0,
+                        "Latin packaging brands should remain available as candidates");
+                assertTrue(
+                        RecognitionTextCleaner.productNameScore("酸菜")
+                                > RecognitionTextCleaner.productNameScore("配啥都好吃 酸酸爽爽"),
+                        "food product words should outrank repeated marketing slogans"
+                );
+                assertTrue(
+                        RecognitionTextCleaner.isLikelyMarketingSlogan("蛋白爽滑 蛋黄绵密"),
+                        "packaging slogans should not become an automatic lock"
+                );
+                assertEquals(
+                        "壳清水鹌鹑蛋",
+                        RecognitionTextCleaner.cleanProductNameLine("壳清水鹤鹑蛋 O产品名称:清水鹌鹑蛋")
+                );
+                assertEquals(
+                        "BLUE 果汁饮料",
+                        RecognitionTextCleaner.cleanProductNameLine("第blue 票汁系料")
+                );
+                assertEquals("喝开水", RecognitionTextCleaner.cleanProductNameLine("個开水"));
+                assertTrue(
+                        RecognitionTextCleaner.extractFoodNameFragments("清净减盐工艺 個酸菜").contains("酸菜"),
+                        "a short food name should survive a noisy packaging line"
+                );
+                assertTrue(RecognitionTextCleaner.isCanonicalFoodName("大董老北京炸酱面"),
+                        "a brand-prefixed food name should remain canonical");
+                assertFalse(RecognitionTextCleaner.isCanonicalFoodName("清净减盐工艺 個酸菜"),
+                        "a noisy sentence containing a food word is not itself a product name");
+                assertTrue(
+                        RecognitionTextCleaner.productNamesSimilar("大董北京炸酱面", "大董老北京炸酱面"),
+                        "Chinese LCS similarity should tolerate one inserted OCR character"
+                );
+            }
+        });
+
+        test("RecognitionTextCleaner normalizes common Chinese drink-name OCR errors", new TestCase() {
+            public void run() {
+                assertEquals("喝开水", RecognitionTextCleaner.extractFoodNameFragments("遇开水").get(0));
+                assertEquals("喝开水", RecognitionTextCleaner.extractFoodNameFragments("倜开水").get(0));
+            }
+        });
+
+        test("RecognitionTextCleaner does not turn production dates into EAN-8 barcodes", new TestCase() {
+            public void run() {
+                assertEquals("", RecognitionTextCleaner.extractProductCodeFromOcr("生产日期 2026-07-05"));
+                assertEquals("", RecognitionTextCleaner.extractProductCodeFromOcr("有效期至 20260705"));
+                assertEquals("", RecognitionTextCleaner.extractProductCodeFromOcr("20260612/20270611"));
+                assertEquals("96385074", RecognitionTextCleaner.extractProductCodeFromOcr("商品码：96385074"));
+                assertEquals("4006381333931", RecognitionTextCleaner.extractProductCodeFromOcr("4006381333931"));
+            }
+        });
+
+        test("PackagingTextAnalyzer rejects metadata and prioritizes a food name over a large slogan", new TestCase() {
+            public void run() {
+                List<PackagingTextAnalyzer.Observation> metadata = Arrays.asList(
+                        new PackagingTextAnalyzer.Observation("营养成分表", 0.08d, 0.40d, 0.5d, 0.5d, 1d),
+                        new PackagingTextAnalyzer.Observation("配料表：小麦粉、饮用水", 0.06d, 0.70d, 0.5d, 0.5d, 1d),
+                        new PackagingTextAnalyzer.Observation("生产日期 2026-07-01", 0.06d, 0.50d, 0.5d, 0.5d, 1d),
+                        new PackagingTextAnalyzer.Observation("保质期 180天", 0.06d, 0.40d, 0.5d, 0.5d, 1d),
+                        new PackagingTextAnalyzer.Observation("净含量 500g", 0.06d, 0.30d, 0.5d, 0.5d, 1d),
+                        new PackagingTextAnalyzer.Observation("执行标准 GB/T 20977", 0.05d, 0.50d, 0.5d, 0.5d, 1d),
+                        new PackagingTextAnalyzer.Observation("厂家地址 北京市朝阳区", 0.05d, 0.70d, 0.5d, 0.5d, 1d),
+                        new PackagingTextAnalyzer.Observation("食用方法 煮制五分钟", 0.05d, 0.60d, 0.5d, 0.5d, 1d),
+                        new PackagingTextAnalyzer.Observation("扫码关注公众号", 0.05d, 0.40d, 0.5d, 0.5d, 1d)
+                );
+                assertEquals(0, PackagingTextAnalyzer.analyze(metadata).size());
+
+                List<PackagingTextAnalyzer.Candidate> candidates = PackagingTextAnalyzer.analyze(Arrays.asList(
+                        new PackagingTextAnalyzer.Observation("芝麻饼", 0.035d, 0.30d, 0.5d, 0.5d, 0.95d),
+                        new PackagingTextAnalyzer.Observation("经典原味", 0.16d, 0.62d, 0.5d, 0.5d, 0.80d)
+                ));
+                assertEquals("芝麻饼", candidates.get(0).text);
+            }
+        });
+
+        test("PackagingTextAnalyzer returns at most three score-ranked candidates", new TestCase() {
+            public void run() {
+                List<PackagingTextAnalyzer.Candidate> candidates = PackagingTextAnalyzer.analyze(Arrays.asList(
+                        new PackagingTextAnalyzer.Observation("大董炸酱面", 0.18d, 0.72d, 0.5d, 0.45d, 0.95d),
+                        new PackagingTextAnalyzer.Observation("老北京风味", 0.12d, 0.55d, 0.5d, 0.55d, 0.90d),
+                        new PackagingTextAnalyzer.Observation("手工宽面", 0.08d, 0.45d, 0.5d, 0.60d, 0.85d),
+                        new PackagingTextAnalyzer.Observation("传统酱香", 0.05d, 0.38d, 0.5d, 0.65d, 0.80d)
+                ));
+                assertEquals(3, candidates.size());
+                assertTrue(candidates.get(0).score >= candidates.get(1).score, "candidates should be score sorted");
+                assertTrue(candidates.get(1).score >= candidates.get(2).score, "candidates should be score sorted");
+            }
+        });
+
+        test("PackagingTextAnalyzer extracts a canonical food phrase from noisy Chinese OCR", new TestCase() {
+            public void run() {
+                List<PackagingTextAnalyzer.Candidate> candidates = PackagingTextAnalyzer.analyze(Arrays.asList(
+                        new PackagingTextAnalyzer.Observation(
+                                "墨酸菜 0活净发减盆 工艺 0家名",
+                                0.12d,
+                                0.62d,
+                                0.5d,
+                                0.5d,
+                                0.9d
+                        )
+                ));
+                assertEquals("酸菜", candidates.get(0).text);
+            }
+        });
+
         test("UnifiedRecognitionStabilizer locks barcode after repeated frames", new TestCase() {
             public void run() {
                 UnifiedRecognitionStabilizer stabilizer = new UnifiedRecognitionStabilizer(6, 3);
@@ -990,7 +1163,7 @@ public final class LocalLogicTest {
             }
         });
 
-        test("UnifiedRecognitionStabilizer locks packaging text as fillable candidate without changing it later", new TestCase() {
+        test("UnifiedRecognitionStabilizer old addFrame waits for repeated packaging text and keeps its lock", new TestCase() {
             public void run() {
                 UnifiedRecognitionStabilizer stabilizer = new UnifiedRecognitionStabilizer(6, 3);
 
@@ -1000,8 +1173,8 @@ public final class LocalLogicTest {
                         "大董老北京\n炸酱面",
                         false
                 );
-                assertTrue(first.hasStablePackagingName(), "first high-confidence packaging name should lock");
-                assertTrue(first.hasFillableCandidate(), "locked packaging name should allow confirmation");
+                assertFalse(first.hasStablePackagingName(), "first live packaging candidate must not lock");
+                assertFalse(first.rankedPackagingCandidates.isEmpty(), "old addFrame should still extract candidates");
 
                 UnifiedRecognitionStabilizer.Snapshot second = stabilizer.addFrame(
                         "",
@@ -1009,7 +1182,132 @@ public final class LocalLogicTest {
                         "大董老北京\n炸酱面",
                         false
                 );
-                assertEquals(first.stablePackagingName, second.stablePackagingName);
+                assertFalse(second.hasStablePackagingName(), "two live frames should remain selectable but unlocked");
+                UnifiedRecognitionStabilizer.Snapshot third = stabilizer.addFrame(
+                        "",
+                        DateOcrParser.parse("大董老北京\n炸酱面"),
+                        "大董老北京\n炸酱面",
+                        false
+                );
+                assertTrue(third.hasStablePackagingName(), "three repeated packaging frames should lock");
+                String locked = third.stablePackagingName;
+
+                UnifiedRecognitionStabilizer.Snapshot afterNoise = stabilizer.addFrame(
+                        "",
+                        DateOcrParser.parse("随机噪声"),
+                        "完全不同的随机噪声",
+                        Arrays.asList(new PackagingTextAnalyzer.Candidate("错误候选", 200d)),
+                        false
+                );
+                assertEquals(locked, afterNoise.stablePackagingName);
+            }
+        });
+
+        test("UnifiedRecognitionStabilizer replaces a weak first candidate with a stronger repeated candidate", new TestCase() {
+            public void run() {
+                UnifiedRecognitionStabilizer stabilizer = new UnifiedRecognitionStabilizer(8, 3);
+
+                UnifiedRecognitionStabilizer.Snapshot first = stabilizer.addFrame(
+                        "",
+                        DateOcrParser.parse(""),
+                        "家常面",
+                        Arrays.asList(new PackagingTextAnalyzer.Candidate("家常面", 32d)),
+                        false
+                );
+                assertFalse(first.hasStablePackagingName(), "weak first-frame candidate must remain unlocked");
+
+                UnifiedRecognitionStabilizer.Snapshot second = stabilizer.addFrame(
+                        "",
+                        DateOcrParser.parse(""),
+                        "大董老北京炸酱面",
+                        Arrays.asList(new PackagingTextAnalyzer.Candidate("大董老北京炸酱面", 120d)),
+                        false
+                );
+                assertFalse(second.hasStablePackagingName(), "one frame of the stronger candidate is not enough");
+                assertEquals("大董老北京炸酱面", second.rankedPackagingCandidates.get(0).text);
+
+                UnifiedRecognitionStabilizer.Snapshot third = stabilizer.addFrame(
+                        "",
+                        DateOcrParser.parse(""),
+                        "大董老北京炸酱面",
+                        Arrays.asList(
+                                new PackagingTextAnalyzer.Candidate("大董老北京炸酱面", 118d),
+                                new PackagingTextAnalyzer.Candidate("老北京风味", 62d),
+                                new PackagingTextAnalyzer.Candidate("手工宽面", 50d)
+                        ),
+                        false
+                );
+                assertFalse(third.hasStablePackagingName(), "two stronger frames should still wait for one more vote");
+                UnifiedRecognitionStabilizer.Snapshot fourth = stabilizer.addFrame(
+                        "",
+                        DateOcrParser.parse(""),
+                        "大董老北京炸酱面",
+                        Arrays.asList(new PackagingTextAnalyzer.Candidate("大董老北京炸酱面", 121d)),
+                        false
+                );
+                assertEquals("大董老北京炸酱面", fourth.stablePackagingName);
+                assertEquals(3, fourth.packagingNameVotes);
+                assertTrue(fourth.rankedPackagingCandidates.size() <= 3, "ranked candidates should be capped at three");
+                assertEquals(3, fourth.rankedPackagingCandidates.get(0).votes);
+            }
+        });
+
+        test("UnifiedRecognitionStabilizer lets a selected image lock one packaging candidate", new TestCase() {
+            public void run() {
+                UnifiedRecognitionStabilizer stabilizer = new UnifiedRecognitionStabilizer(6, 3);
+                UnifiedRecognitionStabilizer.Snapshot snapshot = stabilizer.addFrame(
+                        "",
+                        DateOcrParser.parse(""),
+                        "冷萃乌龙茶",
+                        Arrays.asList(new PackagingTextAnalyzer.Candidate("冷萃乌龙茶", 96d)),
+                        true
+                );
+
+                assertEquals("冷萃乌龙茶", snapshot.stablePackagingName);
+                assertTrue(snapshot.hasFillableCandidate(), "single selected image candidate should be fillable");
+            }
+        });
+
+        test("UnifiedRecognitionStabilizer caps repeated-slogan duration bias", new TestCase() {
+            public void run() {
+                UnifiedRecognitionStabilizer stabilizer = new UnifiedRecognitionStabilizer(20, 3);
+                for (int index = 0; index < 10; index++) {
+                    stabilizer.addFrame(
+                            "",
+                            DateOcrParser.parse(""),
+                            "配啥都好吃 酸酸爽爽",
+                            Arrays.asList(new PackagingTextAnalyzer.Candidate("配啥都好吃 酸酸爽爽", 68d)),
+                            false
+                    );
+                }
+                UnifiedRecognitionStabilizer.Snapshot snapshot = null;
+                for (int index = 0; index < 3; index++) {
+                    snapshot = stabilizer.addFrame(
+                            "",
+                            DateOcrParser.parse(""),
+                            "酸菜",
+                            Arrays.asList(new PackagingTextAnalyzer.Candidate("酸菜", 145d)),
+                            false
+                    );
+                }
+
+                assertEquals("酸菜", snapshot.rankedPackagingCandidates.get(0).text);
+                assertEquals("酸菜", snapshot.stablePackagingName);
+            }
+        });
+
+        test("UnifiedRecognitionStabilizer keeps the longer name inside a similar OCR cluster", new TestCase() {
+            public void run() {
+                UnifiedRecognitionStabilizer stabilizer = new UnifiedRecognitionStabilizer(6, 3);
+                UnifiedRecognitionStabilizer.Snapshot snapshot = stabilizer.addFrame(
+                        "",
+                        DateOcrParser.parse(""),
+                        "BLUE\nNFC蓝莓汁饮料",
+                        Arrays.asList(new PackagingTextAnalyzer.Candidate("BLUE", 160d)),
+                        true
+                );
+
+                assertEquals("BLUE NFC蓝莓汁饮料", snapshot.stablePackagingName);
             }
         });
 
@@ -1025,6 +1323,46 @@ public final class LocalLogicTest {
 
                 assertEquals("036000291452", snapshot.stableBarcode);
                 assertTrue(snapshot.hasFillableCandidate(), "single selected image barcode should be fillable");
+            }
+        });
+
+        test("UnifiedRecognitionStabilizer keeps single-image Chinese date candidates for form review", new TestCase() {
+            public void run() {
+                UnifiedRecognitionStabilizer stabilizer = new UnifiedRecognitionStabilizer(6, 3);
+                UnifiedRecognitionStabilizer.Snapshot snapshot = stabilizer.addFrame(
+                        "",
+                        DateOcrParser.parse("生产日期 2026-07-01 保质期 30天"),
+                        "生产日期 2026-07-01 保质期 30天",
+                        true
+                );
+                FoodItem draft = DateOcrResultPayload.toDraft(snapshot.stableDateVote);
+
+                assertTrue(snapshot.hasStableDateCandidate(), "single selected image date should be reviewable");
+                assertTrue(snapshot.hasFillableCandidate(), "single selected image date should reach the form");
+                assertEquals("2026-07-01", draft.productionDate);
+                assertEquals(Integer.valueOf(30), draft.shelfLifeValue);
+                assertEquals("2026-07-31", draft.expiryDate);
+            }
+        });
+
+        test("UnifiedRecognitionStabilizer upgrades an early weak date lock to a strong laser pair", new TestCase() {
+            public void run() {
+                UnifiedRecognitionStabilizer stabilizer = new UnifiedRecognitionStabilizer(20, 3);
+                for (int index = 0; index < 7; index++) {
+                    stabilizer.addFrame("", DateOcrParser.parse("20260612"), "20260612", false);
+                }
+                UnifiedRecognitionStabilizer.Snapshot snapshot = null;
+                for (int index = 0; index < 4; index++) {
+                    snapshot = stabilizer.addFrame(
+                            "",
+                            DateOcrParser.parse("20260612/20270611"),
+                            "20260612/20270611",
+                            false
+                    );
+                }
+
+                assertEquals("2026-06-12", snapshot.stableDateVote.productionDate.value);
+                assertEquals("2027-06-11", snapshot.stableDateVote.expiryDate.value);
             }
         });
 
