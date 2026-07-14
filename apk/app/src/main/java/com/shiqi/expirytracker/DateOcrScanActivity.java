@@ -206,9 +206,10 @@ public final class DateOcrScanActivity extends ComponentActivity {
         ));
 
         LinearLayout topPanel = new LinearLayout(this);
-        topPanel.setOrientation(LinearLayout.VERTICAL);
-        topPanel.setPadding(dp(14), dp(10), dp(14), dp(8));
-        topPanel.setBackgroundColor(Color.argb(205, 18, 25, 21));
+        topPanel.setOrientation(LinearLayout.HORIZONTAL);
+        topPanel.setGravity(Gravity.CENTER_VERTICAL);
+        topPanel.setPadding(dp(12), dp(10), dp(12), dp(10));
+        topPanel.setBackgroundColor(Color.argb(210, 20, 24, 22));
         FrameLayout.LayoutParams topParams = new FrameLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
                 ViewGroup.LayoutParams.WRAP_CONTENT
@@ -216,11 +217,7 @@ public final class DateOcrScanActivity extends ComponentActivity {
         topParams.gravity = Gravity.TOP;
         root.addView(topPanel, topParams);
 
-        LinearLayout topActions = new LinearLayout(this);
-        topActions.setGravity(Gravity.CENTER_VERTICAL);
-        topPanel.addView(topActions, matchWrap());
-
-        Button closeButton = overlayButton("返回", Color.rgb(45, 57, 49));
+        Button closeButton = overlayButton("返回", Color.rgb(52, 58, 55));
         closeButton.setOnClickListener(new View.OnClickListener() {
             @Override
             public void onClick(View view) {
@@ -228,7 +225,7 @@ public final class DateOcrScanActivity extends ComponentActivity {
                 finish();
             }
         });
-        topActions.addView(closeButton, fixed(68, 38));
+        topPanel.addView(closeButton, fixed(64, 38));
 
         TextView title = new TextView(this);
         title.setText("智能识别");
@@ -236,7 +233,7 @@ public final class DateOcrScanActivity extends ComponentActivity {
         title.setTextSize(18);
         title.setTypeface(Typeface.DEFAULT, Typeface.BOLD);
         title.setGravity(Gravity.CENTER);
-        topActions.addView(title, weightWrap(1));
+        topPanel.addView(title, weightWrap(1));
 
         statusBadge = new TextView(this);
         statusBadge.setText("待识别");
@@ -244,22 +241,21 @@ public final class DateOcrScanActivity extends ComponentActivity {
         statusBadge.setTextSize(11);
         statusBadge.setGravity(Gravity.CENTER);
         statusBadge.setTypeface(Typeface.DEFAULT, Typeface.BOLD);
-        statusBadge.setBackground(rounded(Color.rgb(51, 92, 68), dp(8), Color.argb(80, 255, 255, 255)));
-        topActions.addView(statusBadge, fixed(82, 32));
+        statusBadge.setBackground(rounded(Color.rgb(46, 91, 66), dp(8), 0));
+        topPanel.addView(statusBadge, fixed(78, 32));
 
         statusText = new TextView(this);
-        statusText.setTextColor(Color.rgb(221, 234, 224));
-        statusText.setTextSize(13);
-        statusText.setGravity(Gravity.CENTER);
-        statusText.setPadding(0, dp(6), 0, 0);
-        topPanel.addView(statusText, matchWrap());
+        statusText.setTextColor(Color.rgb(82, 91, 86));
+        statusText.setTextSize(12);
+        statusText.setMaxLines(2);
+        statusText.setPadding(0, dp(2), 0, dp(3));
 
         LinearLayout bottomPanel = new LinearLayout(this);
         bottomPanel.setOrientation(LinearLayout.VERTICAL);
         bottomPanel.setPadding(dp(14), dp(10), dp(14), dp(12));
-        bottomPanel.setBackgroundColor(Color.rgb(248, 250, 247));
-        int maxPanelHeight = Math.round(getResources().getDisplayMetrics().heightPixels * 0.40f);
-        int panelHeight = Math.min(dp(292), maxPanelHeight);
+        bottomPanel.setBackground(rounded(Color.rgb(249, 250, 250), dp(8), 0));
+        int maxPanelHeight = Math.round(getResources().getDisplayMetrics().heightPixels * 0.55f);
+        int panelHeight = Math.min(dp(320), maxPanelHeight);
         FrameLayout.LayoutParams bottomParams = new FrameLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
                 panelHeight
@@ -272,9 +268,9 @@ public final class DateOcrScanActivity extends ComponentActivity {
         bottomPanel.addView(resultHeader, matchWrap());
 
         TextView resultTitle = new TextView(this);
-        resultTitle.setText("识别候选");
-        resultTitle.setTextColor(Color.rgb(32, 42, 34));
-        resultTitle.setTextSize(15);
+        resultTitle.setText("识别结果");
+        resultTitle.setTextColor(Color.rgb(30, 35, 33));
+        resultTitle.setTextSize(14);
         resultTitle.setTypeface(Typeface.DEFAULT, Typeface.BOLD);
         resultHeader.addView(resultTitle, weightWrap(1));
 
@@ -289,12 +285,13 @@ public final class DateOcrScanActivity extends ComponentActivity {
 
         productValue = new TextView(this);
         productValue.setText("正在寻找中文商品名");
-        productValue.setTextColor(Color.rgb(26, 37, 29));
+        productValue.setTextColor(Color.rgb(24, 30, 27));
         productValue.setTextSize(18);
         productValue.setTypeface(Typeface.DEFAULT, Typeface.BOLD);
         productValue.setMaxLines(2);
-        productValue.setPadding(0, dp(4), 0, dp(4));
+        productValue.setPadding(0, dp(3), 0, dp(1));
         bottomPanel.addView(productValue, matchWrap());
+        bottomPanel.addView(statusText, matchWrap());
 
         HorizontalScrollView candidateScroll = new HorizontalScrollView(this);
         candidateScroll.setHorizontalScrollBarEnabled(false);
@@ -305,7 +302,7 @@ public final class DateOcrScanActivity extends ComponentActivity {
                 ViewGroup.LayoutParams.WRAP_CONTENT,
                 ViewGroup.LayoutParams.WRAP_CONTENT
         ));
-        bottomPanel.addView(candidateScroll, fixedHeight(38));
+        bottomPanel.addView(candidateScroll, fixedHeight(36));
 
         barcodeValue = compactResultText();
         bottomPanel.addView(barcodeValue, matchWrap());
@@ -322,9 +319,9 @@ public final class DateOcrScanActivity extends ComponentActivity {
 
         LinearLayout actionRow = new LinearLayout(this);
         actionRow.setGravity(Gravity.CENTER_VERTICAL);
-        bottomPanel.addView(actionRow, fixedHeight(42));
+        bottomPanel.addView(actionRow, fixedHeight(40));
 
-        Button cameraButton = sourceButton("拍摄");
+        Button cameraButton = sourceButton("相机");
         cameraButton.setOnClickListener(new View.OnClickListener() {
             @Override
             public void onClick(View view) {
@@ -351,7 +348,7 @@ public final class DateOcrScanActivity extends ComponentActivity {
         });
         actionRow.addView(imageButton, withMargins(weightWrap(1), 0, 0, dp(6), 0));
 
-        fillButton = overlayButton("确认候选并填入表单", Color.rgb(40, 105, 71));
+        fillButton = overlayButton("填入表单", Color.rgb(38, 104, 76));
         fillButton.setEnabled(false);
         fillButton.setAlpha(0.45f);
         fillButton.setOnClickListener(new View.OnClickListener() {
@@ -1418,11 +1415,16 @@ public final class DateOcrScanActivity extends ComponentActivity {
         if (selectedPackagingName.length() == 0 && snapshot.hasStablePackagingName()) {
             selectedPackagingName = snapshot.stablePackagingName;
         }
+        int renderedCount = 0;
         for (final PackagingTextAnalyzer.Candidate candidate : snapshot.rankedPackagingCandidates) {
+            if (renderedCount >= 3) {
+                break;
+            }
             final String candidateName = FoodItem.cleanText(candidate.text);
             if (candidateName.length() == 0) {
                 continue;
             }
+            renderedCount++;
             boolean active = RecognitionTextCleaner.productNamesSimilar(selectedPackagingName, candidateName);
             Button button = new Button(this);
             button.setText(candidateName + (candidate.votes > 1 ? " · " + candidate.votes + "帧" : ""));
@@ -1433,9 +1435,9 @@ public final class DateOcrScanActivity extends ComponentActivity {
             button.setMinHeight(0);
             button.setPadding(dp(12), 0, dp(12), 0);
             button.setBackground(rounded(
-                    active ? Color.rgb(47, 112, 76) : Color.rgb(232, 239, 231),
+                    active ? Color.rgb(38, 104, 76) : Color.rgb(238, 241, 240),
                     dp(8),
-                    active ? Color.rgb(47, 112, 76) : Color.rgb(196, 210, 198)
+                    active ? Color.rgb(38, 104, 76) : Color.rgb(216, 222, 219)
             ));
             button.setOnClickListener(new View.OnClickListener() {
                 @Override
@@ -1599,26 +1601,26 @@ public final class DateOcrScanActivity extends ComponentActivity {
     private Button sourceButton(String text) {
         Button button = new Button(this);
         button.setText(text);
-        button.setTextColor(Color.rgb(35, 49, 39));
+        button.setTextColor(Color.rgb(48, 58, 53));
         button.setTextSize(13);
         button.setAllCaps(false);
         button.setMinWidth(0);
         button.setMinHeight(0);
         button.setPadding(0, 0, 0, 0);
-        button.setBackground(rounded(Color.rgb(231, 238, 228), dp(8), Color.rgb(197, 210, 196)));
+        button.setBackground(rounded(Color.rgb(238, 241, 240), dp(8), Color.rgb(216, 222, 219)));
         return button;
     }
 
     private Button plainButton(String text) {
         Button button = new Button(this);
         button.setText(text);
-        button.setTextColor(Color.rgb(63, 111, 83));
+        button.setTextColor(Color.rgb(38, 104, 76));
         button.setTextSize(13);
         button.setAllCaps(false);
         button.setMinWidth(0);
         button.setMinHeight(0);
         button.setPadding(0, 0, 0, 0);
-        button.setBackground(rounded(Color.rgb(239, 245, 236), dp(8), Color.rgb(205, 216, 203)));
+        button.setBackground(rounded(Color.TRANSPARENT, dp(8), Color.rgb(216, 222, 219)));
         return button;
     }
 
