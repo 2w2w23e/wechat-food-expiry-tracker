@@ -16,6 +16,7 @@ import android.graphics.RectF;
 import android.graphics.Typeface;
 import android.graphics.drawable.GradientDrawable;
 import android.media.MediaMetadataRetriever;
+import android.media.ExifInterface;
 import android.net.Uri;
 import android.os.Bundle;
 import android.os.SystemClock;
@@ -67,6 +68,7 @@ import com.google.mlkit.vision.text.latin.TextRecognizerOptions;
 import java.io.InputStream;
 import java.util.ArrayList;
 import java.util.Collections;
+import java.util.Comparator;
 import java.util.List;
 import java.util.Locale;
 import java.util.concurrent.Executor;
@@ -85,6 +87,8 @@ public final class DateOcrScanActivity extends ComponentActivity {
     private static final long ANALYZE_INTERVAL_MS = 420L;
     private static final long VIDEO_FRAME_INTERVAL_US = 300000L;
     private static final int VIDEO_MAX_FRAME_SIDE = 1280;
+    private static final int STILL_IMAGE_MAX_SIDE = 2048;
+    private static final int STILL_IMAGE_MIN_SIDE = 1400;
     private static final double[] SHORT_VIDEO_FRAME_RATIOS = new double[] {
             0.00d, 0.20d, 0.40d, 0.60d, 0.85d, 0.90d, 0.95d, 0.99d,
             0.10d, 0.30d, 0.50d, 0.68d, 0.74d, 0.80d
@@ -99,6 +103,8 @@ public final class DateOcrScanActivity extends ComponentActivity {
     private TextView productionDateValue;
     private TextView rawPreviewText;
     private LinearLayout productCandidateContainer;
+    private LinearLayout keyframeContainer;
+    private RecognitionGuideOverlay recognitionOverlay;
     private Button fillButton;
 
     private ExecutorService cameraExecutor;
@@ -109,6 +115,7 @@ public final class DateOcrScanActivity extends ComponentActivity {
     private ProcessCameraProvider cameraProvider;
     private Camera camera;
     private final UnifiedRecognitionStabilizer stabilizer = new UnifiedRecognitionStabilizer();
+    private final RecognitionFrameSelector frameSelector = new RecognitionFrameSelector(1600L);
     private UnifiedRecognitionStabilizer.Snapshot latestSnapshot = stabilizer.snapshot();
     private BarcodeProductInfo latestProductInfo;
     private String latestProductBarcode = "";
@@ -119,6 +126,11 @@ public final class DateOcrScanActivity extends ComponentActivity {
     private volatile double bestVideoDatePairScore;
     private volatile double currentVideoFrameRatio;
     private String selectedPackagingName = "";
+    private final List<SessionKeyframe> sessionKeyframes = new ArrayList<SessionKeyframe>();
+    private volatile long currentFrameTimestampUs;
+    private volatile boolean appScreenRecordingDetected;
+    private long nextFrameId;
+    private boolean showingEvidenceFrame;
     private volatile int recognitionGeneration;
     private long lastAnalyzeAt;
     private volatile boolean analysisInFlight;
@@ -126,6 +138,9 @@ public final class DateOcrScanActivity extends ComponentActivity {
     private volatile boolean longVideoProfile;
     private volatile boolean videoDetailFrame;
     private int analyzedFrameSequence;
+    private int paddleVideoFramesUsed;
+    private int videoAnalyzedFrames;
+    private int videoExpectedFrames;
     private volatile boolean cameraBound;
     private Bitmap lastReplayFrame;
 
@@ -183,6 +198,7 @@ public final class DateOcrScanActivity extends ComponentActivity {
         stopVideoReplay();
         stopCamera();
         clearLastReplayFrame();
+        clearSessionKeyframes();
         ExecutorService recognitionExecutor = cameraExecutor;
         cameraExecutor = null;
         if (recognitionExecutor != null) {
@@ -235,7 +251,8 @@ public final class DateOcrScanActivity extends ComponentActivity {
                 ViewGroup.LayoutParams.MATCH_PARENT
         ));
 
-        root.addView(new RecognitionGuideOverlay(this), new FrameLayout.LayoutParams(
+        recognitionOverlay = new RecognitionGuideOverlay(this);
+        root.addView(recognitionOverlay, new FrameLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
                 ViewGroup.LayoutParams.MATCH_PARENT
         ));
@@ -282,16 +299,16 @@ public final class DateOcrScanActivity extends ComponentActivity {
         statusText = new TextView(this);
         statusText.setTextColor(Color.rgb(82, 91, 86));
         statusText.setTextSize(12);
-        statusText.setMaxLines(2);
-        statusText.setPadding(0, dp(2), 0, dp(3));
+        statusText.setMaxLines(1);
+        statusText.setPadding(0, dp(1), 0, dp(2));
 
         LinearLayout bottomPanel = new LinearLayout(this);
         bottomPanel.setOrientation(LinearLayout.VERTICAL);
         bottomPanel.setPadding(dp(14), dp(10), dp(14), dp(12));
         bottomPanel.setBackground(rounded(Color.rgb(249, 250, 250), dp(8), 0));
         float fontScale = Math.max(1f, getResources().getConfiguration().fontScale);
-        int desiredPanelDp = 320 + Math.round(Math.min(0.4f, fontScale - 1f) * 180f);
-        int maxPanelHeight = Math.round(getResources().getDisplayMetrics().heightPixels * 0.62f);
+        int desiredPanelDp = 354 + Math.round(Math.min(0.4f, fontScale - 1f) * 170f);
+        int maxPanelHeight = Math.round(getResources().getDisplayMetrics().heightPixels * 0.68f);
         int panelHeight = Math.min(dp(desiredPanelDp), maxPanelHeight);
         FrameLayout.LayoutParams bottomParams = new FrameLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
@@ -305,23 +322,23 @@ public final class DateOcrScanActivity extends ComponentActivity {
         bottomPanel.addView(resultHeader, matchWrap());
 
         TextView resultTitle = new TextView(this);
-        resultTitle.setText("识别结果");
+        resultTitle.setText("识别建议");
         resultTitle.setTextColor(Color.rgb(30, 35, 33));
         resultTitle.setTextSize(14);
         resultTitle.setTypeface(Typeface.DEFAULT, Typeface.BOLD);
         resultHeader.addView(resultTitle, weightWrap(1));
 
-        Button rawButton = plainButton("查看原文");
+        Button rawButton = plainButton("原文");
         rawButton.setOnClickListener(new View.OnClickListener() {
             @Override
             public void onClick(View view) {
                 showRawTextDialog();
             }
         });
-        resultHeader.addView(rawButton, fixed(76, 34));
+        resultHeader.addView(rawButton, fixed(64, 34));
 
         productValue = new TextView(this);
-        productValue.setText("正在寻找中文商品名");
+        productValue.setText("正在寻找商品名");
         productValue.setTextColor(Color.rgb(24, 30, 27));
         productValue.setTextSize(18);
         productValue.setTypeface(Typeface.DEFAULT, Typeface.BOLD);
@@ -339,7 +356,25 @@ public final class DateOcrScanActivity extends ComponentActivity {
                 ViewGroup.LayoutParams.WRAP_CONTENT,
                 ViewGroup.LayoutParams.WRAP_CONTENT
         ));
-        bottomPanel.addView(candidateScroll, fixedHeight(36));
+        bottomPanel.addView(candidateScroll, fixedHeight(34));
+
+        TextView keyframeTitle = new TextView(this);
+        keyframeTitle.setText("关键帧");
+        keyframeTitle.setTextColor(Color.rgb(70, 82, 73));
+        keyframeTitle.setTextSize(12);
+        keyframeTitle.setTypeface(Typeface.DEFAULT, Typeface.BOLD);
+        bottomPanel.addView(keyframeTitle, fixedHeight(18));
+
+        HorizontalScrollView keyframeScroll = new HorizontalScrollView(this);
+        keyframeScroll.setHorizontalScrollBarEnabled(false);
+        keyframeScroll.setFillViewport(false);
+        keyframeContainer = new LinearLayout(this);
+        keyframeContainer.setOrientation(LinearLayout.HORIZONTAL);
+        keyframeScroll.addView(keyframeContainer, new HorizontalScrollView.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT,
+                ViewGroup.LayoutParams.MATCH_PARENT
+        ));
+        bottomPanel.addView(keyframeScroll, fixedHeight(66));
 
         barcodeValue = compactResultText();
         bottomPanel.addView(barcodeValue, matchWrap());
@@ -352,11 +387,10 @@ public final class DateOcrScanActivity extends ComponentActivity {
         rawPreviewText.setTextSize(11);
         rawPreviewText.setMaxLines(1);
         rawPreviewText.setPadding(0, dp(3), 0, dp(5));
-        bottomPanel.addView(rawPreviewText, matchWrap());
 
         LinearLayout actionRow = new LinearLayout(this);
         actionRow.setGravity(Gravity.CENTER_VERTICAL);
-        bottomPanel.addView(actionRow, fixedHeight(40));
+        bottomPanel.addView(actionRow, fixedHeight(38));
 
         Button cameraButton = sourceButton("相机");
         cameraButton.setOnClickListener(new View.OnClickListener() {
@@ -385,7 +419,7 @@ public final class DateOcrScanActivity extends ComponentActivity {
         });
         actionRow.addView(imageButton, withMargins(weightWrap(1), 0, 0, dp(6), 0));
 
-        fillButton = overlayButton("填入表单", Color.rgb(38, 104, 76));
+        fillButton = overlayButton("采用所选结果", Color.rgb(38, 104, 76));
         fillButton.setEnabled(false);
         fillButton.setAlpha(0.45f);
         fillButton.setOnClickListener(new View.OnClickListener() {
@@ -394,7 +428,7 @@ public final class DateOcrScanActivity extends ComponentActivity {
                 finishWithCandidate();
             }
         });
-        bottomPanel.addView(fillButton, withMargins(fixedHeight(46), 0, dp(8), 0, 0));
+        bottomPanel.addView(fillButton, withMargins(fixedHeight(44), 0, dp(6), 0, 0));
 
         setContentView(root);
     }
@@ -571,6 +605,7 @@ public final class DateOcrScanActivity extends ComponentActivity {
                 currentVideoFrameRatio = durationUs <= 0L
                         ? 0d
                         : Math.max(0d, Math.min(1d, frameUs / (double) durationUs));
+                currentFrameTimestampUs = frameUs;
                 videoDetailFrame = longVideoProfile || frameUs >= Math.round(durationUs * 0.58d);
                 Bitmap frame = retriever.getFrameAtTime(frameUs, MediaMetadataRetriever.OPTION_CLOSEST);
                 if (frame == null) {
@@ -579,6 +614,19 @@ public final class DateOcrScanActivity extends ComponentActivity {
                 Bitmap scaled = scaleReplayFrame(frame);
                 if (scaled != frame) {
                     frame.recycle();
+                }
+
+                if (frameIndex == 0 && isLikelyPhoneScreenRecording(scaled, durationUs)) {
+                    appScreenRecordingDetected = true;
+                    Log.i("ShiqiRecognition", "Phone screen recording detected from video geometry");
+                }
+                if (appScreenRecordingDetected
+                        && longVideoProfile
+                        && (currentVideoFrameRatio < 0.06d || currentVideoFrameRatio > 0.89d)) {
+                    scaled.recycle();
+                    analyzedFrames++;
+                    updateVideoReplayProgress(analyzedFrames, expectedFrames);
+                    continue;
                 }
 
                 showReplayFrame(scaled);
@@ -658,7 +706,7 @@ public final class DateOcrScanActivity extends ComponentActivity {
         cameraExecutor.execute(new Runnable() {
             @Override
             public void run() {
-                analyzeDecodedImage(BitmapFactory.decodeFile(path));
+                analyzeDecodedImage(decodeOrientedFile(path));
             }
         });
     }
@@ -686,10 +734,8 @@ public final class DateOcrScanActivity extends ComponentActivity {
 
         @Override
         public void run() {
-            InputStream inputStream = null;
             try {
-                inputStream = getContentResolver().openInputStream(uri);
-                analyzeDecodedImage(BitmapFactory.decodeStream(inputStream));
+                analyzeDecodedImage(decodeOrientedUri(uri));
             } catch (final Exception error) {
                 runOnUiThread(new Runnable() {
                     @Override
@@ -698,15 +744,98 @@ public final class DateOcrScanActivity extends ComponentActivity {
                         statusText.setText("图片读取失败，请换一张更清晰的图片。");
                     }
                 });
-            } finally {
-                if (inputStream != null) {
-                    try {
-                        inputStream.close();
-                    } catch (Exception ignored) {
-                    }
-                }
             }
         }
+    }
+
+    private Bitmap decodeOrientedFile(String path) {
+        Bitmap decoded = BitmapFactory.decodeFile(path);
+        if (decoded == null) {
+            return null;
+        }
+        try {
+            ExifInterface exif = new ExifInterface(path);
+            return applyExifOrientation(decoded, exif.getAttributeInt(
+                    ExifInterface.TAG_ORIENTATION,
+                    ExifInterface.ORIENTATION_NORMAL
+            ));
+        } catch (Exception ignored) {
+            return decoded;
+        }
+    }
+
+    private Bitmap decodeOrientedUri(Uri uri) throws Exception {
+        int orientation = ExifInterface.ORIENTATION_NORMAL;
+        InputStream exifStream = getContentResolver().openInputStream(uri);
+        if (exifStream != null) {
+            try {
+                ExifInterface exif = new ExifInterface(exifStream);
+                orientation = exif.getAttributeInt(
+                        ExifInterface.TAG_ORIENTATION,
+                        ExifInterface.ORIENTATION_NORMAL
+                );
+            } finally {
+                exifStream.close();
+            }
+        }
+
+        InputStream bitmapStream = getContentResolver().openInputStream(uri);
+        if (bitmapStream == null) {
+            return null;
+        }
+        try {
+            return applyExifOrientation(BitmapFactory.decodeStream(bitmapStream), orientation);
+        } finally {
+            bitmapStream.close();
+        }
+    }
+
+    private Bitmap applyExifOrientation(Bitmap source, int orientation) {
+        if (source == null || orientation == ExifInterface.ORIENTATION_NORMAL
+                || orientation == ExifInterface.ORIENTATION_UNDEFINED) {
+            return source;
+        }
+        Matrix matrix = new Matrix();
+        switch (orientation) {
+            case ExifInterface.ORIENTATION_FLIP_HORIZONTAL:
+                matrix.setScale(-1f, 1f);
+                break;
+            case ExifInterface.ORIENTATION_ROTATE_180:
+                matrix.setRotate(180f);
+                break;
+            case ExifInterface.ORIENTATION_FLIP_VERTICAL:
+                matrix.setScale(1f, -1f);
+                break;
+            case ExifInterface.ORIENTATION_TRANSPOSE:
+                matrix.setRotate(90f);
+                matrix.postScale(-1f, 1f);
+                break;
+            case ExifInterface.ORIENTATION_ROTATE_90:
+                matrix.setRotate(90f);
+                break;
+            case ExifInterface.ORIENTATION_TRANSVERSE:
+                matrix.setRotate(-90f);
+                matrix.postScale(-1f, 1f);
+                break;
+            case ExifInterface.ORIENTATION_ROTATE_270:
+                matrix.setRotate(-90f);
+                break;
+            default:
+                return source;
+        }
+        Bitmap oriented = Bitmap.createBitmap(
+                source,
+                0,
+                0,
+                source.getWidth(),
+                source.getHeight(),
+                matrix,
+                true
+        );
+        if (oriented != source) {
+            source.recycle();
+        }
+        return oriented;
     }
 
     private void analyzeDecodedImage(Bitmap bitmap) {
@@ -714,7 +843,8 @@ public final class DateOcrScanActivity extends ComponentActivity {
             if (bitmap == null) {
                 throw new IllegalArgumentException("bad image");
             }
-            Bitmap scaled = scaleReplayFrame(bitmap);
+            Bitmap scaled = prepareStillImage(bitmap);
+            currentFrameTimestampUs = 0L;
             if (scaled != bitmap) {
                 bitmap.recycle();
             }
@@ -757,9 +887,14 @@ public final class DateOcrScanActivity extends ComponentActivity {
         StringBuilder rawText = new StringBuilder();
         StringBuilder focusedDateText = new StringBuilder();
         StringBuilder supplementaryDateText = new StringBuilder();
+        String preferredDateText = "";
+        long frameId = ++nextFrameId;
+        long frameTimestampUs = currentFrameTimestampUs;
+        LowContrastTextPreprocessor.FrameMetrics frameMetrics =
+                LowContrastTextPreprocessor.measureFrame(bitmap);
         List<PackagingTextAnalyzer.Observation> textObservations =
                 new ArrayList<PackagingTextAnalyzer.Observation>();
-        List<FrameVariant> variants = buildFrameVariants(bitmap, cameraLive);
+        List<FrameVariant> variants = buildFrameVariants(bitmap, cameraLive, singleFrameConfirmation);
         try {
             for (FrameVariant variant : variants) {
                 if (expectedGeneration != recognitionGeneration) {
@@ -790,37 +925,49 @@ public final class DateOcrScanActivity extends ComponentActivity {
                 }
                 if (textTask != null && textTask.isSuccessful() && textTask.getResult() != null) {
                     Text recognizedText = textTask.getResult();
-                    appendRecognizedText(rawText, recognizedText.getText());
+                    detectAppScreenRecording(recognizedText);
+                    appendRecognizedText(rawText, recognizedText, variant);
                     if (variant.dateFocused) {
-                        appendRecognizedText(focusedDateText, recognizedText.getText());
+                        appendRecognizedText(focusedDateText, recognizedText, variant);
                     }
                     if (variant.datePairSupplement) {
-                        appendRecognizedText(supplementaryDateText, recognizedText.getText());
+                        appendRecognizedText(supplementaryDateText, recognizedText, variant);
                     }
                     appendTextObservations(
                             textObservations,
                             recognizedText,
-                            variant.bitmap.getWidth(),
-                            variant.bitmap.getHeight(),
-                            variant.sourceQuality
+                            variant,
+                            "ML Kit 中文"
                     );
                 }
                 if (latinTextTask != null && latinTextTask.isSuccessful() && latinTextTask.getResult() != null) {
                     Text latinText = latinTextTask.getResult();
-                    appendRecognizedText(rawText, latinText.getText());
+                    appendRecognizedText(rawText, latinText, variant);
                     if (variant.dateFocused) {
-                        appendRecognizedText(focusedDateText, latinText.getText());
+                        appendRecognizedText(focusedDateText, latinText, variant);
                     }
                     if (variant.datePairSupplement) {
-                        appendRecognizedText(supplementaryDateText, latinText.getText());
+                        appendRecognizedText(supplementaryDateText, latinText, variant);
                     }
                     appendTextObservations(
                             textObservations,
                             latinText,
-                            variant.bitmap.getWidth(),
-                            variant.bitmap.getHeight(),
-                            Math.min(1d, variant.sourceQuality + 0.05d)
+                            variant.withSourceQuality(Math.min(1d, variant.sourceQuality + 0.05d)),
+                            "ML Kit 拉丁"
                     );
+                }
+            }
+            if (singleFrameConfirmation || (videoReplayActive && videoDetailFrame)) {
+                PaddleDateEvidence detectedLineEvidence = recognizePaddleDetectedDateLines(
+                        bitmap,
+                        textObservations
+                );
+                if (detectedLineEvidence.text.length() > 0) {
+                    appendRecognizedText(rawText, detectedLineEvidence.text);
+                    appendRecognizedText(focusedDateText, detectedLineEvidence.text);
+                    appendRecognizedText(supplementaryDateText, detectedLineEvidence.text);
+                    preferredDateText = detectedLineEvidence.originalText;
+                    textObservations.add(detectedLineEvidence.toObservation(frameMetrics.visualScore));
                 }
             }
             DateOcrParser.Result visibleDates = DateOcrParser.parse(rawText.toString());
@@ -828,12 +975,28 @@ public final class DateOcrScanActivity extends ComponentActivity {
                     && !visibleDates.expiryDates.isEmpty();
             if (visibleDatePair) {
                 appendRecognizedText(supplementaryDateText, rawText.toString());
-            } else {
-                String paddleLineText = recognizePaddleDateBands(bitmap, singleFrameConfirmation, cameraLive);
-                if (paddleLineText.length() > 0) {
-                    appendRecognizedText(rawText, paddleLineText);
-                    appendRecognizedText(focusedDateText, paddleLineText);
-                    appendRecognizedText(supplementaryDateText, paddleLineText);
+            } else if (shouldRunPaddleFallback(
+                    visibleDates,
+                    singleFrameConfirmation,
+                    cameraLive,
+                    frameMetrics.visualScore
+            )) {
+                if (videoReplayActive) {
+                    paddleVideoFramesUsed++;
+                }
+                PaddleDateEvidence paddleEvidence = recognizePaddleDateBands(
+                        bitmap,
+                        singleFrameConfirmation,
+                        cameraLive
+                );
+                if (paddleEvidence.text.length() > 0) {
+                    appendRecognizedText(rawText, paddleEvidence.text);
+                    appendRecognizedText(focusedDateText, paddleEvidence.text);
+                    appendRecognizedText(supplementaryDateText, paddleEvidence.text);
+                    preferredDateText = FoodItem.cleanText(preferredDateText).length() == 0
+                            ? paddleEvidence.originalText
+                            : preferredDateText + "\n" + paddleEvidence.originalText;
+                    textObservations.add(paddleEvidence.toObservation(frameMetrics.visualScore));
                 }
             }
         } finally {
@@ -843,13 +1006,39 @@ public final class DateOcrScanActivity extends ComponentActivity {
         if (expectedGeneration != recognitionGeneration) {
             return;
         }
+        List<PackagingTextAnalyzer.Candidate> packagingCandidates =
+                PackagingTextAnalyzer.analyze(textObservations, singleFrameConfirmation);
+        String selectedDateText = videoReplayActive || cameraLive
+                ? focusedDateText.toString()
+                : rawText.toString();
+        DateOcrParser.Result parsedFrame = DateOcrParser.parseFocusedWithDateOnlySupplement(
+                FoodItem.cleanText(selectedDateText),
+                FoodItem.cleanText(supplementaryDateText.toString())
+        );
+        parsedFrame = DateEvidencePolicy.apply(
+                parsedFrame,
+                preferredDateText,
+                singleFrameConfirmation
+        );
         handleRecognitionResult(
                 barcode,
                 rawText.toString(),
-                PackagingTextAnalyzer.analyze(textObservations),
+                packagingCandidates,
                 singleFrameConfirmation,
-                videoReplayActive || cameraLive ? focusedDateText.toString() : rawText.toString(),
-                supplementaryDateText.toString()
+                selectedDateText,
+                supplementaryDateText.toString(),
+                parsedFrame,
+                cameraLive
+        );
+        rememberEvidenceFrame(
+                bitmap,
+                frameId,
+                frameTimestampUs,
+                frameMetrics,
+                textObservations,
+                packagingCandidates,
+                parsedFrame,
+                barcode
         );
     }
 
@@ -864,6 +1053,8 @@ public final class DateOcrScanActivity extends ComponentActivity {
     }
 
     private void updateVideoReplayProgress(final int analyzedFrames, final int expectedFrames) {
+        videoAnalyzedFrames = analyzedFrames;
+        videoExpectedFrames = expectedFrames;
         if (analyzedFrames > 1 && analyzedFrames % 2 != 0 && analyzedFrames < expectedFrames) {
             return;
         }
@@ -877,14 +1068,88 @@ public final class DateOcrScanActivity extends ComponentActivity {
         });
     }
 
-    private List<FrameVariant> buildFrameVariants(Bitmap bitmap, boolean cameraLive) {
+    private List<FrameVariant> buildFrameVariants(
+            Bitmap bitmap,
+            boolean cameraLive,
+            boolean singleFrameConfirmation
+    ) {
         List<FrameVariant> variants = new ArrayList<FrameVariant>();
         analyzedFrameSequence++;
+        if (singleFrameConfirmation) {
+            variants.add(new FrameVariant(bitmap, 0, true, true, true, false, 0.90d));
+            variants.add(new FrameVariant(bitmap, 90, false, true, true, false, 0.80d, true, true));
+            variants.add(new FrameVariant(bitmap, 270, false, true, true, false, 0.80d, true, true));
+            if (isLikelyDateStrip(bitmap)) {
+                Bitmap laser = LowContrastTextPreprocessor.enhanceLaserPrintedText(bitmap);
+                if (laser != null) {
+                    variants.add(new FrameVariant(laser, 0, false, true, true, true, 0.96d, true, true));
+                    variants.add(new FrameVariant(laser, 90, false, true, true, false, 0.88d, true, true));
+                    variants.add(new FrameVariant(laser, 270, false, true, true, false, 0.88d, true, true));
+                }
+                Bitmap embossed = LowContrastTextPreprocessor.enhanceEmbossedText(bitmap);
+                if (embossed != null) {
+                    variants.add(new FrameVariant(embossed, 0, false, true, true, true, 0.96d, true, true));
+                }
+                Bitmap binary = LowContrastTextPreprocessor.binarizeText(bitmap, false);
+                if (binary != null) {
+                    variants.add(new FrameVariant(binary, 0, false, true, true, true, 0.94d, true, true));
+                }
+                Bitmap inverted = LowContrastTextPreprocessor.binarizeText(bitmap, true);
+                if (inverted != null) {
+                    variants.add(new FrameVariant(inverted, 0, false, true, true, true, 0.94d, true, true));
+                }
+                Bitmap brightText = LowContrastTextPreprocessor.isolateBrightText(bitmap);
+                if (brightText != null) {
+                    variants.add(new FrameVariant(brightText, 0, false, true, true, true, 0.97d, true, true));
+                }
+                return variants;
+            }
+
+            float[] lefts = new float[] {0.00f, 0.40f};
+            float[] tops = new float[] {0.00f, 0.29f, 0.58f};
+            for (float top : tops) {
+                for (float left : lefts) {
+                    addFrameCrop(
+                            variants,
+                            bitmap,
+                            left,
+                            top,
+                            0.60f,
+                            0.42f,
+                            STILL_IMAGE_MIN_SIDE,
+                            0,
+                            false,
+                            true,
+                            true,
+                            true
+                    );
+                }
+            }
+            Bitmap enhanced = LowContrastTextPreprocessor.enhanceLaserPrintedText(bitmap);
+            if (enhanced != null) {
+                variants.add(new FrameVariant(enhanced, 0, false, true, true, true, 0.92d, true, false));
+                variants.add(new FrameVariant(enhanced, 90, false, true, true, false, 0.86d, true, true));
+                variants.add(new FrameVariant(enhanced, 270, false, true, true, false, 0.86d, true, true));
+            }
+            return variants;
+        }
         if (cameraLive) {
             variants.add(new FrameVariant(bitmap, 0, true, true, true, false, 0.82d));
             addFrameCrop(variants, bitmap, 0.07f, 0.13f, 0.86f, 0.52f, 1400, 0, true, true, true, true);
             if (analyzedFrameSequence % 2 == 0) {
                 addEnhancedFrameCrop(variants, bitmap, 0.07f, 0.13f, 0.86f, 0.52f, 1500);
+            }
+            return variants;
+        }
+        if (videoReplayActive && appScreenRecordingDetected) {
+            variants.add(new FrameVariant(bitmap, 0, true, false, false, false, 0.74d));
+            addFrameCrop(variants, bitmap, 0.04f, 0.075f, 0.92f, 0.565f, 1400, 0, false, true, true, true);
+            if (currentVideoFrameRatio >= 0.62d) {
+                addFrameCrop(variants, bitmap, 0.05f, 0.12f, 0.90f, 0.28f, 1600, 0, false, true, true, true);
+                addEnhancedFrameCrop(variants, bitmap, 0.05f, 0.12f, 0.90f, 0.28f, 1600);
+                addEmbossedFrameCrop(variants, bitmap, 0.05f, 0.12f, 0.90f, 0.28f, 1600);
+            } else if (analyzedFrameSequence % 3 == 0) {
+                addEnhancedFrameCrop(variants, bitmap, 0.08f, 0.10f, 0.84f, 0.50f, 1500);
             }
             return variants;
         }
@@ -907,7 +1172,7 @@ public final class DateOcrScanActivity extends ComponentActivity {
             }
             return variants;
         }
-        variants.add(new FrameVariant(bitmap, 0, true, false, false, false, 0.68d));
+        variants.add(new FrameVariant(bitmap, 0, true, true, false, false, 0.68d));
         addFrameCrop(variants, bitmap, 0.04f, 0.13f, 0.92f, 0.50f, 1100, 0, false, true, false);
         addFrameCrop(variants, bitmap, 0.14f, 0.20f, 0.72f, 0.40f, 1800, 0, false, true, true, true);
         addFrameCrop(variants, bitmap, 0.38f, 0.48f, 0.60f, 0.44f, 1400, 0, false, true, false, true);
@@ -962,7 +1227,21 @@ public final class DateOcrScanActivity extends ComponentActivity {
         Bitmap enhanced = LowContrastTextPreprocessor.enhanceLaserPrintedText(prepared);
         prepared.recycle();
         if (enhanced != null) {
-            variants.add(new FrameVariant(enhanced, 0, false, true, true, true, 0.94d, true));
+            variants.add(new FrameVariant(
+                    enhanced,
+                    0,
+                    false,
+                    true,
+                    true,
+                    true,
+                    0.94d,
+                    true,
+                    false,
+                    leftRatio,
+                    topRatio,
+                    widthRatio,
+                    heightRatio
+            ));
         }
     }
 
@@ -995,25 +1274,209 @@ public final class DateOcrScanActivity extends ComponentActivity {
         );
     }
 
-    private String recognizePaddleDateBands(
+    private PaddleDateEvidence recognizePaddleDetectedDateLines(
+            Bitmap bitmap,
+            List<PackagingTextAnalyzer.Observation> observations
+    ) {
+        PaddleLineOcrEngine engine = paddleLineOcrEngine;
+        if (engine == null || bitmap == null || bitmap.isRecycled()
+                || observations == null || observations.isEmpty()) {
+            return PaddleDateEvidence.empty();
+        }
+
+        List<PackagingTextAnalyzer.Observation> candidates =
+                new ArrayList<PackagingTextAnalyzer.Observation>();
+        for (PackagingTextAnalyzer.Observation observation : observations) {
+            if (looksLikeDateLine(observation.text)) {
+                candidates.add(observation);
+            }
+        }
+        Collections.sort(candidates, new Comparator<PackagingTextAnalyzer.Observation>() {
+            @Override
+            public int compare(
+                    PackagingTextAnalyzer.Observation left,
+                    PackagingTextAnalyzer.Observation right
+            ) {
+                return Double.compare(dateLinePriority(right), dateLinePriority(left));
+            }
+        });
+
+        StringBuilder recognized = new StringBuilder();
+        StringBuilder original = new StringBuilder();
+        RecognitionEvidence.NormalizedRect evidenceRect = null;
+        List<RecognitionEvidence.NormalizedRect> attempted =
+                new ArrayList<RecognitionEvidence.NormalizedRect>();
+        double bestConfidence = 0d;
+        int imageWidth = bitmap.getWidth();
+        int imageHeight = bitmap.getHeight();
+        int maxAttempts = videoReplayActive ? 2 : 8;
+        for (PackagingTextAnalyzer.Observation observation : candidates) {
+            RecognitionEvidence.NormalizedRect rect = expandedDateLineRect(observation);
+            if (isNearDuplicateRect(rect, attempted)) {
+                continue;
+            }
+            attempted.add(rect);
+            if (attempted.size() > maxAttempts) {
+                break;
+            }
+
+            int left = clamp((int) Math.floor(rect.left * imageWidth), 0, imageWidth - 1);
+            int top = clamp((int) Math.floor(rect.top * imageHeight), 0, imageHeight - 1);
+            int right = clamp((int) Math.ceil(rect.right * imageWidth), left + 1, imageWidth);
+            int bottom = clamp((int) Math.ceil(rect.bottom * imageHeight), top + 1, imageHeight);
+            Bitmap crop = Bitmap.createBitmap(bitmap, left, top, right - left, bottom - top);
+            Bitmap prepared = upscaleIfNeeded(crop, 1200);
+            if (prepared != crop) {
+                crop.recycle();
+            }
+            List<PaddleLineOcrEngine.LineResult> lineResults =
+                    new ArrayList<PaddleLineOcrEngine.LineResult>();
+            try {
+                lineResults.add(engine.recognizeResult(prepared, 0.25f));
+                Bitmap laser = LowContrastTextPreprocessor.enhanceLaserPrintedText(prepared);
+                if (laser != null) {
+                    try {
+                        lineResults.add(engine.recognizeResult(laser, 0.25f));
+                    } finally {
+                        laser.recycle();
+                    }
+                }
+                if (!videoReplayActive) {
+                    Bitmap brightText = LowContrastTextPreprocessor.isolateBrightText(prepared);
+                    if (brightText != null) {
+                        try {
+                            lineResults.add(engine.recognizeResult(brightText, 0.25f));
+                        } finally {
+                            brightText.recycle();
+                        }
+                    }
+                }
+            } finally {
+                prepared.recycle();
+            }
+
+            boolean acceptedCrop = false;
+            for (PaddleLineOcrEngine.LineResult result : lineResults) {
+                if (result == null || !DateOcrParser.parse(result.text).hasAnyCandidate()) {
+                    continue;
+                }
+                appendRecognizedText(recognized, result.text);
+                appendRecognizedText(original, result.text);
+                bestConfidence = Math.max(bestConfidence, result.confidence);
+                acceptedCrop = true;
+            }
+            if (acceptedCrop) {
+                evidenceRect = evidenceRect == null ? rect : evidenceRect.union(rect);
+            }
+        }
+
+        return new PaddleDateEvidence(
+                recognized.toString(),
+                original.toString(),
+                bestConfidence,
+                evidenceRect
+        );
+    }
+
+    private boolean looksLikeDateLine(String text) {
+        String cleaned = FoodItem.cleanText(text);
+        int digits = 0;
+        for (int index = 0; index < cleaned.length(); index++) {
+            if (Character.isDigit(cleaned.charAt(index))) {
+                digits++;
+            }
+        }
+        boolean shelfLifeLine = cleaned.contains("保质期")
+                || cleaned.contains("质期")
+                || cleaned.toLowerCase(Locale.US).contains("shelf life");
+        if (shelfLifeLine && digits >= 1 && digits <= 3) {
+            return true;
+        }
+        if (digits < 4 || digits > 10) {
+            return false;
+        }
+        return digits >= 6
+                || cleaned.indexOf('/') >= 0
+                || cleaned.indexOf('.') >= 0
+                || cleaned.indexOf('-') >= 0
+                || cleaned.toLowerCase(Locale.US).contains("date")
+                || cleaned.toLowerCase(Locale.US).contains("exp")
+                || cleaned.contains("日期")
+                || cleaned.contains("保质期")
+                || cleaned.contains("有效期");
+    }
+
+    private double dateLinePriority(PackagingTextAnalyzer.Observation observation) {
+        int digits = 0;
+        for (int index = 0; index < observation.text.length(); index++) {
+            if (Character.isDigit(observation.text.charAt(index))) {
+                digits++;
+            }
+        }
+        double model = Double.isNaN(observation.modelConfidence)
+                ? 0.45d
+                : RecognitionEvidence.clamp01(observation.modelConfidence);
+        return Math.min(8, digits) + observation.sourceQuality + model;
+    }
+
+    private RecognitionEvidence.NormalizedRect expandedDateLineRect(
+            PackagingTextAnalyzer.Observation observation
+    ) {
+        double height = Math.max(0.01d, observation.bottom - observation.top);
+        double width = Math.max(0.01d, observation.right - observation.left);
+        double verticalPadding = Math.max(0.006d, height * 0.25d);
+        double horizontalPadding = Math.max(0.012d, width * 0.04d);
+        return new RecognitionEvidence.NormalizedRect(
+                observation.left - horizontalPadding,
+                observation.top - verticalPadding,
+                observation.right + horizontalPadding,
+                observation.bottom + verticalPadding
+        );
+    }
+
+    private boolean isNearDuplicateRect(
+            RecognitionEvidence.NormalizedRect candidate,
+            List<RecognitionEvidence.NormalizedRect> existing
+    ) {
+        double centerX = (candidate.left + candidate.right) / 2d;
+        double centerY = (candidate.top + candidate.bottom) / 2d;
+        for (RecognitionEvidence.NormalizedRect rect : existing) {
+            double otherCenterX = (rect.left + rect.right) / 2d;
+            double otherCenterY = (rect.top + rect.bottom) / 2d;
+            if (Math.abs(centerX - otherCenterX) <= 0.060d
+                    && Math.abs(centerY - otherCenterY) <= 0.010d) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private PaddleDateEvidence recognizePaddleDateBands(
             Bitmap bitmap,
             boolean singleFrameConfirmation,
             boolean cameraLive
     ) {
         PaddleLineOcrEngine engine = paddleLineOcrEngine;
         if (engine == null || bitmap == null || bitmap.isRecycled()) {
-            return "";
+            return PaddleDateEvidence.empty();
         }
-        float[] bandStarts = videoReplayActive
+        if (singleFrameConfirmation && isLikelyDateStrip(bitmap)) {
+            return recognizePaddleDateStrip(engine, bitmap);
+        }
+        float[] bandStarts = appScreenRecordingDetected
+                ? new float[] {0.18f, 0.21f, 0.24f, 0.27f, 0.30f, 0.33f, 0.36f}
+                : videoReplayActive
                 ? new float[] {
-                0.75f, 0.80f, 0.85f, 0.90f, 0.65f,
-                0.55f, 0.45f, 0.35f, 0.25f, 0.15f
+                0.64f, 0.645f, 0.67f, 0.75f, 0.80f, 0.85f,
+                0.90f, 0.55f, 0.45f, 0.35f, 0.25f, 0.15f
         }
                 : new float[] {
-                0.285f, 0.325f, 0.20f, 0.24f, 0.37f,
-                0.44f, 0.51f, 0.58f, 0.65f, 0.72f
+                 0.285f, 0.325f, 0.20f, 0.24f, 0.37f,
+                0.44f, 0.51f, 0.58f, 0.61f, 0.65f, 0.72f
         };
-        float[] horizontalStarts = new float[] {0.32f, 0.02f, 0.60f};
+        float[] horizontalStarts = appScreenRecordingDetected
+                ? new float[] {0.08f}
+                : new float[] {0.42f, 0.02f, 0.56f};
         int firstIndex;
         int bandCount;
         if (singleFrameConfirmation) {
@@ -1023,16 +1486,28 @@ public final class DateOcrScanActivity extends ComponentActivity {
             firstIndex = analyzedFrameSequence % bandStarts.length;
             bandCount = 1;
         } else if (videoReplayActive && videoDetailFrame) {
-            firstIndex = (analyzedFrameSequence * 3) % bandStarts.length;
-            bandCount = Math.min(3, bandStarts.length);
+            if (appScreenRecordingDetected && currentVideoFrameRatio >= 0.62d) {
+                firstIndex = 0;
+                bandCount = bandStarts.length;
+            } else {
+                firstIndex = (analyzedFrameSequence * 3) % bandStarts.length;
+                bandCount = Math.min(3, bandStarts.length);
+            }
         } else {
-            return "";
+            return PaddleDateEvidence.empty();
         }
 
         StringBuilder recognized = new StringBuilder();
+        StringBuilder originalRecognized = new StringBuilder();
+        RecognitionEvidence.NormalizedRect evidenceRect = null;
+        double bestConfidence = 0d;
         int imageWidth = bitmap.getWidth();
         int imageHeight = bitmap.getHeight();
-        int bandHeight = Math.max(1, Math.round(imageHeight * 0.05f));
+        int bandHeight = Math.max(1, Math.round(
+                imageHeight * (appScreenRecordingDetected
+                        ? 0.065f
+                        : videoReplayActive ? 0.032f : 0.08f)
+        ));
         for (int index = 0; index < bandCount; index++) {
             int bandIndex = (firstIndex + index) % bandStarts.length;
             int top = Math.max(0, Math.min(
@@ -1044,7 +1519,9 @@ public final class DateOcrScanActivity extends ComponentActivity {
                     : (analyzedFrameSequence + index) % horizontalStarts.length;
             int horizontalCount = singleFrameConfirmation
                     ? horizontalStarts.length
-                    : (videoReplayActive ? Math.min(2, horizontalStarts.length) : 1);
+                    : (videoReplayActive && !appScreenRecordingDetected
+                    ? Math.min(2, horizontalStarts.length)
+                    : 1);
             for (int horizontalIndex = 0; horizontalIndex < horizontalCount; horizontalIndex++) {
                 float leftRatio = horizontalStarts[
                         (horizontalStartIndex + horizontalIndex) % horizontalStarts.length
@@ -1053,18 +1530,47 @@ public final class DateOcrScanActivity extends ComponentActivity {
                         imageWidth - 1,
                         Math.round(imageWidth * leftRatio)
                 ));
+                float widthRatio = appScreenRecordingDetected
+                        ? 0.84f
+                        : videoReplayActive ? 0.52f : 0.38f;
                 int width = Math.max(1, Math.min(
                         imageWidth - left,
-                        Math.round(imageWidth * 0.38f)
+                        Math.round(imageWidth * widthRatio)
                 ));
                 Bitmap crop = Bitmap.createBitmap(bitmap, left, top, width, bandHeight);
                 try {
-                    appendRecognizedText(recognized, engine.recognize(crop));
+                    PaddleLineOcrEngine.LineResult original = engine.recognizeResult(crop);
+                    appendRecognizedText(recognized, original.text);
+                    appendRecognizedText(originalRecognized, original.text);
+                    if (original.text.length() > 0) {
+                        bestConfidence = Math.max(bestConfidence, original.confidence);
+                        RecognitionEvidence.NormalizedRect currentRect = new RecognitionEvidence.NormalizedRect(
+                                left / (double) imageWidth,
+                                top / (double) imageHeight,
+                                (left + width) / (double) imageWidth,
+                                (top + bandHeight) / (double) imageHeight
+                        );
+                        evidenceRect = evidenceRect == null ? currentRect : evidenceRect.union(currentRect);
+                    }
                     if ((singleFrameConfirmation || videoReplayActive) && horizontalIndex == 0) {
                         Bitmap enhanced = LowContrastTextPreprocessor.enhanceEmbossedText(crop);
                         if (enhanced != null) {
                             try {
-                                appendRecognizedText(recognized, engine.recognize(enhanced));
+                                PaddleLineOcrEngine.LineResult enhancedResult = engine.recognizeResult(enhanced);
+                                appendRecognizedText(recognized, enhancedResult.text);
+                                if (enhancedResult.text.length() > 0) {
+                                    bestConfidence = Math.max(bestConfidence, enhancedResult.confidence);
+                                    RecognitionEvidence.NormalizedRect currentRect =
+                                            new RecognitionEvidence.NormalizedRect(
+                                                    left / (double) imageWidth,
+                                                    top / (double) imageHeight,
+                                                    (left + width) / (double) imageWidth,
+                                                    (top + bandHeight) / (double) imageHeight
+                                            );
+                                    evidenceRect = evidenceRect == null
+                                            ? currentRect
+                                            : evidenceRect.union(currentRect);
+                                }
                             } finally {
                                 enhanced.recycle();
                             }
@@ -1075,11 +1581,47 @@ public final class DateOcrScanActivity extends ComponentActivity {
                 }
                 DateOcrParser.Result parsed = DateOcrParser.parse(recognized.toString());
                 if (!parsed.productionDates.isEmpty() && !parsed.expiryDates.isEmpty()) {
-                    return recognized.toString();
+                    return new PaddleDateEvidence(
+                            recognized.toString(),
+                            originalRecognized.toString(),
+                            bestConfidence,
+                            evidenceRect
+                    );
                 }
             }
         }
-        return recognized.toString();
+        return new PaddleDateEvidence(
+                recognized.toString(),
+                originalRecognized.toString(),
+                bestConfidence,
+                evidenceRect
+        );
+    }
+
+    private boolean shouldRunPaddleFallback(
+            DateOcrParser.Result visibleDates,
+            boolean singleFrameConfirmation,
+            boolean cameraLive,
+            double visualQuality
+    ) {
+        if (singleFrameConfirmation) {
+            return visibleDates == null || !visibleDates.hasAnyCandidate();
+        }
+        boolean hasDateSignal = visibleDates != null && visibleDates.hasAnyCandidate();
+        if (cameraLive) {
+            return hasDateSignal || analyzedFrameSequence % 3 == 0;
+        }
+        if (!videoReplayActive || !videoDetailFrame || paddleVideoFramesUsed >= 5) {
+            return false;
+        }
+        if (hasDateSignal) {
+            return true;
+        }
+        if (appScreenRecordingDetected && currentVideoFrameRatio < 0.52d) {
+            return false;
+        }
+        return visualQuality >= 0.42d
+                && (currentVideoFrameRatio >= 0.52d || analyzedFrameSequence % 5 == 0);
     }
 
     private void addFrameCrop(
@@ -1116,7 +1658,12 @@ public final class DateOcrScanActivity extends ComponentActivity {
                 scanLatinText,
                 true,
                 sourceQuality,
-                dateFocused
+                dateFocused,
+                false,
+                leftRatio,
+                topRatio,
+                widthRatio,
+                heightRatio
         ));
     }
 
@@ -1145,25 +1692,108 @@ public final class DateOcrScanActivity extends ComponentActivity {
         builder.append(cleaned);
     }
 
-    private List<PackagingTextAnalyzer.Observation> observationsFromText(
-            Text text,
-            int imageWidth,
-            int imageHeight,
-            double sourceQuality
-    ) {
-        List<PackagingTextAnalyzer.Observation> observations =
-                new ArrayList<PackagingTextAnalyzer.Observation>();
-        appendTextObservations(observations, text, imageWidth, imageHeight, sourceQuality);
-        return observations;
+    private void appendRecognizedText(StringBuilder builder, Text text, FrameVariant variant) {
+        if (builder == null || text == null || variant == null) {
+            return;
+        }
+        for (Text.TextBlock block : text.getTextBlocks()) {
+            for (Text.Line line : block.getLines()) {
+                Rect box = line.getBoundingBox();
+                if (box == null || !isAllowedEvidenceRegion(variant, box)) {
+                    continue;
+                }
+                appendRecognizedText(builder, line.getText());
+            }
+        }
+    }
+
+    private boolean isLikelyPhoneScreenRecording(Bitmap bitmap, long durationUs) {
+        if (bitmap == null || bitmap.isRecycled() || durationUs < 20000000L) {
+            return false;
+        }
+        int shortSide = Math.min(bitmap.getWidth(), bitmap.getHeight());
+        int longSide = Math.max(bitmap.getWidth(), bitmap.getHeight());
+        if (shortSide <= 0) {
+            return false;
+        }
+        double aspect = longSide / (double) shortSide;
+        return aspect >= 2.02d && aspect <= 2.35d;
+    }
+
+    private void detectAppScreenRecording(Text text) {
+        if (!videoReplayActive || appScreenRecordingDetected || text == null) {
+            return;
+        }
+        String compact = FoodItem.cleanText(text.getText())
+                .replace(" ", "")
+                .replace("識", "识")
+                .replace("別", "别")
+                .replace("碼", "码")
+                .replace("導", "导");
+        for (String strongToken : new String[] {
+                "智能识别", "识别结果", "填入表单", "填入新增表单", "查看原文", "视频样本",
+                "采用所选结果", "今日简报", "手动新增", "新增食品", "提醒设置", "筛选食品"
+        }) {
+            if (compact.contains(strongToken)) {
+                appScreenRecordingDetected = true;
+                discardPreScreenRecordingEvidence();
+                return;
+            }
+        }
+        int matches = 0;
+        for (String token : new String[] {
+                "商品码", "已识别", "最终可食用", "继续识别", "候选", "导入", "导出"
+        }) {
+            if (compact.contains(token)) {
+                matches++;
+            }
+        }
+        appScreenRecordingDetected = matches >= 2
+                || (compact.contains("识别结果") && compact.contains("商品码"));
+        if (appScreenRecordingDetected) {
+            discardPreScreenRecordingEvidence();
+        }
+    }
+
+    private void discardPreScreenRecordingEvidence() {
+        stabilizer.reset();
+        latestSnapshot = stabilizer.snapshot();
+        latestRawText = "";
+        bestVideoDatePair = null;
+        bestVideoDatePairScore = 0d;
+        selectedPackagingName = "";
+        paddleVideoFramesUsed = 0;
+        latestProductInfo = null;
+        latestProductBarcode = "";
+        productLookupInFlightBarcode = "";
+        productLookupError = "";
+        clearSessionKeyframes();
+        final UnifiedRecognitionStabilizer.Snapshot emptySnapshot = latestSnapshot;
+        runOnUiThread(new Runnable() {
+            @Override
+            public void run() {
+                updateResultUi(emptySnapshot);
+            }
+        });
+    }
+
+    private boolean isAllowedEvidenceRegion(FrameVariant variant, Rect box) {
+        if (!appScreenRecordingDetected) {
+            return true;
+        }
+        double localCenterY = box.exactCenterY() / Math.max(1d, variant.bitmap.getHeight());
+        double sourceCenterY = variant.sourceTop + (localCenterY * variant.sourceHeight);
+        return sourceCenterY >= 0.075d && sourceCenterY <= 0.64d;
     }
 
     private void appendTextObservations(
             List<PackagingTextAnalyzer.Observation> target,
             Text text,
-            int imageWidth,
-            int imageHeight,
-            double sourceQuality
+            FrameVariant variant,
+            String engine
     ) {
+        int imageWidth = variant == null ? 0 : variant.bitmap.getWidth();
+        int imageHeight = variant == null ? 0 : variant.bitmap.getHeight();
         if (target == null || text == null || imageWidth <= 0 || imageHeight <= 0) {
             return;
         }
@@ -1172,20 +1802,38 @@ public final class DateOcrScanActivity extends ComponentActivity {
             for (Text.Line line : block.getLines()) {
                 Rect box = line.getBoundingBox();
                 String value = FoodItem.cleanText(line.getText());
-                if (box == null || value.length() == 0) {
+                if (box == null || value.length() == 0 || !isAllowedEvidenceRegion(variant, box)) {
                     continue;
                 }
-                double normalizedHeight = box.height() / (double) imageHeight;
-                double normalizedWidth = box.width() / (double) imageWidth;
-                double centerX = box.exactCenterX() / imageWidth;
-                double centerY = box.exactCenterY() / imageHeight;
+                double localLeft = box.left / (double) imageWidth;
+                double localTop = box.top / (double) imageHeight;
+                double localRight = box.right / (double) imageWidth;
+                double localBottom = box.bottom / (double) imageHeight;
+                double left = variant.sourceLeft + (localLeft * variant.sourceWidth);
+                double top = variant.sourceTop + (localTop * variant.sourceHeight);
+                double right = variant.sourceLeft + (localRight * variant.sourceWidth);
+                double bottom = variant.sourceTop + (localBottom * variant.sourceHeight);
+                double normalizedHeight = Math.max(0d, bottom - top);
+                double normalizedWidth = Math.max(0d, right - left);
+                double centerX = (left + right) / 2d;
+                double centerY = (top + bottom) / 2d;
+                double confidence = line.getConfidence();
+                if (confidence <= 0d) {
+                    confidence = Double.NaN;
+                }
                 target.add(new PackagingTextAnalyzer.Observation(
                         value,
                         normalizedHeight,
                         normalizedWidth,
                         centerX,
                         centerY,
-                        sourceQuality
+                        variant.sourceQuality,
+                        left,
+                        top,
+                        right,
+                        bottom,
+                        confidence,
+                        engine
                 ));
                 added++;
             }
@@ -1197,7 +1845,13 @@ public final class DateOcrScanActivity extends ComponentActivity {
                     0.70d,
                     0.50d,
                     0.50d,
-                    sourceQuality * 0.65d
+                    variant.sourceQuality * 0.65d,
+                    variant.sourceLeft,
+                    variant.sourceTop,
+                    variant.sourceLeft + variant.sourceWidth,
+                    variant.sourceTop + variant.sourceHeight,
+                    Double.NaN,
+                    engine
             ));
         }
     }
@@ -1246,16 +1900,33 @@ public final class DateOcrScanActivity extends ComponentActivity {
         Bitmap enhanced = LowContrastTextPreprocessor.enhanceEmbossedText(prepared);
         prepared.recycle();
         if (enhanced != null) {
-            variants.add(new FrameVariant(enhanced, 0, false, true, true, true, 0.96d, true, true));
+            variants.add(new FrameVariant(
+                    enhanced,
+                    0,
+                    false,
+                    true,
+                    true,
+                    true,
+                    0.96d,
+                    true,
+                    true,
+                    leftRatio,
+                    topRatio,
+                    widthRatio,
+                    heightRatio
+            ));
         }
     }
 
     private List<Long> videoFrameTimes(long durationUs, boolean longVideo) {
         List<Long> times = new ArrayList<Long>();
         if (longVideo) {
-            long frameIntervalUs = Math.max(VIDEO_FRAME_INTERVAL_US, durationUs / 15L);
-            for (long frameUs = 0; frameUs <= durationUs; frameUs += frameIntervalUs) {
-                times.add(Long.valueOf(frameUs));
+            double[] ratios = new double[] {
+                    0d, 0.09d, 0.18d, 0.27d, 0.36d, 0.45d, 0.54d,
+                    0.63d, 0.70d, 0.76d, 0.82d, 0.87d, 0.93d
+            };
+            for (double ratio : ratios) {
+                times.add(Long.valueOf(Math.min(durationUs, Math.round(durationUs * ratio))));
             }
         } else {
             for (double ratio : SHORT_VIDEO_FRAME_RATIOS) {
@@ -1294,6 +1965,10 @@ public final class DateOcrScanActivity extends ComponentActivity {
                 if (replayFrameView == null || bitmap == null) {
                     return;
                 }
+                showingEvidenceFrame = false;
+                if (recognitionOverlay != null) {
+                    recognitionOverlay.showEvidence(null, 0, 0);
+                }
                 clearLastReplayFrame();
                 lastReplayFrame = bitmap;
                 replayFrameView.setImageBitmap(bitmap);
@@ -1302,9 +1977,10 @@ public final class DateOcrScanActivity extends ComponentActivity {
     }
 
     private void updateVideoReplayCompleteState(int analyzedFrames) {
-        DateOcrParser.Result finalTranscriptDates = bestVideoDatePair == null
-                ? DateOcrParser.parse(latestRawText)
-                : bestVideoDatePair;
+        DateOcrParser.Result finalTranscriptDates = DateEvidencePolicy.chooseVideoCompletionEvidence(
+                latestRawText,
+                bestVideoDatePair
+        );
         UnifiedRecognitionStabilizer.Snapshot snapshot =
                 finalTranscriptDates.productionDates.isEmpty()
                         || finalTranscriptDates.expiryDates.isEmpty()
@@ -1324,6 +2000,10 @@ public final class DateOcrScanActivity extends ComponentActivity {
         } else {
             statusText.setText("视频没有可用画面，请换一个更清晰的本地视频。");
         }
+        List<SessionKeyframe> completedKeyframes = keyframeSnapshot();
+        if (!completedKeyframes.isEmpty()) {
+            showEvidenceFrame(completedKeyframes.get(0), false);
+        }
     }
 
     private void stopVideoReplay() {
@@ -1340,8 +2020,16 @@ public final class DateOcrScanActivity extends ComponentActivity {
         bestVideoDatePairScore = 0d;
         currentVideoFrameRatio = 0d;
         selectedPackagingName = "";
+        clearSessionKeyframes();
+        currentFrameTimestampUs = 0L;
+        appScreenRecordingDetected = false;
+        nextFrameId = 0L;
+        showingEvidenceFrame = false;
         recognitionGeneration++;
         analyzedFrameSequence = 0;
+        paddleVideoFramesUsed = 0;
+        videoAnalyzedFrames = 0;
+        videoExpectedFrames = 0;
         analysisInFlight = false;
         lastAnalyzeAt = 0L;
         latestProductInfo = null;
@@ -1353,6 +2041,144 @@ public final class DateOcrScanActivity extends ComponentActivity {
             fillButton.setAlpha(0.45f);
         }
         updateResultUi(latestSnapshot);
+    }
+
+    private Bitmap prepareStillImage(Bitmap bitmap) {
+        int width = bitmap.getWidth();
+        int height = bitmap.getHeight();
+        int largest = Math.max(width, height);
+        if (largest <= 0) {
+            return bitmap;
+        }
+        float scale = 1f;
+        if (largest > STILL_IMAGE_MAX_SIDE) {
+            scale = STILL_IMAGE_MAX_SIDE / (float) largest;
+        } else if (largest < STILL_IMAGE_MIN_SIDE) {
+            scale = Math.min(8f, STILL_IMAGE_MIN_SIDE / (float) largest);
+        }
+        if (Math.abs(scale - 1f) < 0.001f) {
+            return bitmap;
+        }
+        return Bitmap.createScaledBitmap(
+                bitmap,
+                Math.max(1, Math.round(width * scale)),
+                Math.max(1, Math.round(height * scale)),
+                true
+        );
+    }
+
+    private boolean isLikelyDateStrip(Bitmap bitmap) {
+        if (bitmap == null || bitmap.isRecycled()) {
+            return false;
+        }
+        int width = bitmap.getWidth();
+        int height = bitmap.getHeight();
+        int shortSide = Math.min(width, height);
+        int longSide = Math.max(width, height);
+        return shortSide > 0 && longSide / (double) shortSide >= 2.2d;
+    }
+
+    private PaddleDateEvidence recognizePaddleDateStrip(
+            PaddleLineOcrEngine engine,
+            Bitmap bitmap
+    ) {
+        final float lowConfidenceDateThreshold = 0.25f;
+        List<PaddleLineOcrEngine.LineResult> results =
+                new ArrayList<PaddleLineOcrEngine.LineResult>();
+        StringBuilder recognized = new StringBuilder();
+        StringBuilder original = new StringBuilder();
+        double bestConfidence = 0d;
+
+        results.add(engine.recognizeResult(bitmap, lowConfidenceDateThreshold));
+
+        Bitmap laser = LowContrastTextPreprocessor.enhanceLaserPrintedText(bitmap);
+        if (laser != null) {
+            try {
+                results.add(engine.recognizeResult(laser, lowConfidenceDateThreshold));
+            } finally {
+                laser.recycle();
+            }
+        }
+
+        Bitmap embossed = LowContrastTextPreprocessor.enhanceEmbossedText(bitmap);
+        if (embossed != null) {
+            try {
+                results.add(engine.recognizeResult(embossed, lowConfidenceDateThreshold));
+            } finally {
+                embossed.recycle();
+            }
+        }
+
+        Bitmap binary = LowContrastTextPreprocessor.binarizeText(bitmap, false);
+        if (binary != null) {
+            try {
+                results.add(engine.recognizeResult(binary, lowConfidenceDateThreshold));
+            } finally {
+                binary.recycle();
+            }
+        }
+
+        Bitmap inverted = LowContrastTextPreprocessor.binarizeText(bitmap, true);
+        if (inverted != null) {
+            try {
+                results.add(engine.recognizeResult(inverted, lowConfidenceDateThreshold));
+            } finally {
+                inverted.recycle();
+            }
+        }
+
+        Bitmap brightText = LowContrastTextPreprocessor.isolateBrightText(bitmap);
+        if (brightText != null) {
+            try {
+                results.add(engine.recognizeResult(brightText, lowConfidenceDateThreshold));
+            } finally {
+                brightText.recycle();
+            }
+        }
+
+        for (PaddleLineOcrEngine.LineResult result : results) {
+            if (result == null || !DateOcrParser.parse(result.text).hasAnyCandidate()) {
+                continue;
+            }
+            appendRecognizedText(recognized, result.text);
+            if (original.length() == 0) {
+                appendRecognizedText(original, result.text);
+            }
+            bestConfidence = Math.max(bestConfidence, result.confidence);
+        }
+
+        RecognitionEvidence.NormalizedRect fullFrame = recognized.length() == 0
+                ? null
+                : new RecognitionEvidence.NormalizedRect(0d, 0d, 1d, 1d);
+        return new PaddleDateEvidence(
+                recognized.toString(),
+                original.toString(),
+                bestConfidence,
+                fullFrame
+        );
+    }
+
+    private void clearSessionKeyframes() {
+        synchronized (sessionKeyframes) {
+            for (SessionKeyframe keyframe : sessionKeyframes) {
+                if (keyframe.bitmap != null && !keyframe.bitmap.isRecycled()) {
+                    keyframe.bitmap.recycle();
+                }
+            }
+            sessionKeyframes.clear();
+            frameSelector.clear();
+        }
+        runOnUiThread(new Runnable() {
+            @Override
+            public void run() {
+                if (keyframeContainer != null) {
+                    keyframeContainer.removeAllViews();
+                }
+                if (recognitionOverlay != null) {
+                    recognitionOverlay.showEvidence(null, 0, 0);
+                }
+            }
+        });
     }
 
     private void clearLastReplayFrame() {
@@ -1533,6 +2359,7 @@ public final class DateOcrScanActivity extends ComponentActivity {
         lastAnalyzeAt = now;
         analysisInFlight = true;
         final int frameGeneration = recognitionGeneration;
+        currentFrameTimestampUs = SystemClock.elapsedRealtime() * 1000L;
 
         Bitmap oriented = null;
         try {
@@ -1651,14 +2478,38 @@ public final class DateOcrScanActivity extends ComponentActivity {
             String dateRawText,
             String supplementaryDateText
     ) {
+        handleRecognitionResult(
+                barcode,
+                rawText,
+                packagingCandidates,
+                singleFrameConfirmation,
+                dateRawText,
+                supplementaryDateText,
+                null,
+                false
+        );
+    }
+
+    private void handleRecognitionResult(
+            String barcode,
+            String rawText,
+            List<PackagingTextAnalyzer.Candidate> packagingCandidates,
+            boolean singleFrameConfirmation,
+            String dateRawText,
+            String supplementaryDateText,
+            DateOcrParser.Result parsedOverride,
+            boolean liveCamera
+    ) {
         String cleanedText = FoodItem.cleanText(rawText);
         if (!BarcodeUtils.isSupportedProductCode(barcode)) {
             barcode = RecognitionTextCleaner.extractProductCodeFromOcr(cleanedText);
         }
-        DateOcrParser.Result parsed = DateOcrParser.parseFocusedWithDateOnlySupplement(
+        DateOcrParser.Result parsed = parsedOverride == null
+                ? DateOcrParser.parseFocusedWithDateOnlySupplement(
                 FoodItem.cleanText(dateRawText),
                 FoodItem.cleanText(supplementaryDateText)
-        );
+        )
+                : parsedOverride;
         rememberBestVideoDatePair(parsed);
         latestSnapshot = stabilizer.addFrame(
                 barcode,
@@ -1667,6 +2518,9 @@ public final class DateOcrScanActivity extends ComponentActivity {
                 packagingCandidates,
                 singleFrameConfirmation
         );
+        if (liveCamera && !singleFrameConfirmation) {
+            latestSnapshot = stabilizer.promoteDirectDatePairForConfirmation(parsed);
+        }
         if (cleanedText.length() > 0) {
             latestRawText = cleanedText;
         }
@@ -1688,19 +2542,26 @@ public final class DateOcrScanActivity extends ComponentActivity {
                 Collections.singletonList(parsed),
                 1
         );
-        if (direct.productionDate == null
-                || direct.expiryDate == null
-                || direct.hasConflict
-                || direct.productionDate.value.compareTo(direct.expiryDate.value) >= 0) {
+        if (!UnifiedRecognitionStabilizer.isReliableDirectDatePair(direct)
+                || !isPlausibleFoodDateSpan(
+                direct.productionDate.value,
+                direct.expiryDate.value
+        )) {
             return;
         }
-        double score = (currentVideoFrameRatio * 10d)
-                + direct.productionDate.confidence
-                + direct.expiryDate.confidence;
+        double score = direct.productionDate.confidence
+                + direct.expiryDate.confidence
+                + (Math.min(4, direct.productionDate.votes) * 0.12d)
+                + (Math.min(4, direct.expiryDate.votes) * 0.12d);
         if (bestVideoDatePair == null || score > bestVideoDatePairScore) {
             bestVideoDatePair = parsed;
             bestVideoDatePairScore = score;
         }
+    }
+
+    private boolean isPlausibleFoodDateSpan(String productionDate, String expiryDate) {
+        int days = DateRules.daysBetween(productionDate, expiryDate);
+        return days > 0 && days <= (366 * 5);
     }
 
     private List<PackagingTextAnalyzer.Observation> observationsFromRawText(String rawText) {
@@ -1721,6 +2582,407 @@ public final class DateOcrScanActivity extends ComponentActivity {
             }
         }
         return observations;
+    }
+
+    private void rememberEvidenceFrame(
+            Bitmap bitmap,
+            long frameId,
+            long timestampUs,
+            LowContrastTextPreprocessor.FrameMetrics metrics,
+            List<PackagingTextAnalyzer.Observation> observations,
+            List<PackagingTextAnalyzer.Candidate> packagingCandidates,
+            DateOcrParser.Result parsed,
+            String barcode
+    ) {
+        if (bitmap == null || bitmap.isRecycled()) {
+            return;
+        }
+        double textCoverage = 0d;
+        double confidenceTotal = 0d;
+        int confidenceCount = 0;
+        for (PackagingTextAnalyzer.Observation observation : observations) {
+            textCoverage += Math.max(0d, observation.right - observation.left)
+                    * Math.max(0d, observation.bottom - observation.top);
+            if (!Double.isNaN(observation.modelConfidence)) {
+                confidenceTotal += observation.modelConfidence;
+                confidenceCount++;
+            }
+        }
+        double averageModelConfidence = confidenceCount == 0
+                ? Double.NaN
+                : confidenceTotal / confidenceCount;
+        double coverageScore = Math.min(1d, textCoverage / 0.18d);
+        double selectorQuality = RecognitionFrameSelector.qualityScore(
+                metrics.sharpness,
+                metrics.brightness,
+                metrics.glareRatio,
+                coverageScore,
+                Double.isNaN(averageModelConfidence) ? 0.5d : averageModelConfidence,
+                videoReplayActive ? currentVideoFrameRatio : 0.5d
+        );
+        double frameQuality = RecognitionEvidence.clamp01(
+                (selectorQuality * 0.82d)
+                        + (metrics.contrast * 0.18d)
+        );
+
+        List<RecognitionEvidence.Region> regions = new ArrayList<RecognitionEvidence.Region>();
+        if (packagingCandidates != null && !packagingCandidates.isEmpty()) {
+            RecognitionEvidence.Region productRegion = productRegion(
+                    packagingCandidates.get(0),
+                    observations,
+                    frameQuality
+            );
+            if (productRegion != null) {
+                regions.add(productRegion);
+            }
+        }
+        addDateRegion(regions, RecognitionEvidence.FIELD_PRODUCTION_DATE, parsed.productionDates, observations, frameQuality);
+        addDateRegion(regions, RecognitionEvidence.FIELD_EXPIRY_DATE, parsed.expiryDates, observations, frameQuality);
+        if (BarcodeUtils.isSupportedProductCode(barcode)) {
+            RecognitionEvidence.NormalizedRect barcodeRect = findBarcodeRect(barcode, observations);
+            if (barcodeRect != null) {
+                regions.add(new RecognitionEvidence.Region(
+                        RecognitionEvidence.FIELD_BARCODE,
+                        barcode,
+                        barcodeRect,
+                        "ML Kit 条码",
+                        Double.NaN,
+                        RecognitionEvidence.fusedConfidence(Double.NaN, frameQuality, 0.96d, 1, 1)
+                ));
+            }
+        }
+        if (regions.isEmpty() || frameQuality < 0.30d) {
+            return;
+        }
+
+        int evidenceMask = evidenceMask(regions);
+        RecognitionFrameSelector.FrameCandidate frameCandidate =
+                new RecognitionFrameSelector.FrameCandidate(
+                        Long.toString(frameId),
+                        timestampUs / 1000L,
+                        Long.toHexString(metrics.signature),
+                        metrics.sharpness,
+                        metrics.brightness,
+                        metrics.glareRatio,
+                        coverageScore,
+                        Double.isNaN(averageModelConfidence) ? 0.5d : averageModelConfidence,
+                        videoReplayActive ? currentVideoFrameRatio : 0.5d,
+                        evidenceMask,
+                        primaryEvidence(regions)
+                );
+
+        RecognitionEvidence.Frame evidenceFrame = new RecognitionEvidence.Frame(
+                frameId,
+                timestampUs,
+                bitmap.getWidth(),
+                bitmap.getHeight(),
+                frameQuality,
+                metrics.signature,
+                regions
+        );
+        Bitmap retained = retainEvidenceBitmap(bitmap);
+        if (retained == null) {
+            return;
+        }
+        offerSessionKeyframe(new SessionKeyframe(evidenceFrame, retained, frameCandidate));
+    }
+
+    private RecognitionEvidence.Region productRegion(
+            PackagingTextAnalyzer.Candidate candidate,
+            List<PackagingTextAnalyzer.Observation> observations,
+            double frameQuality
+    ) {
+        RecognitionEvidence.NormalizedRect rect = null;
+        double modelTotal = 0d;
+        int modelCount = 0;
+        List<String> engines = new ArrayList<String>();
+        for (PackagingTextAnalyzer.Observation observation : observations) {
+            String observedName = RecognitionTextCleaner.intelligentProductNameCandidate(observation.text);
+            double similarity = RecognitionTextCleaner.productNameSimilarity(candidate.text, observedName);
+            String candidateKey = RecognitionTextCleaner.productNameKey(candidate.text);
+            String observedKey = RecognitionTextCleaner.productNameKey(observedName);
+            boolean componentMatch = observedKey.length() >= 2
+                    && candidateKey.contains(observedKey);
+            if (similarity < 0.72d && !componentMatch) {
+                continue;
+            }
+            RecognitionEvidence.NormalizedRect current = observationRect(observation);
+            rect = rect == null ? current : rect.union(current);
+            if (!Double.isNaN(observation.modelConfidence)) {
+                modelTotal += observation.modelConfidence;
+                modelCount++;
+            }
+            if (observation.engine.length() > 0 && !engines.contains(observation.engine)) {
+                engines.add(observation.engine);
+            }
+        }
+        if (rect == null) {
+            return null;
+        }
+        int votes = candidate.votes;
+        if (latestSnapshot != null) {
+            for (PackagingTextAnalyzer.Candidate ranked : latestSnapshot.rankedPackagingCandidates) {
+                if (RecognitionTextCleaner.productNamesSimilar(ranked.text, candidate.text)) {
+                    votes = Math.max(votes, ranked.votes);
+                    break;
+                }
+            }
+        }
+        double modelConfidence = modelCount == 0 ? Double.NaN : modelTotal / modelCount;
+        double semanticConfidence = Math.min(1d, RecognitionTextCleaner.productNameScore(candidate.text) / 92d);
+        return new RecognitionEvidence.Region(
+                RecognitionEvidence.FIELD_PRODUCT_NAME,
+                candidate.text,
+                rect,
+                joinEngines(engines),
+                modelConfidence,
+                RecognitionEvidence.fusedConfidence(
+                        modelConfidence,
+                        frameQuality,
+                        semanticConfidence,
+                        votes,
+                        Math.max(1, engines.size())
+                )
+        );
+    }
+
+    private void addDateRegion(
+            List<RecognitionEvidence.Region> target,
+            String field,
+            List<DateOcrParser.DateCandidate> candidates,
+            List<PackagingTextAnalyzer.Observation> observations,
+            double frameQuality
+    ) {
+        if (candidates == null || candidates.isEmpty()) {
+            return;
+        }
+        DateOcrParser.DateCandidate selected = candidates.get(0);
+        RecognitionEvidence.NormalizedRect rect = null;
+        double modelTotal = 0d;
+        int modelCount = 0;
+        List<String> engines = new ArrayList<String>();
+        for (PackagingTextAnalyzer.Observation observation : observations) {
+            DateOcrParser.Result observationDates = DateOcrParser.parse(observation.text);
+            List<DateOcrParser.DateCandidate> matching = RecognitionEvidence.FIELD_PRODUCTION_DATE.equals(field)
+                    ? observationDates.productionDates
+                    : observationDates.expiryDates;
+            if (!containsDateValue(matching, selected.normalized)) {
+                continue;
+            }
+            RecognitionEvidence.NormalizedRect current = observationRect(observation);
+            rect = rect == null ? current : rect.union(current);
+            if (!Double.isNaN(observation.modelConfidence)) {
+                modelTotal += observation.modelConfidence;
+                modelCount++;
+            }
+            if (observation.engine.length() > 0 && !engines.contains(observation.engine)) {
+                engines.add(observation.engine);
+            }
+        }
+        if (rect == null) {
+            return;
+        }
+        int votes = latestSnapshot != null && latestSnapshot.stableDateVote != null
+                ? Math.max(1, latestSnapshot.stableDateVote.framesWithCandidates)
+                : 1;
+        double modelConfidence = modelCount == 0 ? Double.NaN : modelTotal / modelCount;
+        target.add(new RecognitionEvidence.Region(
+                field,
+                selected.normalized,
+                rect,
+                joinEngines(engines),
+                modelConfidence,
+                RecognitionEvidence.fusedConfidence(
+                        modelConfidence,
+                        frameQuality,
+                        selected.confidence,
+                        votes,
+                        Math.max(1, engines.size())
+                )
+        ));
+    }
+
+    private boolean containsDateValue(List<DateOcrParser.DateCandidate> candidates, String value) {
+        for (DateOcrParser.DateCandidate candidate : candidates) {
+            if (value.equals(candidate.normalized)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private RecognitionEvidence.NormalizedRect findBarcodeRect(
+            String barcode,
+            List<PackagingTextAnalyzer.Observation> observations
+    ) {
+        for (PackagingTextAnalyzer.Observation observation : observations) {
+            if (barcode.equals(BarcodeUtils.extractProductCode(observation.text))) {
+                return observationRect(observation);
+            }
+        }
+        return null;
+    }
+
+    private RecognitionEvidence.NormalizedRect observationRect(PackagingTextAnalyzer.Observation observation) {
+        return new RecognitionEvidence.NormalizedRect(
+                observation.left,
+                observation.top,
+                observation.right,
+                observation.bottom
+        );
+    }
+
+    private String joinEngines(List<String> engines) {
+        StringBuilder builder = new StringBuilder();
+        for (String engine : engines) {
+            if (builder.length() > 0) {
+                builder.append(" + ");
+            }
+            builder.append(engine);
+        }
+        return builder.toString();
+    }
+
+    private Bitmap retainEvidenceBitmap(Bitmap bitmap) {
+        int largest = Math.max(bitmap.getWidth(), bitmap.getHeight());
+        Bitmap source = bitmap;
+        if (largest > 960) {
+            float scale = 960f / largest;
+            source = Bitmap.createScaledBitmap(
+                    bitmap,
+                    Math.max(1, Math.round(bitmap.getWidth() * scale)),
+                    Math.max(1, Math.round(bitmap.getHeight() * scale)),
+                    true
+            );
+        }
+        Bitmap copy = source.copy(Bitmap.Config.ARGB_8888, false);
+        if (source != bitmap) {
+            source.recycle();
+        }
+        return copy;
+    }
+
+    private void offerSessionKeyframe(SessionKeyframe incoming) {
+        synchronized (sessionKeyframes) {
+            if (!frameSelector.offer(incoming.selectorCandidate)) {
+                incoming.bitmap.recycle();
+                return;
+            }
+            sessionKeyframes.add(incoming);
+            final List<RecognitionFrameSelector.FrameCandidate> selected = frameSelector.selectedFrames();
+            for (int index = sessionKeyframes.size() - 1; index >= 0; index--) {
+                SessionKeyframe existing = sessionKeyframes.get(index);
+                if (!containsSelectedFrame(selected, existing.selectorCandidate.frameId)) {
+                    sessionKeyframes.remove(index);
+                    existing.bitmap.recycle();
+                }
+            }
+            Collections.sort(sessionKeyframes, new Comparator<SessionKeyframe>() {
+                @Override
+                public int compare(SessionKeyframe left, SessionKeyframe right) {
+                    int fieldOrder = Integer.compare(
+                            keyframeFieldOrder(left.primaryRegion().field),
+                            keyframeFieldOrder(right.primaryRegion().field)
+                    );
+                    if (fieldOrder != 0) {
+                        return fieldOrder;
+                    }
+                    return Double.compare(right.score(), left.score());
+                }
+            });
+        }
+        renderKeyframesAsync();
+    }
+
+    private List<SessionKeyframe> keyframeSnapshot() {
+        synchronized (sessionKeyframes) {
+            return new ArrayList<SessionKeyframe>(sessionKeyframes);
+        }
+    }
+
+    private boolean containsSelectedFrame(
+            List<RecognitionFrameSelector.FrameCandidate> selected,
+            String frameId
+    ) {
+        return selectedFrameIndex(selected, frameId) >= 0;
+    }
+
+    private int selectedFrameIndex(
+            List<RecognitionFrameSelector.FrameCandidate> selected,
+            String frameId
+    ) {
+        for (int index = 0; index < selected.size(); index++) {
+            if (selected.get(index).frameId.equals(frameId)) {
+                return index;
+            }
+        }
+        return Integer.MAX_VALUE;
+    }
+
+    private int evidenceMask(List<RecognitionEvidence.Region> regions) {
+        int mask = RecognitionFrameSelector.EVIDENCE_NONE;
+        for (RecognitionEvidence.Region region : regions) {
+            if (RecognitionEvidence.FIELD_PRODUCT_NAME.equals(region.field)) {
+                mask |= RecognitionFrameSelector.EVIDENCE_PRODUCT_NAME;
+            } else if (RecognitionEvidence.FIELD_PRODUCTION_DATE.equals(region.field)) {
+                mask |= RecognitionFrameSelector.EVIDENCE_PRODUCTION_DATE;
+            } else if (RecognitionEvidence.FIELD_EXPIRY_DATE.equals(region.field)) {
+                mask |= RecognitionFrameSelector.EVIDENCE_EXPIRY_DATE;
+            } else if (RecognitionEvidence.FIELD_BARCODE.equals(region.field)) {
+                mask |= RecognitionFrameSelector.EVIDENCE_BARCODE;
+            }
+        }
+        return mask;
+    }
+
+    private int primaryEvidence(List<RecognitionEvidence.Region> regions) {
+        RecognitionEvidence.Region strongest = null;
+        for (RecognitionEvidence.Region region : regions) {
+            if (RecognitionEvidence.FIELD_PRODUCT_NAME.equals(region.field)) {
+                return RecognitionFrameSelector.EVIDENCE_PRODUCT_NAME;
+            }
+            if (strongest == null || region.confidence > strongest.confidence) {
+                strongest = region;
+            }
+        }
+        if (strongest == null) {
+            return RecognitionFrameSelector.EVIDENCE_NONE;
+        }
+        if (RecognitionEvidence.FIELD_PRODUCTION_DATE.equals(strongest.field)) {
+            return RecognitionFrameSelector.EVIDENCE_PRODUCTION_DATE;
+        }
+        if (RecognitionEvidence.FIELD_EXPIRY_DATE.equals(strongest.field)) {
+            return RecognitionFrameSelector.EVIDENCE_EXPIRY_DATE;
+        }
+        return RecognitionFrameSelector.EVIDENCE_BARCODE;
+    }
+
+    private int keyframeFieldOrder(String field) {
+        if (RecognitionEvidence.FIELD_PRODUCT_NAME.equals(field)) {
+            return 0;
+        }
+        if (RecognitionEvidence.FIELD_PRODUCTION_DATE.equals(field)) {
+            return 1;
+        }
+        if (RecognitionEvidence.FIELD_EXPIRY_DATE.equals(field)) {
+            return 2;
+        }
+        return 3;
+    }
+
+    private void renderKeyframesAsync() {
+        runOnUiThread(new Runnable() {
+            @Override
+            public void run() {
+                renderKeyframes();
+                renderProductCandidates(latestSnapshot);
+                if (productionDateValue != null) {
+                    productionDateValue.setText(compactDateSummary(
+                            DateOcrResultPayload.toDraft(latestSnapshot.stableDateVote)
+                    ));
+                }
+            }
+        });
     }
 
     private void startProductLookupIfNeeded(final UnifiedRecognitionStabilizer.Snapshot snapshot) {
@@ -1817,15 +3079,15 @@ public final class DateOcrScanActivity extends ComponentActivity {
     }
 
     private String productDisplayText(UnifiedRecognitionStabilizer.Snapshot snapshot) {
+        if (selectedPackagingName.length() > 0) {
+            return selectedPackagingName;
+        }
         if (latestProductInfo != null && latestProductInfo.found) {
             String name = latestProductInfo.displayName();
             return name.length() > 0 ? name : "已查询到商品";
         }
         if (snapshot.hasStableBarcode() && productLookupInFlightBarcode.length() > 0) {
             return "正在查询条码商品信息";
-        }
-        if (selectedPackagingName.length() > 0) {
-            return selectedPackagingName;
         }
         if (snapshot != null && snapshot.hasStablePackagingName()) {
             return snapshot.stablePackagingName;
@@ -1866,47 +3128,188 @@ public final class DateOcrScanActivity extends ComponentActivity {
             return;
         }
 
-        if (selectedPackagingName.length() == 0 && snapshot.hasStablePackagingName()) {
-            selectedPackagingName = snapshot.stablePackagingName;
-        }
-        int renderedCount = 0;
-        for (final PackagingTextAnalyzer.Candidate candidate : snapshot.rankedPackagingCandidates) {
-            if (renderedCount >= 2) {
-                break;
-            }
-            final String candidateName = FoodItem.cleanText(candidate.text);
-            if (candidateName.length() == 0) {
-                continue;
-            }
-            renderedCount++;
-            boolean active = RecognitionTextCleaner.productNamesSimilar(selectedPackagingName, candidateName);
-            Button button = new Button(this);
-            button.setText(candidateName + (candidate.votes > 1 ? " · " + candidate.votes + "帧" : ""));
-            button.setTextSize(13);
-            button.setTextColor(active ? Color.WHITE : Color.rgb(44, 65, 51));
-            button.setAllCaps(false);
-            button.setMinWidth(0);
-            button.setMinHeight(0);
-            button.setPadding(dp(12), 0, dp(12), 0);
-            button.setBackground(rounded(
-                    active ? Color.rgb(38, 104, 76) : Color.rgb(238, 241, 240),
-                    dp(8),
-                    active ? Color.rgb(38, 104, 76) : Color.rgb(216, 222, 219)
-            ));
-            button.setOnClickListener(new View.OnClickListener() {
+        final PackagingTextAnalyzer.Candidate recommended = snapshot.rankedPackagingCandidates.get(0);
+        TextView confidence = compactResultText();
+        double fusedConfidence = productCandidateConfidence(recommended);
+        confidence.setText("商品名可信度 " + RecognitionEvidence.confidenceLabel(fusedConfidence)
+                + " · " + Math.max(1, recommended.votes) + "帧");
+        productCandidateContainer.addView(confidence, fixed(190, 34));
+
+        if (snapshot.rankedPackagingCandidates.size() > 1) {
+            Button alternatives = plainButton("其他结果");
+            alternatives.setOnClickListener(new View.OnClickListener() {
                 @Override
                 public void onClick(View view) {
-                    selectedPackagingName = candidateName;
-                    updateResultUi(latestSnapshot);
+                    showProductAlternatives(snapshot.rankedPackagingCandidates);
                 }
             });
-            LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(
-                    ViewGroup.LayoutParams.WRAP_CONTENT,
-                    dp(34)
-            );
-            params.setMargins(0, 0, dp(7), 0);
-            productCandidateContainer.addView(button, params);
+            productCandidateContainer.addView(alternatives, fixed(82, 34));
         }
+    }
+
+    private double productCandidateConfidence(PackagingTextAnalyzer.Candidate candidate) {
+        double strongest = 0d;
+        for (SessionKeyframe keyframe : keyframeSnapshot()) {
+            for (RecognitionEvidence.Region region : keyframe.evidence.regions) {
+                if (RecognitionEvidence.FIELD_PRODUCT_NAME.equals(region.field)
+                        && RecognitionTextCleaner.productNamesSimilar(region.value, candidate.text)) {
+                    strongest = Math.max(strongest, region.confidence);
+                }
+            }
+        }
+        if (strongest > 0d) {
+            return strongest;
+        }
+        return RecognitionEvidence.fusedConfidence(
+                Double.NaN,
+                0.62d,
+                Math.min(1d, RecognitionTextCleaner.productNameScore(candidate.text) / 92d),
+                candidate.votes,
+                1
+        );
+    }
+
+    private void showProductAlternatives(final List<PackagingTextAnalyzer.Candidate> candidates) {
+        int count = Math.min(3, candidates.size());
+        final String[] labels = new String[count];
+        for (int index = 0; index < count; index++) {
+            PackagingTextAnalyzer.Candidate candidate = candidates.get(index);
+            labels[index] = candidate.text + "  ·  可信度 "
+                    + RecognitionEvidence.confidenceLabel(productCandidateConfidence(candidate));
+        }
+        new AlertDialog.Builder(this)
+                .setTitle("选择商品名")
+                .setSingleChoiceItems(labels, selectedProductCandidateIndex(candidates, count), null)
+                .setPositiveButton("采用", (dialog, which) -> {
+                    AlertDialog alert = (AlertDialog) dialog;
+                    int checked = alert.getListView().getCheckedItemPosition();
+                    if (checked >= 0 && checked < count) {
+                        selectedPackagingName = candidates.get(checked).text;
+                        updateResultUi(latestSnapshot);
+                        showBestEvidenceForValue(selectedPackagingName);
+                    }
+                })
+                .setNegativeButton("取消", null)
+                .show();
+    }
+
+    private int selectedProductCandidateIndex(List<PackagingTextAnalyzer.Candidate> candidates, int count) {
+        for (int index = 0; index < count; index++) {
+            if (RecognitionTextCleaner.productNamesSimilar(selectedPackagingName, candidates.get(index).text)) {
+                return index;
+            }
+        }
+        return 0;
+    }
+
+    private void renderKeyframes() {
+        if (keyframeContainer == null) {
+            return;
+        }
+        keyframeContainer.removeAllViews();
+        List<SessionKeyframe> keyframes = keyframeSnapshot();
+        if (keyframes.isEmpty()) {
+            TextView empty = compactResultText();
+            empty.setText("等待清晰画面");
+            keyframeContainer.addView(empty, fixed(150, 62));
+            return;
+        }
+        int keyframeCount = Math.min(RecognitionFrameSelector.MAX_KEYFRAMES, keyframes.size());
+        for (int keyframeIndex = 0; keyframeIndex < keyframeCount; keyframeIndex++) {
+            final SessionKeyframe keyframe = keyframes.get(keyframeIndex);
+            FrameLayout item = new FrameLayout(this);
+            item.setBackground(rounded(Color.rgb(233, 237, 235), dp(6), Color.rgb(204, 214, 208)));
+
+            ImageView image = new ImageView(this);
+            image.setScaleType(ImageView.ScaleType.CENTER_CROP);
+            image.setImageBitmap(keyframe.bitmap);
+            item.addView(image, new FrameLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT,
+                    ViewGroup.LayoutParams.MATCH_PARENT
+            ));
+
+            RecognitionEvidence.Region primary = keyframe.primaryRegion();
+            TextView label = new TextView(this);
+            label.setText(fieldLabel(primary.field) + " "
+                    + RecognitionEvidence.confidenceLabel(primary.confidence));
+            label.setTextColor(Color.WHITE);
+            label.setTextSize(10);
+            label.setGravity(Gravity.CENTER);
+            label.setMaxLines(1);
+            label.setBackgroundColor(Color.argb(205, 23, 32, 27));
+            FrameLayout.LayoutParams labelParams = new FrameLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT,
+                    dp(20)
+            );
+            labelParams.gravity = Gravity.BOTTOM;
+            item.addView(label, labelParams);
+            item.setOnClickListener(new View.OnClickListener() {
+                @Override
+                public void onClick(View view) {
+                    showEvidenceFrame(keyframe);
+                }
+            });
+
+            LinearLayout.LayoutParams params = fixed(92, 62);
+            params.setMargins(0, 0, dp(8), 0);
+            keyframeContainer.addView(item, params);
+        }
+    }
+
+    private void showBestEvidenceForValue(String value) {
+        SessionKeyframe best = null;
+        double bestConfidence = 0d;
+        for (SessionKeyframe keyframe : keyframeSnapshot()) {
+            for (RecognitionEvidence.Region region : keyframe.evidence.regions) {
+                if (RecognitionTextCleaner.productNamesSimilar(value, region.value)
+                        && region.confidence > bestConfidence) {
+                    best = keyframe;
+                    bestConfidence = region.confidence;
+                }
+            }
+        }
+        if (best != null) {
+            showEvidenceFrame(best);
+        }
+    }
+
+    private void showEvidenceFrame(SessionKeyframe keyframe) {
+        showEvidenceFrame(keyframe, true);
+    }
+
+    private void showEvidenceFrame(SessionKeyframe keyframe, boolean updateStatusText) {
+        if (keyframe == null || keyframe.bitmap == null || keyframe.bitmap.isRecycled()) {
+            return;
+        }
+        showingEvidenceFrame = true;
+        clearLastReplayFrame();
+        previewView.setVisibility(View.GONE);
+        replayFrameView.setVisibility(View.VISIBLE);
+        replayFrameView.setImageBitmap(keyframe.bitmap);
+        recognitionOverlay.showEvidence(
+                keyframe.evidence.regions,
+                keyframe.evidence.width,
+                keyframe.evidence.height
+        );
+        if (updateStatusText) {
+            RecognitionEvidence.Region primary = keyframe.primaryRegion();
+            statusBadge.setText("证据帧");
+            statusText.setText(fieldLabel(primary.field) + " · 可信度 "
+                    + RecognitionEvidence.confidenceLabel(primary.confidence));
+        }
+    }
+
+    private String fieldLabel(String field) {
+        if (RecognitionEvidence.FIELD_PRODUCT_NAME.equals(field)) {
+            return "商品名";
+        }
+        if (RecognitionEvidence.FIELD_PRODUCTION_DATE.equals(field)) {
+            return "生产日期";
+        }
+        if (RecognitionEvidence.FIELD_EXPIRY_DATE.equals(field)) {
+            return "有效期";
+        }
+        return "条码";
     }
 
     private String compactDateSummary(FoodItem draft) {
@@ -1931,7 +3334,14 @@ public final class DateOcrScanActivity extends ComponentActivity {
         if (values.isEmpty()) {
             return "日期  暂未识别，可继续扫描或先使用商品名";
         }
-        StringBuilder builder = new StringBuilder("日期  ");
+        StringBuilder builder = new StringBuilder("日期");
+        double confidence = strongestDateEvidenceConfidence();
+        if (confidence > 0d) {
+            builder.append("（可信度 ")
+                    .append(RecognitionEvidence.confidenceLabel(confidence))
+                    .append("）");
+        }
+        builder.append("  ");
         for (int index = 0; index < values.size(); index++) {
             if (index > 0) {
                 builder.append(" · ");
@@ -1941,7 +3351,26 @@ public final class DateOcrScanActivity extends ComponentActivity {
         return builder.toString();
     }
 
+    private double strongestDateEvidenceConfidence() {
+        double confidence = 0d;
+        for (SessionKeyframe keyframe : keyframeSnapshot()) {
+            for (RecognitionEvidence.Region region : keyframe.evidence.regions) {
+                if (RecognitionEvidence.FIELD_PRODUCTION_DATE.equals(region.field)
+                        || RecognitionEvidence.FIELD_EXPIRY_DATE.equals(region.field)) {
+                    confidence = Math.max(confidence, region.confidence);
+                }
+            }
+        }
+        return confidence;
+    }
+
     private void updateStatus(UnifiedRecognitionStabilizer.Snapshot snapshot) {
+        if (videoReplayActive && videoExpectedFrames > 0 && videoAnalyzedFrames < videoExpectedFrames) {
+            statusBadge.setText("分析中");
+            statusText.setText("已分析 " + videoAnalyzedFrames + "/" + videoExpectedFrames
+                    + " 帧，正在挑选清晰证据。");
+            return;
+        }
         if (selectedPackagingName.length() > 0) {
             statusBadge.setText("已选择");
             statusText.setText("已选择商品名候选，可继续识别日期或直接填入表单。");
@@ -2138,6 +3567,10 @@ public final class DateOcrScanActivity extends ComponentActivity {
         final double sourceQuality;
         final boolean dateFocused;
         final boolean datePairSupplement;
+        final double sourceLeft;
+        final double sourceTop;
+        final double sourceWidth;
+        final double sourceHeight;
 
         FrameVariant(
                 Bitmap bitmap,
@@ -2157,7 +3590,11 @@ public final class DateOcrScanActivity extends ComponentActivity {
                     recycleBitmap,
                     sourceQuality,
                     false,
-                    false
+                    false,
+                    0d,
+                    0d,
+                    1d,
+                    1d
             );
         }
 
@@ -2180,7 +3617,11 @@ public final class DateOcrScanActivity extends ComponentActivity {
                     recycleBitmap,
                     sourceQuality,
                     dateFocused,
-                    false
+                    false,
+                    0d,
+                    0d,
+                    1d,
+                    1d
             );
         }
 
@@ -2195,6 +3636,38 @@ public final class DateOcrScanActivity extends ComponentActivity {
                 boolean dateFocused,
                 boolean datePairSupplement
         ) {
+            this(
+                    bitmap,
+                    rotationDegrees,
+                    scanBarcode,
+                    scanText,
+                    scanLatinText,
+                    recycleBitmap,
+                    sourceQuality,
+                    dateFocused,
+                    datePairSupplement,
+                    0d,
+                    0d,
+                    1d,
+                    1d
+            );
+        }
+
+        FrameVariant(
+                Bitmap bitmap,
+                int rotationDegrees,
+                boolean scanBarcode,
+                boolean scanText,
+                boolean scanLatinText,
+                boolean recycleBitmap,
+                double sourceQuality,
+                boolean dateFocused,
+                boolean datePairSupplement,
+                double sourceLeft,
+                double sourceTop,
+                double sourceWidth,
+                double sourceHeight
+        ) {
             this.bitmap = bitmap;
             this.rotationDegrees = rotationDegrees;
             this.scanBarcode = scanBarcode;
@@ -2204,14 +3677,133 @@ public final class DateOcrScanActivity extends ComponentActivity {
             this.sourceQuality = sourceQuality;
             this.dateFocused = dateFocused;
             this.datePairSupplement = datePairSupplement;
+            this.sourceLeft = sourceLeft;
+            this.sourceTop = sourceTop;
+            this.sourceWidth = sourceWidth;
+            this.sourceHeight = sourceHeight;
+        }
+
+        FrameVariant withSourceQuality(double quality) {
+            return new FrameVariant(
+                    bitmap,
+                    rotationDegrees,
+                    scanBarcode,
+                    scanText,
+                    scanLatinText,
+                    recycleBitmap,
+                    quality,
+                    dateFocused,
+                    datePairSupplement,
+                    sourceLeft,
+                    sourceTop,
+                    sourceWidth,
+                    sourceHeight
+            );
+        }
+    }
+
+    private static final class PaddleDateEvidence {
+        final String text;
+        final String originalText;
+        final double confidence;
+        final RecognitionEvidence.NormalizedRect rect;
+
+        PaddleDateEvidence(
+                String text,
+                String originalText,
+                double confidence,
+                RecognitionEvidence.NormalizedRect rect
+        ) {
+            this.text = FoodItem.cleanText(text);
+            this.originalText = FoodItem.cleanText(originalText);
+            this.confidence = RecognitionEvidence.clamp01(confidence);
+            this.rect = rect == null
+                    ? new RecognitionEvidence.NormalizedRect(0d, 0d, 0d, 0d)
+                    : rect;
+        }
+
+        PackagingTextAnalyzer.Observation toObservation(double sourceQuality) {
+            double width = Math.max(0d, rect.right - rect.left);
+            double height = Math.max(0d, rect.bottom - rect.top);
+            return new PackagingTextAnalyzer.Observation(
+                    text,
+                    height,
+                    width,
+                    (rect.left + rect.right) / 2d,
+                    (rect.top + rect.bottom) / 2d,
+                    sourceQuality,
+                    rect.left,
+                    rect.top,
+                    rect.right,
+                    rect.bottom,
+                    confidence <= 0d ? Double.NaN : confidence,
+                    "PP-OCRv6"
+            );
+        }
+
+        static PaddleDateEvidence empty() {
+            return new PaddleDateEvidence("", "", 0d, null);
+        }
+    }
+
+    private static final class SessionKeyframe {
+        final RecognitionEvidence.Frame evidence;
+        final Bitmap bitmap;
+        final RecognitionFrameSelector.FrameCandidate selectorCandidate;
+
+        SessionKeyframe(
+                RecognitionEvidence.Frame evidence,
+                Bitmap bitmap,
+                RecognitionFrameSelector.FrameCandidate selectorCandidate
+        ) {
+            this.evidence = evidence;
+            this.bitmap = bitmap;
+            this.selectorCandidate = selectorCandidate;
+        }
+
+        RecognitionEvidence.Region primaryRegion() {
+            for (RecognitionEvidence.Region region : evidence.regions) {
+                if (RecognitionEvidence.FIELD_PRODUCT_NAME.equals(region.field)) {
+                    return region;
+                }
+            }
+            RecognitionEvidence.Region strongest = null;
+            for (RecognitionEvidence.Region region : evidence.regions) {
+                if (strongest == null || region.confidence > strongest.confidence) {
+                    strongest = region;
+                }
+            }
+            return strongest == null ? evidence.regions.get(0) : strongest;
+        }
+
+        double score() {
+            double strongest = 0d;
+            for (RecognitionEvidence.Region region : evidence.regions) {
+                strongest = Math.max(strongest, region.confidence);
+            }
+            return (evidence.quality * 0.55d)
+                    + (strongest * 0.38d)
+                    + (Math.min(3, evidence.regions.size()) * 0.025d);
         }
     }
 
     private final class RecognitionGuideOverlay extends View {
         private final Paint paint = new Paint(Paint.ANTI_ALIAS_FLAG);
+        private List<RecognitionEvidence.Region> evidenceRegions = Collections.emptyList();
+        private int evidenceImageWidth;
+        private int evidenceImageHeight;
 
         RecognitionGuideOverlay(ComponentActivity context) {
             super(context);
+        }
+
+        void showEvidence(List<RecognitionEvidence.Region> regions, int imageWidth, int imageHeight) {
+            evidenceRegions = regions == null
+                    ? Collections.<RecognitionEvidence.Region>emptyList()
+                    : new ArrayList<RecognitionEvidence.Region>(regions);
+            evidenceImageWidth = imageWidth;
+            evidenceImageHeight = imageHeight;
+            invalidate();
         }
 
         @Override
@@ -2219,6 +3811,10 @@ public final class DateOcrScanActivity extends ComponentActivity {
             super.onDraw(canvas);
             int width = getWidth();
             int height = getHeight();
+            if (!evidenceRegions.isEmpty() && evidenceImageWidth > 0 && evidenceImageHeight > 0) {
+                drawEvidence(canvas, width, height);
+                return;
+            }
             RectF frame = new RectF(
                     width * 0.07f,
                     height * 0.15f,
@@ -2246,6 +3842,61 @@ public final class DateOcrScanActivity extends ComponentActivity {
             drawCorner(canvas, frame.left, frame.bottom, corner, true, false);
             drawCorner(canvas, frame.right, frame.bottom, corner, false, false);
 
+        }
+
+        private void drawEvidence(Canvas canvas, int width, int height) {
+            float scale = Math.max(
+                    width / (float) evidenceImageWidth,
+                    height / (float) evidenceImageHeight
+            );
+            float displayedWidth = evidenceImageWidth * scale;
+            float displayedHeight = evidenceImageHeight * scale;
+            float offsetX = (width - displayedWidth) / 2f;
+            float offsetY = (height - displayedHeight) / 2f;
+            for (RecognitionEvidence.Region region : evidenceRegions) {
+                RectF rect = new RectF(
+                        offsetX + (float) (region.rect.left * evidenceImageWidth * scale),
+                        offsetY + (float) (region.rect.top * evidenceImageHeight * scale),
+                        offsetX + (float) (region.rect.right * evidenceImageWidth * scale),
+                        offsetY + (float) (region.rect.bottom * evidenceImageHeight * scale)
+                );
+                int color = evidenceColor(region.field);
+                paint.setStyle(Paint.Style.STROKE);
+                paint.setStrokeWidth(dp(3));
+                paint.setColor(color);
+                canvas.drawRoundRect(rect, dp(5), dp(5), paint);
+
+                String label = fieldLabel(region.field) + " · "
+                        + RecognitionEvidence.confidenceLabel(region.confidence);
+                paint.setTextSize(dp(12));
+                paint.setTypeface(Typeface.DEFAULT_BOLD);
+                float labelWidth = paint.measureText(label) + dp(12);
+                float labelTop = Math.max(dp(58), rect.top - dp(25));
+                RectF labelRect = new RectF(
+                        rect.left,
+                        labelTop,
+                        Math.min(width - dp(6), rect.left + labelWidth),
+                        labelTop + dp(23)
+                );
+                paint.setStyle(Paint.Style.FILL);
+                paint.setColor(Color.argb(230, 20, 28, 24));
+                canvas.drawRoundRect(labelRect, dp(4), dp(4), paint);
+                paint.setColor(Color.WHITE);
+                canvas.drawText(label, labelRect.left + dp(6), labelRect.bottom - dp(6), paint);
+            }
+        }
+
+        private int evidenceColor(String field) {
+            if (RecognitionEvidence.FIELD_PRODUCT_NAME.equals(field)) {
+                return Color.rgb(91, 232, 145);
+            }
+            if (RecognitionEvidence.FIELD_PRODUCTION_DATE.equals(field)) {
+                return Color.rgb(255, 204, 82);
+            }
+            if (RecognitionEvidence.FIELD_EXPIRY_DATE.equals(field)) {
+                return Color.rgb(103, 183, 255);
+            }
+            return Color.rgb(96, 221, 224);
         }
 
         private void drawCorner(Canvas canvas, float x, float y, float length, boolean left, boolean top) {

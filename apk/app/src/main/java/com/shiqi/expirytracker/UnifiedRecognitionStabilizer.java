@@ -10,7 +10,7 @@ final class UnifiedRecognitionStabilizer {
     private static final int DEFAULT_DATE_MIN_VOTES = 3;
     private static final int BARCODE_LOCK_VOTES = 2;
     private static final int PACKAGING_NAME_LOCK_VOTES = 3;
-    private static final int MAX_PACKAGING_CANDIDATES = 1;
+    private static final int MAX_PACKAGING_CANDIDATES = 3;
     private static final double MIN_REPEATED_NAME_SCORE = 70d;
     private static final double MIN_SINGLE_STRONG_NAME_SCORE = 100d;
 
@@ -112,14 +112,37 @@ final class UnifiedRecognitionStabilizer {
                 Collections.singletonList(result),
                 1
         );
-        if (direct.productionDate != null
-                && direct.expiryDate != null
-                && direct.productionDate.value.compareTo(direct.expiryDate.value) < 0
-                && !direct.hasConflict) {
+        if (isReliableDirectDatePair(direct)) {
             latestDateVote = direct;
             stableDateVote = direct;
         }
         return snapshot();
+    }
+
+    static boolean isReliableDirectDatePair(DateOcrFrameVoter.VoteResult direct) {
+        if (direct == null
+                || direct.productionDate == null
+                || direct.expiryDate == null
+                || direct.hasConflict
+                || direct.productionDate.value.compareTo(DateRules.getTodayString()) > 0) {
+            return false;
+        }
+        boolean repeatedEvidence = direct.productionDate.votes >= 2
+                && direct.expiryDate.votes >= 2;
+        boolean highConfidenceEvidence = direct.productionDate.confidence >= 0.70d
+                && direct.expiryDate.confidence >= 0.70d;
+        boolean anchoredMixedEvidence = (direct.productionDate.votes >= 2
+                && direct.expiryDate.confidence >= 0.65d)
+                || (direct.expiryDate.votes >= 2
+                && direct.productionDate.confidence >= 0.65d);
+        if (!repeatedEvidence && !highConfidenceEvidence && !anchoredMixedEvidence) {
+            return false;
+        }
+        int spanDays = DateRules.daysBetween(
+                direct.productionDate.value,
+                direct.expiryDate.value
+        );
+        return spanDays >= 0 && spanDays <= (366 * 5);
     }
 
     void reset() {

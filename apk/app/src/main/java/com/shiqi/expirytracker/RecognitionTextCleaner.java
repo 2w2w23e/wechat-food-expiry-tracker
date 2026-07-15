@@ -27,7 +27,8 @@ final class RecognitionTextCleaner {
         String[] lines = raw.split("\\r?\\n");
         for (String line : lines) {
             String cleaned = FoodItem.cleanText(line);
-            if (cleaned.length() == 0 || isAppUiNoiseLine(cleaned)) {
+            if (cleaned.length() == 0
+                    || (!hasProductNameLabel(cleaned) && isAppUiNoiseLine(cleaned))) {
                 continue;
             }
             if (builder.length() > 0) {
@@ -159,9 +160,14 @@ final class RecognitionTextCleaner {
 
         String[] noiseTokens = new String[] {
                 "识别结果",
+                "识別结果",
                 "填入新增表单",
+                "填入表单",
+                "直接填入",
+                "采用所选结果",
                 "商品码",
                 "商品名",
+                "商品名可信度",
                 "生产日期",
                 "保质期",
                 "最终日期",
@@ -180,6 +186,14 @@ final class RecognitionTextCleaner {
                 "日期已稳",
                 "已看到包装文字",
                 "继续保持稳定",
+                "继续识别",
+                "正在寻找",
+                "候选已可用",
+                "可先确认",
+                "结果较稳",
+                "关键帧",
+                "可信度",
+                "候选",
                 "候选锁定",
                 "本地安卓版",
                 "今日简报",
@@ -240,8 +254,11 @@ final class RecognitionTextCleaner {
         String text = normalizeCommonPackagingOcr(FoodItem.cleanText(value));
         List<String> fragments = new ArrayList<String>();
         String[] productPhrases = new String[] {
-                "果汁饮料", "茶饮料", "老北京炸酱面", "炸酱面", "去壳清水鹌鹑蛋", "清水鹌鹑蛋",
-                "鹌鹑蛋", "矿泉水", "苏打水", "喝开水", "酸奶", "牛奶", "面包", "饼干", "腐乳", "酸菜", "果汁"
+                "饮用天然矿泉水", "天然矿泉水", "饮用纯净水", "饮用天然水", "饮用净水",
+                "维生素饮料", "去壳清水鹌鹑蛋", "清水鹌鹑蛋", "老北京炸酱面",
+                "纯牛奶", "维C水", "果汁饮料", "茶饮料", "炸酱面", "鹌鹑蛋",
+                "矿泉水", "纯净水", "天然水", "饮用水", "苏打水", "喝开水",
+                "酸奶", "牛奶", "面包", "饼干", "腐乳", "酸菜", "果汁"
         };
         for (String phrase : productPhrases) {
             if (text.contains(phrase) && !fragments.contains(phrase)) {
@@ -273,6 +290,12 @@ final class RecognitionTextCleaner {
 
     private static String normalizeCommonPackagingOcr(String value) {
         String text = FoodItem.cleanText(value)
+                .replace("寶", "宝")
+                .replace("純", "纯")
+                .replace("飲", "饮")
+                .replace("淨", "净")
+                .replace("礦", "矿")
+                .replace("売", "壳")
                 .replace("鹤鹑", "鹌鹑")
                 .replace("鸣鹑", "鹌鹑")
                 .replace("鳴鹑", "鹌鹑")
@@ -282,7 +305,11 @@ final class RecognitionTextCleaner {
                 .replace("個开水", "喝开水")
                 .replace("倜开水", "喝开水")
                 .replace("遇开水", "喝开水")
-                .replace("渴开水", "喝开水");
+                .replace("渴开水", "喝开水")
+                .replace("维Ｃ水", "维C水")
+                .replace("维c水", "维C水")
+                .replace("维℃水", "维C水")
+                .replace("牛如", "牛奶");
         text = text
                 .replace("发醇", "发酵")
                 .replace("發醇", "发酵")
@@ -298,10 +325,58 @@ final class RecognitionTextCleaner {
         }
 
         List<String> fragments = extractFoodNameFragments(text);
+        if (text.startsWith("名") && !fragments.isEmpty()) {
+            int firstFoodIndex = Integer.MAX_VALUE;
+            for (String fragment : fragments) {
+                int index = text.indexOf(fragment);
+                if (index >= 0) {
+                    firstFoodIndex = Math.min(firstFoodIndex, index);
+                }
+            }
+            if (firstFoodIndex >= 3 && firstFoodIndex <= 9) {
+                text = FoodItem.cleanText(text.substring(1));
+                fragments = extractFoodNameFragments(text);
+            }
+        }
         String bestFragment = "";
         for (String fragment : fragments) {
             if (fragment.length() > bestFragment.length()) {
                 bestFragment = fragment;
+            }
+        }
+        if (bestFragment.length() > 0 && isLikelyQualityClaim(text)) {
+            return bestFragment;
+        }
+        String leadingFragment = "";
+        int leadingFragmentIndex = Integer.MAX_VALUE;
+        for (String fragment : fragments) {
+            int index = text.indexOf(fragment);
+            if (index >= 2 && index <= 8
+                    && (index < leadingFragmentIndex
+                    || (index == leadingFragmentIndex && fragment.length() > leadingFragment.length()))) {
+                leadingFragment = fragment;
+                leadingFragmentIndex = index;
+            }
+        }
+        if (leadingFragment.length() > 0) {
+            int fragmentIndex = leadingFragmentIndex;
+            if (fragmentIndex >= 2 && fragmentIndex <= 8) {
+                String prefix = FoodItem.cleanText(text.substring(0, fragmentIndex));
+                String prefixKey = productNameKey(prefix);
+                String combined = prefix + leadingFragment;
+                if (prefixKey.length() >= 2
+                        && prefixKey.length() <= 8
+                        && combined.length() <= 18
+                        && !containsAny(prefixKey, new String[] {
+                        "低糖", "无糖", "零糖", "少糖", "低脂", "无脂", "原味", "新品", "口味",
+                        "发酵", "减盐", "低盐", "清净", "工艺", "传统", "经典",
+                        "吹用", "文用", "义用"
+                })) {
+                    return combined;
+                }
+                if (containsAny(prefixKey, new String[] {"吹用", "文用", "义用"})) {
+                    return leadingFragment;
+                }
             }
         }
         String compact = productNameKey(text);
@@ -325,8 +400,61 @@ final class RecognitionTextCleaner {
     static boolean isHighConfidenceFoodProductName(String value) {
         String text = intelligentProductNameCandidate(value);
         return text.length() > 0
+                && !isAppUiNoiseLine(text)
                 && isLikelyFoodProductName(text)
+                && !isAttributeOnlyProductName(text)
                 && !hasSuspiciousNameArtifacts(text);
+    }
+
+    static boolean isLikelyStandaloneBrand(String value) {
+        String text = cleanProductNameLine(value);
+        String compact = productNameKey(text);
+        if (compact.length() < 2 || compact.length() > 10
+                || isAppUiNoiseLine(text)
+                || isPackagingMetadata(text)
+                || isLikelyMarketingSlogan(text)
+                || containsAny(compact, new String[] {
+                "经典", "原味", "传统", "风味", "低糖", "无糖", "零糖", "新品", "口味",
+                "每日", "营养", "健康", "满足"
+        })
+                || isAttributeOnlyProductName(text)) {
+            return false;
+        }
+        if (compact.matches("[a-z0-9]+") && compact.length() < 4) {
+            return false;
+        }
+        int readable = 0;
+        for (int index = 0; index < compact.length(); index++) {
+            char c = compact.charAt(index);
+            if (isChinese(c) || (c >= 'a' && c <= 'z')) {
+                readable++;
+            }
+        }
+        return readable >= 2;
+    }
+
+    private static boolean isAttributeOnlyProductName(String value) {
+        String compact = productNameKey(value);
+        if (compact.length() == 0) {
+            return true;
+        }
+        String stripped = compact
+                .replace("低糖", "")
+                .replace("无糖", "")
+                .replace("零糖", "")
+                .replace("0糖", "")
+                .replace("少糖", "")
+                .replace("低脂", "")
+                .replace("无脂", "")
+                .replace("原味", "")
+                .replace("新品", "");
+        if (stripped.length() == 0) {
+            return true;
+        }
+        return stripped.matches("[a-z0-9]{1,3}")
+                && containsAny(compact, new String[] {
+                "低糖", "无糖", "零糖", "0糖", "少糖", "低脂", "无脂", "原味", "新品"
+        });
     }
 
     static boolean isHighConfidenceLabeledProductName(String value) {
@@ -398,6 +526,18 @@ final class RecognitionTextCleaner {
         if (left.equals(right)) {
             return 1d;
         }
+        String leftCategory = foodCategoryKey(first);
+        String rightCategory = foodCategoryKey(second);
+        if (leftCategory.length() > 0
+                && rightCategory.length() > 0
+                && !leftCategory.equals(rightCategory)) {
+            return 0d;
+        }
+        if (left.length() == right.length()
+                && left.length() >= 3
+                && productNameEditDistance(left, right) == 1) {
+            return 0.80d;
+        }
         int shorterLength = Math.min(left.length(), right.length());
         if (shorterLength >= 2 && (left.contains(right) || right.contains(left))) {
             return Math.max(0.82d, (double) shorterLength / Math.max(left.length(), right.length()));
@@ -415,7 +555,51 @@ final class RecognitionTextCleaner {
         return Math.max(lcsRatio * 0.8d, bigramRatio);
     }
 
-    private static String productNameKey(String value) {
+    static String foodCategoryKey(String value) {
+        String compact = productNameKey(normalizeCommonPackagingOcr(value));
+        if (compact.contains("矿泉水")) return "矿泉水";
+        if (compact.contains("纯净水") || compact.contains("饮用净水")) return "纯净水";
+        if (compact.contains("天然水")) return "天然水";
+        if (compact.contains("维c水")) return "维c水";
+        if (compact.contains("苏打水")) return "苏打水";
+        if (compact.contains("喝开水")) return "喝开水";
+        if (compact.contains("饮用水")) return "饮用水";
+        if (compact.contains("酸奶")) return "酸奶";
+        if (compact.contains("牛奶") || compact.endsWith("奶")) return "牛奶";
+        if (compact.contains("炸酱面")) return "炸酱面";
+        if (compact.contains("鹌鹑蛋")) return "鹌鹑蛋";
+        if (compact.contains("果汁")) return "果汁";
+        if (compact.contains("酸菜")) return "酸菜";
+        if (compact.contains("腐乳")) return "腐乳";
+        return "";
+    }
+
+    static int productNameEditDistance(String first, String second) {
+        String left = productNameKey(first);
+        String right = productNameKey(second);
+        int[] previous = new int[right.length() + 1];
+        int[] current = new int[right.length() + 1];
+        for (int index = 0; index <= right.length(); index++) {
+            previous[index] = index;
+        }
+        for (int leftIndex = 1; leftIndex <= left.length(); leftIndex++) {
+            current[0] = leftIndex;
+            for (int rightIndex = 1; rightIndex <= right.length(); rightIndex++) {
+                int substitution = previous[rightIndex - 1]
+                        + (left.charAt(leftIndex - 1) == right.charAt(rightIndex - 1) ? 0 : 1);
+                current[rightIndex] = Math.min(
+                        Math.min(previous[rightIndex] + 1, current[rightIndex - 1] + 1),
+                        substitution
+                );
+            }
+            int[] swap = previous;
+            previous = current;
+            current = swap;
+        }
+        return previous[right.length()];
+    }
+
+    static String productNameKey(String value) {
         String text = FoodItem.cleanText(value).replace(" ", "").toLowerCase();
         StringBuilder builder = new StringBuilder(text.length());
         for (int i = 0; i < text.length(); i++) {
@@ -458,6 +642,9 @@ final class RecognitionTextCleaner {
     static int productNameScore(String candidate) {
         String text = FoodItem.cleanText(candidate);
         if (text.length() < 2) {
+            return 0;
+        }
+        if (isAppUiNoiseLine(text)) {
             return 0;
         }
         if (isLikelyExplanatorySentence(text)) {
@@ -530,7 +717,7 @@ final class RecognitionTextCleaner {
         }
         if (containsAny(compact, new String[] {
                 "饮料", "牛奶", "酸奶", "乳饮", "果汁", "茶饮", "矿泉水", "苏打水",
-                "饮用水", "汽水", "咖啡", "可乐", "面包", "饼干", "蛋糕", "糕点",
+                "维c水", "饮用水", "汽水", "咖啡", "可乐", "面包", "饼干", "蛋糕", "糕点",
                 "糖果", "巧克力", "酸菜", "榨菜", "罐头", "腐乳", "酱油", "食用油",
                 "米饭", "米粉", "面条", "方便面", "炸酱面", "鹌鹑蛋", "鸡蛋", "肉丸",
                 "火腿", "香肠", "零食", "坚果", "麦片", "果冻", "薯片", "豆制品"
@@ -587,11 +774,21 @@ final class RecognitionTextCleaner {
         if (compact.length() < 2) {
             return false;
         }
+        if (compact.contains("品质") && !hasFoodProductToken(compact)) {
+            return true;
+        }
         return containsAny(compact, new String[] {
                 "配啥都好吃", "酸酸爽爽", "蛋白爽滑", "蛋黄绵密", "料简单",
                 "每一口", "尽享美味", "匠心制作", "经典之选", "好吃", "好喝",
-                "更香", "真香", "元气满满"
+                "更香", "真香", "元气满满", "航天品质", "浓纯营"
         });
+    }
+
+    private static boolean isLikelyQualityClaim(String value) {
+        String compact = productNameKey(value);
+        return compact.contains("航天品质")
+                || compact.contains("浓纯营")
+                || (compact.contains("品质") && !compact.startsWith("品质"));
     }
 
     private static boolean hasFoodProductToken(String compact) {

@@ -14,14 +14,30 @@ final class DateOcrParser {
     private static final Pattern DATE_WITH_SEPARATOR = Pattern.compile(
             "(?<!\\d)((?:20\\d{2}|\\d{2})\\s*(?:年|[./-])\\s*\\d{1,2}\\s*(?:月|[./-])\\s*\\d{1,2}\\s*(?:日)?)(?!\\d)"
     );
+    private static final Pattern DAY_MONTH_YEAR_WITH_SEPARATOR = Pattern.compile(
+            "(?<![\\d./-])(\\d{1,2}\\s*[./-]\\s*\\d{1,2}\\s*[./-]\\s*20\\d{2})(?!\\d)"
+    );
     private static final Pattern YEAR_MONTH_WITH_SEPARATOR = Pattern.compile(
-            "(?<![\\d./-])((?:20\\d{2}|\\d{2})\\s*(?:年|[./-])\\s*\\d{1,2}\\s*(?:月)?)(?!\\s*(?:[./-]|月)\\s*\\d)(?!\\d)"
+            "(?<![\\d./-])(20\\d{2}\\s*(?:年|[./-])\\s*\\d{1,2}\\s*(?:月)?)(?!\\s*(?:[./-]|月)\\s*\\d)(?!\\d)"
     );
     private static final Pattern COMPACT_YEAR_MONTH = Pattern.compile("(?<!\\d)(20\\d{4})(?!\\d)");
     private static final Pattern MONTH_YEAR_WITH_SEPARATOR = Pattern.compile(
             "(?<![\\d./-])(\\d{1,2}\\s*[./-]\\s*20\\d{2})(?!\\d)"
     );
+    private static final String ENGLISH_MONTH =
+            "JAN(?:UARY)?|FEB(?:RUARY)?|MAR(?:CH)?|APR(?:IL)?|MAY|JUN(?:E)?|"
+                    + "JUL(?:Y)?|AUG(?:UST)?|SEP(?:T(?:EMBER)?)?|OCT(?:OBER)?|"
+                    + "NOV(?:EMBER)?|DEC(?:EMBER)?";
+    private static final Pattern MONTH_NAME_FIRST_DATE = Pattern.compile(
+            "\\b(" + ENGLISH_MONTH + ")\\s+(\\d{1,2})(?:\\s*,)?\\s+(20\\d{2})\\b",
+            Pattern.CASE_INSENSITIVE
+    );
+    private static final Pattern DAY_FIRST_MONTH_NAME_DATE = Pattern.compile(
+            "\\b(\\d{1,2})\\s+(" + ENGLISH_MONTH + ")(?:\\s*,)?\\s+(20\\d{2})\\b",
+            Pattern.CASE_INSENSITIVE
+    );
     private static final Pattern COMPACT_DATE = Pattern.compile("(?<!\\d)((?:20\\d{6})|(?:\\d{6}))(?!\\d)");
+    private static final Pattern COMPACT_DAY_MONTH_YEAR = Pattern.compile("(?<!\\d)(\\d{4}20\\d{2})(?!\\d)");
     private static final Pattern PACKED_PRODUCTION_CODE = Pattern.compile("(?<!\\d)(20\\d{6})\\d{1,8}(?!\\d)");
     private static final Pattern COMPACT_DATE_RANGE = Pattern.compile(
             "(?<!\\d)(20\\d{6})\\s*(?:(?:[/|~～]|至)\\s*)?(20\\d{6})(?!\\d)"
@@ -52,11 +68,11 @@ final class DateOcrParser {
             Pattern.CASE_INSENSITIVE
     );
     private static final Pattern UNHINTED_SHELF_LIFE = Pattern.compile(
-            "(?<!\\d)(\\d{1,3})\\s*(天|日|个\\s*月)(?!\\d)",
+            "(?<!\\d)(\\d{1,3})[ \\t]*(天|日|个[ \\t]*月)(?!\\d)",
             Pattern.CASE_INSENSITIVE
     );
     private static final Pattern OCR_DAMAGED_MONTH_SHELF_LIFE = Pattern.compile(
-            "保[^\\s\\d]{2,3}\\s*(\\d{1,3})\\s*个(?:月|1)?(?!\\d)",
+            "保[^\\s\\d]{1,3}\\s*(\\d{1,3})\\s*个(?:月|日|1)?(?!\\d)",
             Pattern.CASE_INSENSITIVE
     );
     private static final Pattern AGE_CONTEXT = Pattern.compile(
@@ -71,14 +87,16 @@ final class DateOcrParser {
     }
 
     static Result parse(String rawText, String referenceDate) {
-        String text = normalizeText(rawText);
+        String text = normalizeEnglishMonthDates(normalizeText(rawText));
         List<DateCandidate> productionDates = new ArrayList<DateCandidate>();
         List<DateCandidate> expiryDates = new ArrayList<DateCandidate>();
         List<DateCandidate> unhintedDates = new ArrayList<DateCandidate>();
         List<ShelfLifeCandidate> shelfLives = new ArrayList<ShelfLifeCandidate>();
 
         collectDates(text, DATE_WITH_SEPARATOR, productionDates, expiryDates, unhintedDates);
+        collectDates(text, DAY_MONTH_YEAR_WITH_SEPARATOR, productionDates, expiryDates, unhintedDates);
         collectDates(text, COMPACT_DATE, productionDates, expiryDates, unhintedDates);
+        collectDates(text, COMPACT_DAY_MONTH_YEAR, productionDates, expiryDates, unhintedDates);
         collectYearMonths(text, YEAR_MONTH_WITH_SEPARATOR, expiryDates, unhintedDates, false);
         collectYearMonths(text, COMPACT_YEAR_MONTH, expiryDates, unhintedDates, false);
         collectYearMonths(text, MONTH_YEAR_WITH_SEPARATOR, expiryDates, unhintedDates, true);
@@ -648,6 +666,50 @@ final class DateOcrParser {
         return builder.toString();
     }
 
+    private static String normalizeEnglishMonthDates(String text) {
+        String monthFirst = replaceEnglishMonthDates(text, MONTH_NAME_FIRST_DATE, true);
+        return replaceEnglishMonthDates(monthFirst, DAY_FIRST_MONTH_NAME_DATE, false);
+    }
+
+    private static String replaceEnglishMonthDates(
+            String text,
+            Pattern pattern,
+            boolean monthFirst
+    ) {
+        Matcher matcher = pattern.matcher(text);
+        StringBuffer normalized = new StringBuffer();
+        while (matcher.find()) {
+            String monthName = matcher.group(monthFirst ? 1 : 2);
+            String day = matcher.group(monthFirst ? 2 : 1);
+            String year = matcher.group(3);
+            String replacement = year + "-" + englishMonthNumber(monthName) + "-"
+                    + String.format(Locale.US, "%02d", parsePositiveInt(day));
+            matcher.appendReplacement(normalized, Matcher.quoteReplacement(replacement));
+        }
+        matcher.appendTail(normalized);
+        return normalized.toString();
+    }
+
+    private static String englishMonthNumber(String monthName) {
+        String prefix = FoodItem.cleanText(monthName).toUpperCase(Locale.US);
+        if (prefix.length() > 3) {
+            prefix = prefix.substring(0, 3);
+        }
+        if ("JAN".equals(prefix)) return "01";
+        if ("FEB".equals(prefix)) return "02";
+        if ("MAR".equals(prefix)) return "03";
+        if ("APR".equals(prefix)) return "04";
+        if ("MAY".equals(prefix)) return "05";
+        if ("JUN".equals(prefix)) return "06";
+        if ("JUL".equals(prefix)) return "07";
+        if ("AUG".equals(prefix)) return "08";
+        if ("SEP".equals(prefix)) return "09";
+        if ("OCT".equals(prefix)) return "10";
+        if ("NOV".equals(prefix)) return "11";
+        if ("DEC".equals(prefix)) return "12";
+        return "00";
+    }
+
     private static String normalizeDate(String raw) {
         List<String> numbers = new ArrayList<String>();
         Matcher matcher = NUMBER.matcher(raw);
@@ -658,6 +720,9 @@ final class DateOcrParser {
         if (numbers.size() == 1) {
             String digits = numbers.get(0);
             if (digits.length() == 8) {
+                if (digits.substring(4, 6).equals("20")) {
+                    return formatDate(digits.substring(4, 8), digits.substring(2, 4), digits.substring(0, 2));
+                }
                 return formatDate(digits.substring(0, 4), digits.substring(4, 6), digits.substring(6, 8));
             }
             if (digits.length() == 6) {
@@ -666,8 +731,34 @@ final class DateOcrParser {
         }
 
         if (numbers.size() >= 3) {
-            String year = numbers.get(0).length() == 2 ? twoDigitYear(numbers.get(0)) : numbers.get(0);
-            return formatDate(year, numbers.get(1), numbers.get(2));
+            String first = numbers.get(0);
+            String second = numbers.get(1);
+            String third = numbers.get(2);
+            if (third.length() == 4 && first.length() <= 2 && second.length() <= 2) {
+                return formatDate(third, second, first);
+            }
+            if (first.length() == 2 && second.length() <= 2 && third.length() == 2) {
+                String yearFirst = formatDate(twoDigitYear(first), second, third);
+                String dayFirst = formatDate(twoDigitYear(third), second, first);
+                if (DateRules.isValidDateString(yearFirst)
+                        && DateRules.isValidDateString(dayFirst)) {
+                    int yearFirstDistance = Math.abs(DateRules.daysBetween(
+                            yearFirst,
+                            DateRules.getTodayString()
+                    ));
+                    int dayFirstDistance = Math.abs(DateRules.daysBetween(
+                            dayFirst,
+                            DateRules.getTodayString()
+                    ));
+                    return dayFirstDistance < yearFirstDistance ? dayFirst : yearFirst;
+                }
+                if (DateRules.isValidDateString(dayFirst)) {
+                    return dayFirst;
+                }
+                return yearFirst;
+            }
+            String year = first.length() == 2 ? twoDigitYear(first) : first;
+            return formatDate(year, second, third);
         }
 
         return "";
@@ -877,20 +968,33 @@ final class DateOcrParser {
                 return 0;
             }
             int count = countDateEvidence(normalizedText, DATE_WITH_SEPARATOR, normalizedDate);
+            count += countDateEvidence(normalizedText, DAY_MONTH_YEAR_WITH_SEPARATOR, normalizedDate);
             count += countDateEvidence(normalizedText, COMPACT_DATE, normalizedDate);
+            count += countDateEvidence(normalizedText, COMPACT_DAY_MONTH_YEAR, normalizedDate);
             count += countDateEvidence(normalizedText, PACKED_PRODUCTION_CODE, normalizedDate);
             return Math.min(3, count);
         }
 
         int strongDatePairEvidenceCount() {
+            int count = 0;
+            for (DateCandidate production : productionDates) {
+                for (DateCandidate expiry : expiryDates) {
+                    count += strongDatePairEvidenceCount(
+                            production.normalized,
+                            expiry.normalized
+                    );
+                }
+            }
+            return count;
+        }
+
+        int strongDatePairEvidenceCount(String productionDate, String expiryDate) {
             Matcher matcher = COMPACT_DATE_RANGE.matcher(normalizedText);
             int count = 0;
             while (matcher.find()) {
                 String production = normalizeDate(matcher.group(1));
                 String expiry = normalizeDate(matcher.group(2));
-                if (DateRules.isValidDateString(production)
-                        && DateRules.isValidDateString(expiry)
-                        && production.compareTo(expiry) < 0) {
+                if (productionDate.equals(production) && expiryDate.equals(expiry)) {
                     count++;
                 }
             }
@@ -901,9 +1005,7 @@ final class DateOcrParser {
                         ? normalizeDate("2" + productionRaw)
                         : normalizeDate(productionRaw);
                 String expiry = normalizeDate(matcher.group(2));
-                if (DateRules.isValidDateString(production)
-                        && DateRules.isValidDateString(expiry)
-                        && production.compareTo(expiry) < 0) {
+                if (productionDate.equals(production) && expiryDate.equals(expiry)) {
                     count += 2;
                 }
             }

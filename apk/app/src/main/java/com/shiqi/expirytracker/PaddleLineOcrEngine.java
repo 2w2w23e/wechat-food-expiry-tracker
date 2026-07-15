@@ -37,13 +37,21 @@ final class PaddleLineOcrEngine implements AutoCloseable {
     }
 
     synchronized String recognize(Bitmap source) {
+        return recognizeResult(source).text;
+    }
+
+    synchronized LineResult recognizeResult(Bitmap source) {
+        return recognizeResult(source, 0.42f);
+    }
+
+    synchronized LineResult recognizeResult(Bitmap source, float minimumConfidence) {
         if (source == null || source.isRecycled() || unavailable || closed) {
-            return "";
+            return LineResult.empty();
         }
         try {
             ensureInitialized();
             if (session == null || characters == null) {
-                return "";
+                return LineResult.empty();
             }
             int resizedWidth = Math.max(1, Math.round(
                     source.getWidth() * (MODEL_HEIGHT / (float) source.getHeight())
@@ -59,9 +67,9 @@ final class PaddleLineOcrEngine implements AutoCloseable {
                     OnnxValue value = result.get(0);
                     Object raw = value == null ? null : value.getValue();
                     if (!(raw instanceof float[][][])) {
-                        return "";
+                        return LineResult.empty();
                     }
-                    return decode((float[][][]) raw);
+                    return decode((float[][][]) raw, Math.max(0f, Math.min(1f, minimumConfidence)));
                 }
             } finally {
                 if (resized != source) {
@@ -70,7 +78,7 @@ final class PaddleLineOcrEngine implements AutoCloseable {
             }
         } catch (Throwable error) {
             Log.w(TAG, "PP-OCRv6 line recognition failed", error);
-            return "";
+            return LineResult.empty();
         }
     }
 
@@ -143,9 +151,9 @@ final class PaddleLineOcrEngine implements AutoCloseable {
         return buffer;
     }
 
-    private String decode(float[][][] output) {
+    private LineResult decode(float[][][] output, float minimumConfidence) {
         if (output.length == 0 || output[0] == null) {
-            return "";
+            return LineResult.empty();
         }
         StringBuilder text = new StringBuilder();
         int previousIndex = -1;
@@ -170,10 +178,27 @@ final class PaddleLineOcrEngine implements AutoCloseable {
             }
             previousIndex = bestIndex;
         }
-        if (scoreCount == 0 || scoreTotal / scoreCount < 0.42f) {
-            return "";
+        if (scoreCount == 0 || scoreTotal / scoreCount < minimumConfidence) {
+            return LineResult.empty();
         }
-        return RecognitionTextCleaner.cleanForPackagingOcr(text.toString());
+        String cleaned = RecognitionTextCleaner.cleanForPackagingOcr(text.toString());
+        return cleaned.length() == 0
+                ? LineResult.empty()
+                : new LineResult(cleaned, scoreTotal / scoreCount);
+    }
+
+    static final class LineResult {
+        final String text;
+        final double confidence;
+
+        LineResult(String text, double confidence) {
+            this.text = FoodItem.cleanText(text);
+            this.confidence = Math.max(0d, Math.min(1d, confidence));
+        }
+
+        static LineResult empty() {
+            return new LineResult("", 0d);
+        }
     }
 
     @Override

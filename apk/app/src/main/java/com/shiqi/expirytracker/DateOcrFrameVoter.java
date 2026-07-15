@@ -40,7 +40,7 @@ final class DateOcrFrameVoter {
 
             addDateCandidates(productionDates, frame.productionDates, frame, frameIndex, true);
             addDateCandidates(expiryDates, frame.expiryDates, frame, frameIndex, false);
-            addDateCandidates(calculatedExpiryDates, frame.calculatedExpiryDates, frame, frameIndex, false);
+            addValidatedCalculatedExpiryCandidates(calculatedExpiryDates, frame, frameIndex);
             addShelfLifeCandidates(shelfLives, frame.shelfLives, frameIndex);
         }
 
@@ -51,7 +51,7 @@ final class DateOcrFrameVoter {
         StableDate expiryDate = strongPair == null
                 ? stableDate(expiryDates, requiredVotes)
                 : strongPair.expiryDate;
-        int shelfLifeRequiredVotes = productionDate == null ? requiredVotes : 1;
+        int shelfLifeRequiredVotes = requiredVotes;
         StableShelfLife shelfLife = stableShelfLife(shelfLives, shelfLifeRequiredVotes);
         StableDate calculatedExpiryDate = stableDate(calculatedExpiryDates, requiredVotes);
         if (calculatedExpiryDate == null && productionDate != null && shelfLife != null) {
@@ -74,10 +74,16 @@ final class DateOcrFrameVoter {
             }
         }
 
-        boolean conflict = hasDateConflict(productionDates, requiredVotes)
-                || hasDateConflict(expiryDates, requiredVotes)
+        StableDate selectedExpiryDate = expiryDate == null ? calculatedExpiryDate : expiryDate;
+        boolean chronologyConflict = productionDate != null
+                && selectedExpiryDate != null
+                && selectedExpiryDate.value.compareTo(productionDate.value) < 0;
+        boolean conflict = (strongPair == null
+                && (hasDateConflict(productionDates, requiredVotes)
+                || hasDateConflict(expiryDates, requiredVotes)))
                 || hasDateConflict(calculatedExpiryDates, requiredVotes)
-                || hasShelfLifeConflict(shelfLives, shelfLifeRequiredVotes);
+                || hasShelfLifeConflict(shelfLives, shelfLifeRequiredVotes)
+                || chronologyConflict;
 
         return new VoteResult(
                 safeFrames.size(),
@@ -99,6 +105,9 @@ final class DateOcrFrameVoter {
             boolean productionEvidence
     ) {
         for (DateOcrParser.DateCandidate candidate : candidates) {
+            if (productionEvidence && isFutureProductionDate(candidate.normalized)) {
+                continue;
+            }
             DateAccumulator accumulator = accumulators.get(candidate.normalized);
             if (accumulator == null) {
                 accumulator = new DateAccumulator(candidate.type, candidate.normalized);
@@ -137,24 +146,38 @@ final class DateOcrFrameVoter {
             if (frame == null) {
                 continue;
             }
-            DateOcrParser.DateCandidate production = firstStrongDate(frame.productionDates);
-            DateOcrParser.DateCandidate expiry = firstStrongDate(frame.expiryDates);
-            if (production == null || expiry == null
-                    || production.normalized.compareTo(expiry.normalized) >= 0) {
-                continue;
+            for (DateOcrParser.DateCandidate production : frame.productionDates) {
+                if (production.weakHint || isFutureProductionDate(production.normalized)) {
+                    continue;
+                }
+                for (DateOcrParser.DateCandidate expiry : frame.expiryDates) {
+                    if (expiry.weakHint
+                            || !isPlausibleFoodDatePair(
+                            production.normalized,
+                            expiry.normalized
+                    )) {
+                        continue;
+                    }
+                    String key = production.normalized + "|" + expiry.normalized;
+                    DatePairAccumulator pair = pairs.get(key);
+                    if (pair == null) {
+                        pair = new DatePairAccumulator(
+                                production.normalized,
+                                expiry.normalized
+                        );
+                        pairs.put(key, pair);
+                    }
+                    pair.add(
+                            production,
+                            expiry,
+                            frameIndex,
+                            Math.max(1, Math.min(2, frame.strongDatePairEvidenceCount(
+                                    production.normalized,
+                                    expiry.normalized
+                            )))
+                    );
+                }
             }
-            String key = production.normalized + "|" + expiry.normalized;
-            DatePairAccumulator pair = pairs.get(key);
-            if (pair == null) {
-                pair = new DatePairAccumulator(production.normalized, expiry.normalized);
-                pairs.put(key, pair);
-            }
-            pair.add(
-                    production,
-                    expiry,
-                    frameIndex,
-                    Math.max(1, Math.min(2, frame.strongDatePairEvidenceCount()))
-            );
         }
 
         DatePairAccumulator best = null;
@@ -173,15 +196,51 @@ final class DateOcrFrameVoter {
                 : best.toStableDatePair();
     }
 
-    private static DateOcrParser.DateCandidate firstStrongDate(
-            List<DateOcrParser.DateCandidate> candidates
+    private static void addValidatedCalculatedExpiryCandidates(
+            Map<String, DateAccumulator> accumulators,
+            DateOcrParser.Result frame,
+            int frameIndex
     ) {
-        for (DateOcrParser.DateCandidate candidate : candidates) {
-            if (!candidate.weakHint) {
-                return candidate;
+        List<DateOcrParser.DateCandidate> validated =
+                new ArrayList<DateOcrParser.DateCandidate>();
+        for (DateOcrParser.DateCandidate calculated : frame.calculatedExpiryDates) {
+            if (matchesValidCalculation(calculated.normalized, frame)) {
+                validated.add(calculated);
             }
         }
-        return null;
+        addDateCandidates(accumulators, validated, frame, frameIndex, false);
+    }
+
+    private static boolean matchesValidCalculation(
+            String expectedExpiry,
+            DateOcrParser.Result frame
+    ) {
+        for (DateOcrParser.DateCandidate production : frame.productionDates) {
+            if (isFutureProductionDate(production.normalized)) {
+                continue;
+            }
+            for (DateOcrParser.ShelfLifeCandidate shelfLife : frame.shelfLives) {
+                String calculated = DateRules.addShelfLife(
+                        production.normalized,
+                        Integer.valueOf(shelfLife.value),
+                        shelfLife.unit
+                );
+                if (expectedExpiry.equals(calculated)) {
+                    return true;
+                }
+            }
+        }
+        return false;
+    }
+
+    private static boolean isFutureProductionDate(String value) {
+        return DateRules.isValidDateString(value)
+                && value.compareTo(DateRules.getTodayString()) > 0;
+    }
+
+    private static boolean isPlausibleFoodDatePair(String productionDate, String expiryDate) {
+        int days = DateRules.daysBetween(productionDate, expiryDate);
+        return days > 0 && days <= (366 * 5);
     }
 
     private static StableDate stableDate(Map<String, DateAccumulator> accumulators, int minVotes) {
@@ -193,8 +252,18 @@ final class DateOcrFrameVoter {
     }
 
     private static StableShelfLife stableShelfLife(Map<String, ShelfLifeAccumulator> accumulators, int minVotes) {
-        ShelfLifeAccumulator best = bestShelfLife(accumulators);
-        if (best == null || best.votes < minVotes || hasTopShelfLifeTie(accumulators, best.votes)) {
+        int strongMinVotes = Math.min(2, minVotes);
+        ShelfLifeAccumulator best = bestShelfLife(accumulators, strongMinVotes);
+        if (best == null) {
+            return null;
+        }
+        if (best.strongVotes >= strongMinVotes) {
+            if (hasTopStrongShelfLifeTie(accumulators, best.strongVotes, strongMinVotes)) {
+                return null;
+            }
+            return best.toStableShelfLife();
+        }
+        if (best.votes < minVotes || hasTopShelfLifeTie(accumulators, best.votes)) {
             return null;
         }
         return best.toStableShelfLife();
@@ -224,11 +293,24 @@ final class DateOcrFrameVoter {
         return values.isEmpty() ? null : values.get(0);
     }
 
-    private static ShelfLifeAccumulator bestShelfLife(Map<String, ShelfLifeAccumulator> accumulators) {
+    private static ShelfLifeAccumulator bestShelfLife(
+            Map<String, ShelfLifeAccumulator> accumulators,
+            final int strongMinVotes
+    ) {
         List<ShelfLifeAccumulator> values = new ArrayList<ShelfLifeAccumulator>(accumulators.values());
         Collections.sort(values, new Comparator<ShelfLifeAccumulator>() {
             @Override
             public int compare(ShelfLifeAccumulator left, ShelfLifeAccumulator right) {
+                boolean leftStrong = left.strongVotes >= strongMinVotes;
+                boolean rightStrong = right.strongVotes >= strongMinVotes;
+                if (leftStrong != rightStrong) {
+                    return leftStrong ? -1 : 1;
+                }
+                int strongVotes = Integer.valueOf(right.strongVotes)
+                        .compareTo(Integer.valueOf(left.strongVotes));
+                if (strongVotes != 0) {
+                    return strongVotes;
+                }
                 int votes = Integer.valueOf(right.votes).compareTo(Integer.valueOf(left.votes));
                 if (votes != 0) {
                     return votes;
@@ -263,13 +345,38 @@ final class DateOcrFrameVoter {
     }
 
     private static boolean hasShelfLifeConflict(Map<String, ShelfLifeAccumulator> accumulators, int minVotes) {
+        int strongMinVotes = Math.min(2, minVotes);
+        boolean hasStrongCandidate = false;
+        for (ShelfLifeAccumulator accumulator : accumulators.values()) {
+            if (accumulator.strongVotes >= strongMinVotes) {
+                hasStrongCandidate = true;
+                break;
+            }
+        }
         int contenders = 0;
         for (ShelfLifeAccumulator accumulator : accumulators.values()) {
-            if (accumulator.votes >= minVotes) {
+            if (hasStrongCandidate
+                    ? accumulator.strongVotes >= strongMinVotes
+                    : accumulator.votes >= minVotes) {
                 contenders++;
             }
         }
         return contenders > 1;
+    }
+
+    private static boolean hasTopStrongShelfLifeTie(
+            Map<String, ShelfLifeAccumulator> accumulators,
+            int topStrongVotes,
+            int strongMinVotes
+    ) {
+        int tied = 0;
+        for (ShelfLifeAccumulator accumulator : accumulators.values()) {
+            if (accumulator.strongVotes >= strongMinVotes
+                    && accumulator.strongVotes == topStrongVotes) {
+                tied++;
+            }
+        }
+        return tied > 1;
     }
 
     private static boolean hasTopVoteTie(Map<String, DateAccumulator> accumulators, int topVotes) {
@@ -409,11 +516,13 @@ final class DateOcrFrameVoter {
         final int value;
         final String unit;
         int votes = 0;
+        int strongVotes = 0;
         double score = 0.0d;
         String bestRaw = "";
         String bestContext = "";
         double bestConfidence = 0.0d;
         private int lastFrameIndex = -1;
+        private int lastStrongFrameIndex = -1;
 
         ShelfLifeAccumulator(int value, String unit) {
             this.value = value;
@@ -424,6 +533,10 @@ final class DateOcrFrameVoter {
             if (frameIndex != lastFrameIndex) {
                 votes++;
                 lastFrameIndex = frameIndex;
+            }
+            if (candidate.confidence >= 0.70d && frameIndex != lastStrongFrameIndex) {
+                strongVotes++;
+                lastStrongFrameIndex = frameIndex;
             }
             score += candidate.confidence;
             if (bestContext.length() == 0 || candidate.confidence > bestConfidence) {
@@ -483,8 +596,7 @@ final class DateOcrFrameVoter {
         boolean hasStableCandidate() {
             return productionDate != null
                     || expiryDate != null
-                    || calculatedExpiryDate != null
-                    || shelfLife != null;
+                    || calculatedExpiryDate != null;
         }
 
         boolean readyForUserConfirmation() {
