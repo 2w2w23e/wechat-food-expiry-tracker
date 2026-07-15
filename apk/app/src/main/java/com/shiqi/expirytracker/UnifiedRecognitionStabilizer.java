@@ -10,7 +10,9 @@ final class UnifiedRecognitionStabilizer {
     private static final int DEFAULT_DATE_MIN_VOTES = 3;
     private static final int BARCODE_LOCK_VOTES = 2;
     private static final int PACKAGING_NAME_LOCK_VOTES = 3;
-    private static final int MAX_PACKAGING_CANDIDATES = 3;
+    private static final int MAX_PACKAGING_CANDIDATES = 1;
+    private static final double MIN_REPEATED_NAME_SCORE = 70d;
+    private static final double MIN_SINGLE_STRONG_NAME_SCORE = 100d;
 
     private final int maxFrames;
     private final int dateMinVotes;
@@ -94,6 +96,30 @@ final class UnifiedRecognitionStabilizer {
                 latestDateVote,
                 latestRawText
         );
+    }
+
+    Snapshot promoteDirectDatePairForConfirmation(DateOcrParser.Result result) {
+        if (stableDateVote != null
+                && stableDateVote.productionDate != null
+                && stableDateVote.expiryDate != null
+                && !stableDateVote.hasConflict) {
+            return snapshot();
+        }
+        if (result == null || result.productionDates.isEmpty() || result.expiryDates.isEmpty()) {
+            return snapshot();
+        }
+        DateOcrFrameVoter.VoteResult direct = DateOcrFrameVoter.vote(
+                Collections.singletonList(result),
+                1
+        );
+        if (direct.productionDate != null
+                && direct.expiryDate != null
+                && direct.productionDate.value.compareTo(direct.expiryDate.value) < 0
+                && !direct.hasConflict) {
+            latestDateVote = direct;
+            stableDateVote = direct;
+        }
+        return snapshot();
     }
 
     void reset() {
@@ -289,7 +315,10 @@ final class UnifiedRecognitionStabilizer {
 
         List<PackagingTextAnalyzer.Candidate> ranked = new ArrayList<PackagingTextAnalyzer.Candidate>();
         for (PackagingAggregate aggregate : aggregates) {
-            ranked.add(aggregate.toCandidate());
+            PackagingTextAnalyzer.Candidate candidate = aggregate.toCandidate();
+            if (isDisplayEligible(candidate)) {
+                ranked.add(candidate);
+            }
         }
         Collections.sort(ranked, new Comparator<PackagingTextAnalyzer.Candidate>() {
             @Override
@@ -325,9 +354,34 @@ final class UnifiedRecognitionStabilizer {
     }
 
     private static List<PackagingTextAnalyzer.Candidate> candidatesFromRawText(String rawText) {
-        String packagingName = RecognitionTextCleaner.extractProductNameFromOcr(rawText);
+        String cleanedRawText = FoodItem.cleanText(rawText);
+        StringBuilder unlabeledText = new StringBuilder();
+        for (String line : cleanedRawText.split("\\r?\\n")) {
+            String labeledName = RecognitionTextCleaner.intelligentProductNameCandidate(
+                    RecognitionTextCleaner.extractLabeledProductName(line)
+            );
+            int labeledScore = RecognitionTextCleaner.productNameScore(labeledName);
+            if (labeledScore > 0
+                    && RecognitionTextCleaner.isHighConfidenceLabeledProductName(labeledName)) {
+                return Collections.singletonList(new PackagingTextAnalyzer.Candidate(
+                        labeledName,
+                        labeledScore + 180d,
+                        1,
+                        Collections.singletonList(FoodItem.cleanText(line))
+                ));
+            }
+            if (!RecognitionTextCleaner.hasProductNameLabel(line)) {
+                if (unlabeledText.length() > 0) {
+                    unlabeledText.append('\n');
+                }
+                unlabeledText.append(line);
+            }
+        }
+        String packagingName = RecognitionTextCleaner.intelligentProductNameCandidate(
+                RecognitionTextCleaner.extractProductNameFromOcr(unlabeledText.toString())
+        );
         int score = RecognitionTextCleaner.productNameScore(packagingName);
-        if (score <= 0) {
+        if (score <= 0 || !RecognitionTextCleaner.isHighConfidenceFoodProductName(packagingName)) {
             return Collections.emptyList();
         }
         return Collections.singletonList(new PackagingTextAnalyzer.Candidate(packagingName, score + 85d));
@@ -344,9 +398,13 @@ final class UnifiedRecognitionStabilizer {
             if (candidate == null) {
                 continue;
             }
-            String text = RecognitionTextCleaner.cleanProductNameLine(candidate.text);
+            String text = RecognitionTextCleaner.intelligentProductNameCandidate(candidate.text);
             int lexicalScore = RecognitionTextCleaner.productNameScore(text);
-            if (lexicalScore <= 0) {
+            boolean labeledEvidence = hasProductNameLabelEvidence(candidate.evidence);
+            if (lexicalScore <= 0
+                    || (labeledEvidence
+                    ? !RecognitionTextCleaner.isHighConfidenceLabeledProductName(text)
+                    : !RecognitionTextCleaner.isHighConfidenceFoodProductName(text))) {
                 continue;
             }
             PackagingTextAnalyzer.Candidate safeCandidate = new PackagingTextAnalyzer.Candidate(
@@ -391,6 +449,37 @@ final class UnifiedRecognitionStabilizer {
             );
         }
         return Collections.unmodifiableList(normalized);
+    }
+
+    private static boolean isDisplayEligible(PackagingTextAnalyzer.Candidate candidate) {
+        if (candidate == null || candidate.text.length() == 0) {
+            return false;
+        }
+        boolean labeledEvidence = hasProductNameLabelEvidence(candidate.evidence);
+        if (labeledEvidence) {
+            return RecognitionTextCleaner.isHighConfidenceLabeledProductName(candidate.text)
+                    && candidate.score >= MIN_REPEATED_NAME_SCORE;
+        }
+        boolean foodName = RecognitionTextCleaner.isHighConfidenceFoodProductName(candidate.text);
+        if (!foodName) {
+            return false;
+        }
+        if (candidate.votes >= 2) {
+            return candidate.score >= MIN_REPEATED_NAME_SCORE;
+        }
+        return foodName && candidate.score >= MIN_SINGLE_STRONG_NAME_SCORE;
+    }
+
+    private static boolean hasProductNameLabelEvidence(List<String> evidence) {
+        if (evidence == null) {
+            return false;
+        }
+        for (String item : evidence) {
+            if (RecognitionTextCleaner.hasProductNameLabel(item)) {
+                return true;
+            }
+        }
+        return false;
     }
 
     private static int similarCandidateIndex(List<PackagingTextAnalyzer.Candidate> candidates, String text) {
@@ -553,11 +642,20 @@ final class UnifiedRecognitionStabilizer {
             return stablePackagingName.length() > 0;
         }
 
+        String bestPackagingNameForConfirmation() {
+            if (hasStablePackagingName()) {
+                return stablePackagingName;
+            }
+            return rankedPackagingCandidates.isEmpty()
+                    ? ""
+                    : rankedPackagingCandidates.get(0).text;
+        }
+
         boolean hasFillableCandidate() {
             if (hasStableBarcode()) {
                 return true;
             }
-            if (hasStablePackagingName()) {
+            if (bestPackagingNameForConfirmation().length() > 0) {
                 return true;
             }
             if (!hasStableDateCandidate()) {

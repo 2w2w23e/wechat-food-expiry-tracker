@@ -110,6 +110,13 @@ final class DateRules {
         return format(addDays(parts, delta));
     }
 
+    static String lastDayOfMonthString(int year, int month) {
+        if (year < 2000 || year > 2099 || month < 1 || month > 12) {
+            return "";
+        }
+        return String.format(Locale.US, "%04d-%02d-%02d", year, month, getDaysInMonth(year, month));
+    }
+
     static boolean isYesterday(String date) {
         return daysUntil(date) == -1;
     }

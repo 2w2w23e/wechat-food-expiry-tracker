@@ -56,3 +56,21 @@ Project: https://opencv.org/
 - Use: on-device barcode detection inside the unified local recognition flow.
 
 Project: https://developers.google.com/ml-kit/vision/barcode-scanning/android
+
+## Microsoft ONNX Runtime Android
+
+- Package: `com.microsoft.onnxruntime:onnxruntime-android:1.27.0`
+- License: MIT License
+- Use: local Java inference runtime for the packaged PP-OCRv6 line-recognition model.
+
+Project: https://github.com/microsoft/onnxruntime
+
+## PaddleOCR PP-OCRv6 Recognition Model
+
+- Model: `PP-OCRv6_rec_small`
+- File: `app/src/main/assets/PP-OCRv6_rec_small.onnx`
+- License: Apache License 2.0
+- Use: local recognition of pre-cropped package date lines after OpenCV enhancement. The packaged PaddleOCR asset contains recognition only, without a text detector or angle classifier.
+
+Project: https://github.com/PaddlePaddle/PaddleOCR
+Model documentation: https://paddlepaddle.github.io/PaddleX/latest/module_usage/tutorials/ocr_modules/text_recognition.html
