@@ -1464,6 +1464,19 @@ public final class LocalLogicTest {
             }
         });
 
+        test("DateOcrParser keeps duplicated explicit expiry OCR evidence out of production", new TestCase() {
+            public void run() {
+                DateOcrParser.Result result = DateOcrParser.parse(
+                        "有效期至 2027-01-01\n有效期至 2028-01-01\n有效期至 2028/01/01"
+                );
+
+                assertEquals(0, result.productionDates.size());
+                assertEquals(2, result.expiryDates.size());
+                assertEquals("2027-01-01", result.expiryDates.get(0).normalized);
+                assertEquals("2028-01-01", result.expiryDates.get(1).normalized);
+            }
+        });
+
         test("DateOcrParser applies current-date fallback to one unhinted date", new TestCase() {
             public void run() {
                 DateOcrParser.Result past = DateOcrParser.parse("D250912", "2026-07-15");
@@ -2279,6 +2292,22 @@ public final class LocalLogicTest {
                 assertEquals("奥利奥", snapshot.bestPackagingNameForConfirmation());
                 assertTrue(snapshot.hasFillableCandidate(),
                         "a clean explicit label should reach the editable confirmation form");
+            }
+        });
+
+        test("UnifiedRecognitionStabilizer does not downgrade a rejected label into a generic name", new TestCase() {
+            public void run() {
+                UnifiedRecognitionStabilizer stabilizer = new UnifiedRecognitionStabilizer(6, 3);
+                UnifiedRecognitionStabilizer.Snapshot snapshot = stabilizer.addFrame(
+                        "",
+                        DateOcrParser.parse(""),
+                        "产品名称：好喝果汁",
+                        true
+                );
+
+                assertEquals(0, snapshot.rankedPackagingCandidates.size());
+                assertFalse(snapshot.hasFillableCandidate(),
+                        "a label rejected as marketing copy must not re-enter through generic OCR scoring");
             }
         });
 

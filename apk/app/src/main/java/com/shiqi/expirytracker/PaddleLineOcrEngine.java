@@ -30,13 +30,14 @@ final class PaddleLineOcrEngine implements AutoCloseable {
     private String inputName;
     private String[] characters;
     private boolean unavailable;
+    private boolean closed;
 
     PaddleLineOcrEngine(Context context) {
         applicationContext = context.getApplicationContext();
     }
 
     synchronized String recognize(Bitmap source) {
-        if (source == null || source.isRecycled() || unavailable) {
+        if (source == null || source.isRecycled() || unavailable || closed) {
             return "";
         }
         try {
@@ -74,7 +75,7 @@ final class PaddleLineOcrEngine implements AutoCloseable {
     }
 
     private void ensureInitialized() throws Exception {
-        if (session != null || unavailable) {
+        if (session != null || unavailable || closed) {
             return;
         }
         try {
@@ -177,6 +178,7 @@ final class PaddleLineOcrEngine implements AutoCloseable {
 
     @Override
     public synchronized void close() {
+        closed = true;
         if (session != null) {
             try {
                 session.close();

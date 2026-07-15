@@ -36,6 +36,9 @@ final class PackagingTextAnalyzer {
                             sourceLine
                     );
                 }
+                if (RecognitionTextCleaner.hasProductNameLabel(sourceLine)) {
+                    continue;
+                }
                 String candidateText = RecognitionTextCleaner.intelligentProductNameCandidate(line);
                 if (!RecognitionTextCleaner.isHighConfidenceFoodProductName(candidateText)) {
                     continue;

@@ -4,7 +4,7 @@
 
 本轮约定范围（视频模拟、图库图片、本地录入与 Excel）：`PASS`。
 
-- 本地逻辑测试：`PASS`，`121 passed, 0 failed`。
+- 本地逻辑测试：`PASS`，`123 passed, 0 failed`。
 - 5 个既有视频回归：视觉 `PASS`；仅显示一个高可信商品名，垃圾候选被过滤。
 - 低对比压印图片：视觉 `PASS`；识别生产日期 `2025-09-12`、最终日期 `2027-03-11`。
 - 新增有效期视频：视觉 `PASS`；识别生产日期 `2025-03-13`、月级有效期 `2029-02-28`。
@@ -26,11 +26,11 @@
 
 | 检查 | 结果 | 状态 |
 | --- | --- | --- |
-| `apk/run-local-tests.ps1` | `121 passed, 0 failed` | PASS |
+| `apk/run-local-tests.ps1` | `123 passed, 0 failed` | PASS |
 | `:apk:app:lintDebug` | 无阻断错误 | PASS |
 | `:apk:app:assembleDebug` | 构建成功 | PASS |
 | 覆盖安装 | `adb install -r` 后既有 3 条食品仍存在 | PASS |
-| APK 体积 | `shiqi-food-expiry-v0.3.10.apk` 为 `212,506,010` 字节 | PASS（小于 1 GB） |
+| APK 体积 | `shiqi-food-expiry-v0.3.10.apk` 为 `212,506,173` 字节 | PASS（小于 1 GB） |
 
 自动化测试不代替识别视觉验收。以下结果均在模拟器中实际运行最终代码并人工核对截图。
 

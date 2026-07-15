@@ -334,8 +334,8 @@ final class DateOcrParser {
         if ((!sourceIsExpiry && allCandidatesHaveStrongHints(source))
                 || (sourceIsExpiry
                 && allCandidatesHaveStrongHints(source)
-                && source.size() == distinct.size()
-                && countMatches(EXPIRY_HINT, sourceText) >= distinct.size())) {
+                && countMatches(EXPIRY_HINT, sourceText) >= distinct.size()
+                && !PRODUCT_BATCH_HINT.matcher(sourceText == null ? "" : sourceText).find())) {
             return;
         }
         if (distinct.size() != 2) {

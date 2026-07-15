@@ -584,7 +584,7 @@ final class RecognitionTextCleaner {
 
     static boolean isLikelyMarketingSlogan(String value) {
         String compact = productNameKey(value);
-        if (compact.length() < 5) {
+        if (compact.length() < 2) {
             return false;
         }
         return containsAny(compact, new String[] {

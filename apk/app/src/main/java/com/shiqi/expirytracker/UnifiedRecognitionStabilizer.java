@@ -355,6 +355,7 @@ final class UnifiedRecognitionStabilizer {
 
     private static List<PackagingTextAnalyzer.Candidate> candidatesFromRawText(String rawText) {
         String cleanedRawText = FoodItem.cleanText(rawText);
+        StringBuilder unlabeledText = new StringBuilder();
         for (String line : cleanedRawText.split("\\r?\\n")) {
             String labeledName = RecognitionTextCleaner.intelligentProductNameCandidate(
                     RecognitionTextCleaner.extractLabeledProductName(line)
@@ -369,9 +370,15 @@ final class UnifiedRecognitionStabilizer {
                         Collections.singletonList(FoodItem.cleanText(line))
                 ));
             }
+            if (!RecognitionTextCleaner.hasProductNameLabel(line)) {
+                if (unlabeledText.length() > 0) {
+                    unlabeledText.append('\n');
+                }
+                unlabeledText.append(line);
+            }
         }
         String packagingName = RecognitionTextCleaner.intelligentProductNameCandidate(
-                RecognitionTextCleaner.extractProductNameFromOcr(rawText)
+                RecognitionTextCleaner.extractProductNameFromOcr(unlabeledText.toString())
         );
         int score = RecognitionTextCleaner.productNameScore(packagingName);
         if (score <= 0 || !RecognitionTextCleaner.isHighConfidenceFoodProductName(packagingName)) {
