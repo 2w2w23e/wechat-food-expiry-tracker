@@ -99,6 +99,12 @@ final class UnifiedRecognitionStabilizer {
     }
 
     Snapshot promoteDirectDatePairForConfirmation(DateOcrParser.Result result) {
+        if (stableDateVote != null
+                && stableDateVote.productionDate != null
+                && stableDateVote.expiryDate != null
+                && !stableDateVote.hasConflict) {
+            return snapshot();
+        }
         if (result == null || result.productionDates.isEmpty() || result.expiryDates.isEmpty()) {
             return snapshot();
         }
@@ -355,7 +361,7 @@ final class UnifiedRecognitionStabilizer {
             );
             int labeledScore = RecognitionTextCleaner.productNameScore(labeledName);
             if (labeledScore > 0
-                    && RecognitionTextCleaner.isHighConfidenceFoodProductName(labeledName)) {
+                    && RecognitionTextCleaner.isHighConfidenceLabeledProductName(labeledName)) {
                 return Collections.singletonList(new PackagingTextAnalyzer.Candidate(
                         labeledName,
                         labeledScore + 180d,
@@ -387,8 +393,11 @@ final class UnifiedRecognitionStabilizer {
             }
             String text = RecognitionTextCleaner.intelligentProductNameCandidate(candidate.text);
             int lexicalScore = RecognitionTextCleaner.productNameScore(text);
+            boolean labeledEvidence = hasProductNameLabelEvidence(candidate.evidence);
             if (lexicalScore <= 0
-                    || !RecognitionTextCleaner.isHighConfidenceFoodProductName(text)) {
+                    || (labeledEvidence
+                    ? !RecognitionTextCleaner.isHighConfidenceLabeledProductName(text)
+                    : !RecognitionTextCleaner.isHighConfidenceFoodProductName(text))) {
                 continue;
             }
             PackagingTextAnalyzer.Candidate safeCandidate = new PackagingTextAnalyzer.Candidate(
@@ -440,12 +449,13 @@ final class UnifiedRecognitionStabilizer {
             return false;
         }
         boolean labeledEvidence = hasProductNameLabelEvidence(candidate.evidence);
+        if (labeledEvidence) {
+            return RecognitionTextCleaner.isHighConfidenceLabeledProductName(candidate.text)
+                    && candidate.score >= MIN_REPEATED_NAME_SCORE;
+        }
         boolean foodName = RecognitionTextCleaner.isHighConfidenceFoodProductName(candidate.text);
         if (!foodName) {
             return false;
-        }
-        if (labeledEvidence) {
-            return candidate.score >= MIN_REPEATED_NAME_SCORE;
         }
         if (candidate.votes >= 2) {
             return candidate.score >= MIN_REPEATED_NAME_SCORE;

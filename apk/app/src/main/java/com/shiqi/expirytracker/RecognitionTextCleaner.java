@@ -329,6 +329,16 @@ final class RecognitionTextCleaner {
                 && !hasSuspiciousNameArtifacts(text);
     }
 
+    static boolean isHighConfidenceLabeledProductName(String value) {
+        String text = intelligentProductNameCandidate(value);
+        String compact = productNameKey(text);
+        return productNameScore(text) > 0
+                && compact.length() >= 2
+                && compact.length() <= 18
+                && !hasSuspiciousNameArtifacts(text)
+                && !isLikelyMarketingSlogan(text);
+    }
+
     private static boolean hasSuspiciousNameArtifacts(String value) {
         String text = FoodItem.cleanText(value);
         String compact = productNameKey(text);

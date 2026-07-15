@@ -66,6 +66,7 @@ import com.google.mlkit.vision.text.latin.TextRecognizerOptions;
 
 import java.io.InputStream;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.List;
 import java.util.Locale;
 import java.util.concurrent.Executor;
@@ -114,6 +115,9 @@ public final class DateOcrScanActivity extends ComponentActivity {
     private String productLookupInFlightBarcode = "";
     private String productLookupError = "";
     private String latestRawText = "";
+    private volatile DateOcrParser.Result bestVideoDatePair;
+    private volatile double bestVideoDatePairScore;
+    private volatile double currentVideoFrameRatio;
     private String selectedPackagingName = "";
     private volatile int recognitionGeneration;
     private long lastAnalyzeAt;
@@ -179,6 +183,11 @@ public final class DateOcrScanActivity extends ComponentActivity {
         stopVideoReplay();
         stopCamera();
         clearLastReplayFrame();
+        ExecutorService recognitionExecutor = cameraExecutor;
+        cameraExecutor = null;
+        if (recognitionExecutor != null) {
+            recognitionExecutor.shutdownNow();
+        }
         if (textRecognizer != null) {
             textRecognizer.close();
             textRecognizer = null;
@@ -191,13 +200,17 @@ public final class DateOcrScanActivity extends ComponentActivity {
             barcodeScanner.close();
             barcodeScanner = null;
         }
-        if (paddleLineOcrEngine != null) {
-            paddleLineOcrEngine.close();
-            paddleLineOcrEngine = null;
-        }
-        if (cameraExecutor != null) {
-            cameraExecutor.shutdown();
-            cameraExecutor = null;
+        final PaddleLineOcrEngine engineToClose = paddleLineOcrEngine;
+        paddleLineOcrEngine = null;
+        if (engineToClose != null) {
+            Thread releaseThread = new Thread(new Runnable() {
+                @Override
+                public void run() {
+                    engineToClose.close();
+                }
+            }, "shiqi-ocr-release");
+            releaseThread.setDaemon(true);
+            releaseThread.start();
         }
         super.onDestroy();
     }
@@ -555,6 +568,9 @@ public final class DateOcrScanActivity extends ComponentActivity {
             final int expectedFrames = frameTimesUs.size();
             for (int frameIndex = 0; videoReplayActive && frameIndex < frameTimesUs.size(); frameIndex++) {
                 long frameUs = frameTimesUs.get(frameIndex).longValue();
+                currentVideoFrameRatio = durationUs <= 0L
+                        ? 0d
+                        : Math.max(0d, Math.min(1d, frameUs / (double) durationUs));
                 videoDetailFrame = longVideoProfile || frameUs >= Math.round(durationUs * 0.58d);
                 Bitmap frame = retriever.getFrameAtTime(frameUs, MediaMetadataRetriever.OPTION_CLOSEST);
                 if (frame == null) {
@@ -607,6 +623,7 @@ public final class DateOcrScanActivity extends ComponentActivity {
             videoReplayActive = false;
             longVideoProfile = false;
             videoDetailFrame = false;
+            currentVideoFrameRatio = 0d;
             try {
                 retriever.release();
             } catch (Exception ignored) {
@@ -983,7 +1000,8 @@ public final class DateOcrScanActivity extends ComponentActivity {
             boolean singleFrameConfirmation,
             boolean cameraLive
     ) {
-        if (paddleLineOcrEngine == null || bitmap == null || bitmap.isRecycled()) {
+        PaddleLineOcrEngine engine = paddleLineOcrEngine;
+        if (engine == null || bitmap == null || bitmap.isRecycled()) {
             return "";
         }
         float[] bandStarts = videoReplayActive
@@ -1041,12 +1059,12 @@ public final class DateOcrScanActivity extends ComponentActivity {
                 ));
                 Bitmap crop = Bitmap.createBitmap(bitmap, left, top, width, bandHeight);
                 try {
-                    appendRecognizedText(recognized, paddleLineOcrEngine.recognize(crop));
+                    appendRecognizedText(recognized, engine.recognize(crop));
                     if ((singleFrameConfirmation || videoReplayActive) && horizontalIndex == 0) {
                         Bitmap enhanced = LowContrastTextPreprocessor.enhanceEmbossedText(crop);
                         if (enhanced != null) {
                             try {
-                                appendRecognizedText(recognized, paddleLineOcrEngine.recognize(enhanced));
+                                appendRecognizedText(recognized, engine.recognize(enhanced));
                             } finally {
                                 enhanced.recycle();
                             }
@@ -1284,7 +1302,9 @@ public final class DateOcrScanActivity extends ComponentActivity {
     }
 
     private void updateVideoReplayCompleteState(int analyzedFrames) {
-        DateOcrParser.Result finalTranscriptDates = DateOcrParser.parse(latestRawText);
+        DateOcrParser.Result finalTranscriptDates = bestVideoDatePair == null
+                ? DateOcrParser.parse(latestRawText)
+                : bestVideoDatePair;
         UnifiedRecognitionStabilizer.Snapshot snapshot =
                 finalTranscriptDates.productionDates.isEmpty()
                         || finalTranscriptDates.expiryDates.isEmpty()
@@ -1316,6 +1336,9 @@ public final class DateOcrScanActivity extends ComponentActivity {
         stabilizer.reset();
         latestSnapshot = stabilizer.snapshot();
         latestRawText = "";
+        bestVideoDatePair = null;
+        bestVideoDatePairScore = 0d;
+        currentVideoFrameRatio = 0d;
         selectedPackagingName = "";
         recognitionGeneration++;
         analyzedFrameSequence = 0;
@@ -1636,6 +1659,7 @@ public final class DateOcrScanActivity extends ComponentActivity {
                 FoodItem.cleanText(dateRawText),
                 FoodItem.cleanText(supplementaryDateText)
         );
+        rememberBestVideoDatePair(parsed);
         latestSnapshot = stabilizer.addFrame(
                 barcode,
                 parsed,
@@ -1654,6 +1678,29 @@ public final class DateOcrScanActivity extends ComponentActivity {
                 startProductLookupIfNeeded(snapshot);
             }
         });
+    }
+
+    private void rememberBestVideoDatePair(DateOcrParser.Result parsed) {
+        if (!videoReplayActive || parsed == null) {
+            return;
+        }
+        DateOcrFrameVoter.VoteResult direct = DateOcrFrameVoter.vote(
+                Collections.singletonList(parsed),
+                1
+        );
+        if (direct.productionDate == null
+                || direct.expiryDate == null
+                || direct.hasConflict
+                || direct.productionDate.value.compareTo(direct.expiryDate.value) >= 0) {
+            return;
+        }
+        double score = (currentVideoFrameRatio * 10d)
+                + direct.productionDate.confidence
+                + direct.expiryDate.confidence;
+        if (bestVideoDatePair == null || score > bestVideoDatePairScore) {
+            bestVideoDatePair = parsed;
+            bestVideoDatePairScore = score;
+        }
     }
 
     private List<PackagingTextAnalyzer.Observation> observationsFromRawText(String rawText) {

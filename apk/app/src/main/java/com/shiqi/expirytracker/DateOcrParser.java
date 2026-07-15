@@ -84,7 +84,7 @@ final class DateOcrParser {
         collectYearMonths(text, MONTH_YEAR_WITH_SEPARATOR, expiryDates, unhintedDates, true);
         collectPackedProductionCodes(text, productionDates);
         inferUnhintedDates(unhintedDates, productionDates, expiryDates, referenceDate);
-        reconcileChronologicalDatePair(productionDates, expiryDates);
+        reconcileChronologicalDatePair(productionDates, expiryDates, text);
         promoteCompactDateRange(text, productionDates, expiryDates);
         promoteOcrDamagedCompactDateRange(text, productionDates, expiryDates);
         collectShelfLives(text, shelfLives);
@@ -309,28 +309,34 @@ final class DateOcrParser {
 
     private static void reconcileChronologicalDatePair(
             List<DateCandidate> productionDates,
-            List<DateCandidate> expiryDates
+            List<DateCandidate> expiryDates,
+            String sourceText
     ) {
         if (productionDates.isEmpty()) {
-            reconcileOneSidedDatePair(expiryDates, productionDates, true);
+            reconcileOneSidedDatePair(expiryDates, productionDates, true, sourceText);
         } else if (expiryDates.isEmpty()) {
-            reconcileOneSidedDatePair(productionDates, expiryDates, false);
+            reconcileOneSidedDatePair(productionDates, expiryDates, false, sourceText);
         }
     }
 
     private static void reconcileOneSidedDatePair(
             List<DateCandidate> source,
             List<DateCandidate> destination,
-            boolean sourceIsExpiry
+            boolean sourceIsExpiry,
+            String sourceText
     ) {
-        if (!sourceIsExpiry && allCandidatesHaveStrongHints(source)) {
-            return;
-        }
         Map<String, DateCandidate> distinct = new LinkedHashMap<String, DateCandidate>();
         for (DateCandidate candidate : source) {
             if (!distinct.containsKey(candidate.normalized)) {
                 distinct.put(candidate.normalized, candidate);
             }
+        }
+        if ((!sourceIsExpiry && allCandidatesHaveStrongHints(source))
+                || (sourceIsExpiry
+                && allCandidatesHaveStrongHints(source)
+                && source.size() == distinct.size()
+                && countMatches(EXPIRY_HINT, sourceText) >= distinct.size())) {
+            return;
         }
         if (distinct.size() != 2) {
             return;
@@ -351,6 +357,15 @@ final class DateOcrParser {
             }
         }
         destination.add(asInferredDate(moved, movedType, 0.66d));
+    }
+
+    private static int countMatches(Pattern pattern, String text) {
+        int count = 0;
+        Matcher matcher = pattern.matcher(text == null ? "" : text);
+        while (matcher.find()) {
+            count++;
+        }
+        return count;
     }
 
     private static boolean allCandidatesHaveStrongHints(List<DateCandidate> candidates) {

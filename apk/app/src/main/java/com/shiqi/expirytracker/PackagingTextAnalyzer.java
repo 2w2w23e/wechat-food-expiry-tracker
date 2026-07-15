@@ -28,7 +28,7 @@ final class PackagingTextAnalyzer {
                 );
                 int labeledScore = RecognitionTextCleaner.productNameScore(labeledName);
                 if (labeledScore > 0
-                        && RecognitionTextCleaner.isHighConfidenceFoodProductName(labeledName)) {
+                        && RecognitionTextCleaner.isHighConfidenceLabeledProductName(labeledName)) {
                     addEvidence(
                             aggregates,
                             labeledName,

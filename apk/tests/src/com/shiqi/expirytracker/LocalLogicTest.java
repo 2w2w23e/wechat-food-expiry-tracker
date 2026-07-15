@@ -1451,6 +1451,19 @@ public final class LocalLogicTest {
             }
         });
 
+        test("DateOcrParser keeps two explicitly labeled expiry dates as expiry candidates", new TestCase() {
+            public void run() {
+                DateOcrParser.Result result = DateOcrParser.parse(
+                        "有效期至 2027-01-01\n有效期至 2028-01-01"
+                );
+
+                assertEquals(0, result.productionDates.size());
+                assertEquals(2, result.expiryDates.size());
+                assertEquals("2027-01-01", result.expiryDates.get(0).normalized);
+                assertEquals("2028-01-01", result.expiryDates.get(1).normalized);
+            }
+        });
+
         test("DateOcrParser applies current-date fallback to one unhinted date", new TestCase() {
             public void run() {
                 DateOcrParser.Result past = DateOcrParser.parse("D250912", "2026-07-15");
@@ -2030,6 +2043,22 @@ public final class LocalLogicTest {
             }
         });
 
+        test("PackagingTextAnalyzer accepts a clean labeled brand without a food suffix", new TestCase() {
+            public void run() {
+                List<PackagingTextAnalyzer.Candidate> candidates = PackagingTextAnalyzer.analyze(Arrays.asList(
+                        new PackagingTextAnalyzer.Observation(
+                                "产品名称：奥利奥",
+                                0.08d, 0.60d, 0.5d, 0.5d, 0.95d
+                        )
+                ));
+
+                assertEquals(1, candidates.size());
+                assertEquals("奥利奥", candidates.get(0).text);
+                assertTrue(RecognitionTextCleaner.isHighConfidenceLabeledProductName("奥利奥"),
+                        "an explicit product-name label is strong evidence for a clean brand name");
+            }
+        });
+
         test("RecognitionTextCleaner rejects garbled labels and reduces duplicate food names", new TestCase() {
             public void run() {
                 assertEquals("炸酱面", RecognitionTextCleaner.intelligentProductNameCandidate(
@@ -2194,7 +2223,7 @@ public final class LocalLogicTest {
                 );
                 assertEquals("大董老北京炸酱面", fourth.stablePackagingName);
                 assertEquals(3, fourth.packagingNameVotes);
-                assertTrue(fourth.rankedPackagingCandidates.size() <= 3, "ranked candidates should be capped at three");
+                assertTrue(fourth.rankedPackagingCandidates.size() <= 1, "only the best gated name should be visible");
                 assertEquals(3, fourth.rankedPackagingCandidates.get(0).votes);
             }
         });
@@ -2234,6 +2263,22 @@ public final class LocalLogicTest {
                 assertEquals(0, snapshot.rankedPackagingCandidates.size());
                 assertFalse(snapshot.hasStablePackagingName(),
                         "repetition alone must never promote non-food explanatory text");
+            }
+        });
+
+        test("UnifiedRecognitionStabilizer exposes a clean explicitly labeled brand", new TestCase() {
+            public void run() {
+                UnifiedRecognitionStabilizer stabilizer = new UnifiedRecognitionStabilizer(6, 3);
+                UnifiedRecognitionStabilizer.Snapshot snapshot = stabilizer.addFrame(
+                        "",
+                        DateOcrParser.parse(""),
+                        "产品名称：奥利奥",
+                        true
+                );
+
+                assertEquals("奥利奥", snapshot.bestPackagingNameForConfirmation());
+                assertTrue(snapshot.hasFillableCandidate(),
+                        "a clean explicit label should reach the editable confirmation form");
             }
         });
 
@@ -2369,6 +2414,27 @@ public final class LocalLogicTest {
                 UnifiedRecognitionStabilizer.Snapshot snapshot =
                         stabilizer.promoteDirectDatePairForConfirmation(
                                 DateOcrParser.parse("20260612/20270611\n0260612/20270611")
+                        );
+
+                assertEquals("2026-06-12", snapshot.stableDateVote.productionDate.value);
+                assertEquals("2027-06-11", snapshot.stableDateVote.expiryDate.value);
+            }
+        });
+
+        test("UnifiedRecognitionStabilizer never lets one final frame replace a stable date pair", new TestCase() {
+            public void run() {
+                UnifiedRecognitionStabilizer stabilizer = new UnifiedRecognitionStabilizer(12, 3);
+                for (int index = 0; index < 3; index++) {
+                    stabilizer.addFrame(
+                            "",
+                            DateOcrParser.parse("20260612/20270611"),
+                            "20260612/20270611",
+                            false
+                    );
+                }
+                UnifiedRecognitionStabilizer.Snapshot snapshot =
+                        stabilizer.promoteDirectDatePairForConfirmation(
+                                DateOcrParser.parse("20260612/20270511")
                         );
 
                 assertEquals("2026-06-12", snapshot.stableDateVote.productionDate.value);
