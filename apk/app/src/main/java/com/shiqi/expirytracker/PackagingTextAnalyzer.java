@@ -6,7 +6,7 @@ import java.util.Comparator;
 import java.util.List;
 
 final class PackagingTextAnalyzer {
-    private static final int MAX_CANDIDATES = 3;
+    private static final int MAX_CANDIDATES = 2;
 
     private PackagingTextAnalyzer() {}
 
@@ -22,13 +22,30 @@ final class PackagingTextAnalyzer {
             }
             String[] lines = FoodItem.cleanText(observation.text).split("\\r?\\n");
             for (String line : lines) {
-                String candidateText = RecognitionTextCleaner.cleanProductNameLine(line);
+                String sourceLine = FoodItem.cleanText(line);
+                String labeledName = RecognitionTextCleaner.intelligentProductNameCandidate(
+                        RecognitionTextCleaner.extractLabeledProductName(sourceLine)
+                );
+                int labeledScore = RecognitionTextCleaner.productNameScore(labeledName);
+                if (labeledScore > 0
+                        && RecognitionTextCleaner.isHighConfidenceFoodProductName(labeledName)) {
+                    addEvidence(
+                            aggregates,
+                            labeledName,
+                            scoreObservation(observation, labeledScore) + 180d,
+                            sourceLine
+                    );
+                }
+                String candidateText = RecognitionTextCleaner.intelligentProductNameCandidate(line);
+                if (!RecognitionTextCleaner.isHighConfidenceFoodProductName(candidateText)) {
+                    continue;
+                }
                 int lexicalScore = RecognitionTextCleaner.productNameScore(candidateText);
                 if (lexicalScore <= 0) {
                     continue;
                 }
                 double score = scoreObservation(observation, lexicalScore);
-                addEvidence(aggregates, candidateText, score, FoodItem.cleanText(line));
+                addEvidence(aggregates, candidateText, score, sourceLine);
                 for (String fragment : RecognitionTextCleaner.extractFoodNameFragments(candidateText)) {
                     int fragmentScore = RecognitionTextCleaner.productNameScore(fragment);
                     if (fragmentScore > 0) {
@@ -36,7 +53,7 @@ final class PackagingTextAnalyzer {
                                 aggregates,
                                 fragment,
                                 scoreObservation(observation, fragmentScore) + 70d,
-                                FoodItem.cleanText(line)
+                                sourceLine
                         );
                     }
                 }

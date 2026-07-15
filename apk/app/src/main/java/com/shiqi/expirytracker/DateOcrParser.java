@@ -14,6 +14,13 @@ final class DateOcrParser {
     private static final Pattern DATE_WITH_SEPARATOR = Pattern.compile(
             "(?<!\\d)((?:20\\d{2}|\\d{2})\\s*(?:年|[./-])\\s*\\d{1,2}\\s*(?:月|[./-])\\s*\\d{1,2}\\s*(?:日)?)(?!\\d)"
     );
+    private static final Pattern YEAR_MONTH_WITH_SEPARATOR = Pattern.compile(
+            "(?<![\\d./-])((?:20\\d{2}|\\d{2})\\s*(?:年|[./-])\\s*\\d{1,2}\\s*(?:月)?)(?!\\s*(?:[./-]|月)\\s*\\d)(?!\\d)"
+    );
+    private static final Pattern COMPACT_YEAR_MONTH = Pattern.compile("(?<!\\d)(20\\d{4})(?!\\d)");
+    private static final Pattern MONTH_YEAR_WITH_SEPARATOR = Pattern.compile(
+            "(?<![\\d./-])(\\d{1,2}\\s*[./-]\\s*20\\d{2})(?!\\d)"
+    );
     private static final Pattern COMPACT_DATE = Pattern.compile("(?<!\\d)((?:20\\d{6})|(?:\\d{6}))(?!\\d)");
     private static final Pattern PACKED_PRODUCTION_CODE = Pattern.compile("(?<!\\d)(20\\d{6})\\d{1,8}(?!\\d)");
     private static final Pattern COMPACT_DATE_RANGE = Pattern.compile(
@@ -24,19 +31,24 @@ final class DateOcrParser {
     );
     private static final Pattern NUMBER = Pattern.compile("\\d+");
     private static final Pattern PRODUCTION_HINT = Pattern.compile(
-            "(生产日期|生产时间|生产批号|包装日期|制造日期|灌装日期|出厂日期|喷码|prod(?:uction)?\\.?\\s*date|mfg\\.?\\s*date|made\\s*on)",
+            "(生\\s*[产產]\\s*(?:日\\s*期|时\\s*间|批\\s*号)|生\\s*产\\s*日|包\\s*装\\s*日\\s*期|加\\s*工\\s*日\\s*期|分\\s*装\\s*日\\s*期|[制製]\\s*造\\s*日\\s*期|灌\\s*装\\s*日\\s*期|出\\s*厂\\s*日\\s*期|烘\\s*焙\\s*日\\s*期|喷\\s*码|prod(?:uction)?\\.?\\s*date|prod\\.?|mfg\\.?\\s*date|\\bmfg\\b|\\bmfd\\b|date\\s*of\\s*manufacture|manufactured\\s*on|made\\s*on|packed\\s*on|pack(?:ing)?\\s*date|bottled\\s*on)",
             Pattern.CASE_INSENSITIVE
     );
     private static final Pattern EXPIRY_HINT = Pattern.compile(
-            "(有效期至|保质期至|到期日|截止日期|食用期限|使用期限|\\bexp\\b|exp(?:iry|iration)?\\.?\\s*date|best\\s*before|use\\s*by|bb\\s*e?)",
+            "(有\\s*效\\s*(?:期|日\\s*期)(?:\\s*限)?\\s*[:：]?\\s*(?:至|到)|保\\s*(?:质|鮮|鲜|存)\\s*期\\s*[:：]?\\s*(?:至|到)|失\\s*效\\s*(?:期|日\\s*期)|限\\s*用\\s*日\\s*期|到\\s*期\\s*(?:日|日\\s*期)|截\\s*止\\s*日\\s*期|食\\s*用\\s*期\\s*限|使\\s*用\\s*期\\s*限|最\\s*佳\\s*(?:食\\s*用|赏\\s*味)\\s*(?:期|日\\s*期|期\\s*限)(?:\\s*至)?|此\\s*日\\s*期\\s*前\\s*最\\s*佳|建\\s*议\\s*食\\s*用\\s*(?:期|日\\s*期)(?:\\s*至)?|\\bexp\\b|\\bexd\\b|exp(?:iry|iration)?\\.?\\s*date|best\\s*(?:before|by)|best\\s*if\\s*used\\s*by|use\\s*by|consume\\s*before|bb\\s*e?)",
             Pattern.CASE_INSENSITIVE
     );
+    private static final int MAX_HINT_DISTANCE = 36;
     private static final Pattern SHELF_LIFE = Pattern.compile(
-            "(保\\s*质\\s*期|质\\s*期|保\\s*鲜\\s*期|保\\s*存\\s*期|冷藏|冷冻|常温|shelf\\s*life|valid(?:ity)?|storage\\s*time)\\s*[:：为是约\\-]*\\s*(\\d{1,4})\\s*(天|日|个\\s*月|月|年|days?|months?|years?)",
+            "(保\\s*质\\s*期|质\\s*期|保\\s*鲜\\s*期|保\\s*存\\s*期|有\\s*效\\s*期|货\\s*架\\s*期|冷藏|冷冻|常温|shelf\\s*life|valid(?:ity)?|storage\\s*time)\\s*[:：为是约\\-]*\\s*(\\d{1,4})\\s*(天|日|周|星期|个\\s*月|月|年|days?|weeks?|months?|years?)",
             Pattern.CASE_INSENSITIVE
     );
     private static final Pattern BARCODE_HINT = Pattern.compile(
             "(条码|商品码|barcode|gtin|ean|upc)",
+            Pattern.CASE_INSENSITIVE
+    );
+    private static final Pattern PRODUCT_BATCH_HINT = Pattern.compile(
+            "(产\\s*品\\s*批\\s*号|批\\s*次|\\blot\\b|\\bbatch\\b)",
             Pattern.CASE_INSENSITIVE
     );
     private static final Pattern UNHINTED_SHELF_LIFE = Pattern.compile(
@@ -55,19 +67,29 @@ final class DateOcrParser {
     private DateOcrParser() {}
 
     static Result parse(String rawText) {
+        return parse(rawText, DateRules.getTodayString());
+    }
+
+    static Result parse(String rawText, String referenceDate) {
         String text = normalizeText(rawText);
         List<DateCandidate> productionDates = new ArrayList<DateCandidate>();
         List<DateCandidate> expiryDates = new ArrayList<DateCandidate>();
+        List<DateCandidate> unhintedDates = new ArrayList<DateCandidate>();
         List<ShelfLifeCandidate> shelfLives = new ArrayList<ShelfLifeCandidate>();
 
-        collectDates(text, DATE_WITH_SEPARATOR, productionDates, expiryDates);
-        collectDates(text, COMPACT_DATE, productionDates, expiryDates);
+        collectDates(text, DATE_WITH_SEPARATOR, productionDates, expiryDates, unhintedDates);
+        collectDates(text, COMPACT_DATE, productionDates, expiryDates, unhintedDates);
+        collectYearMonths(text, YEAR_MONTH_WITH_SEPARATOR, expiryDates, unhintedDates, false);
+        collectYearMonths(text, COMPACT_YEAR_MONTH, expiryDates, unhintedDates, false);
+        collectYearMonths(text, MONTH_YEAR_WITH_SEPARATOR, expiryDates, unhintedDates, true);
         collectPackedProductionCodes(text, productionDates);
+        inferUnhintedDates(unhintedDates, productionDates, expiryDates, referenceDate);
+        reconcileChronologicalDatePair(productionDates, expiryDates);
         promoteCompactDateRange(text, productionDates, expiryDates);
         promoteOcrDamagedCompactDateRange(text, productionDates, expiryDates);
         collectShelfLives(text, shelfLives);
         collectOcrDamagedMonthShelfLives(text, shelfLives);
-        if (shelfLives.isEmpty()) {
+        if (shelfLives.isEmpty() && expiryDates.isEmpty()) {
             collectUnhintedShelfLives(text, shelfLives);
         }
 
@@ -148,21 +170,40 @@ final class DateOcrParser {
             String text,
             Pattern pattern,
             List<DateCandidate> productionDates,
-            List<DateCandidate> expiryDates
+            List<DateCandidate> expiryDates,
+            List<DateCandidate> unhintedDates
     ) {
         Matcher matcher = pattern.matcher(text);
         while (matcher.find()) {
             String raw = matcher.group(1);
+            if (pattern == COMPACT_DATE && hasLotCodePrefix(text, matcher.start(1))) {
+                continue;
+            }
             String normalized = normalizeDate(raw);
             if (!DateRules.isValidDateString(normalized)) {
                 continue;
             }
 
             String context = nearbyText(text, matcher.start(1), matcher.end(1), 30);
-            String hintContext = nearbyHintText(text, matcher.start(1), matcher.end(1));
-            boolean productionHint = PRODUCTION_HINT.matcher(hintContext).find();
-            boolean expiryHint = EXPIRY_HINT.matcher(hintContext).find();
-            if (!productionHint && !expiryHint && compactDigitLength(raw) == 6) {
+            int productionDistance = nearestHintDistance(text, matcher.start(1), matcher.end(1), PRODUCTION_HINT);
+            int expiryDistance = nearestHintDistance(text, matcher.start(1), matcher.end(1), EXPIRY_HINT);
+            int batchDistance = nearestHintDistance(text, matcher.start(1), matcher.end(1), PRODUCT_BATCH_HINT);
+            boolean explicitCalendarDate = hasExplicitDateSeparator(raw);
+            if (!explicitCalendarDate
+                    && batchDistance <= MAX_HINT_DISTANCE
+                    && batchDistance < Math.min(productionDistance, expiryDistance)) {
+                continue;
+            }
+            boolean productionHint = productionDistance <= MAX_HINT_DISTANCE
+                    && productionDistance <= expiryDistance;
+            boolean expiryHint = expiryDistance <= MAX_HINT_DISTANCE
+                    && expiryDistance < productionDistance;
+            if (!productionHint && !expiryHint
+                    && nearestHintDistance(text, matcher.start(1), matcher.end(1), BARCODE_HINT) <= MAX_HINT_DISTANCE) {
+                continue;
+            }
+            if (!productionHint && !expiryHint && !explicitCalendarDate
+                    && batchDistance <= MAX_HINT_DISTANCE) {
                 continue;
             }
 
@@ -173,9 +214,164 @@ final class DateOcrParser {
                 expiryDates.add(new DateCandidate("expiryDate", raw, normalized, context, 0.88d, false, false));
             }
             if (!productionHint && !expiryHint) {
-                productionDates.add(new DateCandidate("productionDate", raw, normalized, context, 0.45d, true, false));
+                unhintedDates.add(new DateCandidate("unhintedDate", raw, normalized, context, 0.48d, true, false));
             }
         }
+    }
+
+    private static boolean hasExplicitDateSeparator(String raw) {
+        return raw != null && (raw.indexOf('.') >= 0
+                || raw.indexOf('/') >= 0
+                || raw.indexOf('-') >= 0
+                || raw.indexOf('年') >= 0
+                || raw.indexOf('月') >= 0
+                || raw.indexOf('日') >= 0);
+    }
+
+    private static boolean hasLotCodePrefix(String text, int dateStart) {
+        if (text == null || dateStart <= 0) {
+            return false;
+        }
+        char prefix = Character.toUpperCase(text.charAt(dateStart - 1));
+        return prefix == 'L';
+    }
+
+    private static void inferUnhintedDates(
+            List<DateCandidate> unhintedDates,
+            List<DateCandidate> productionDates,
+            List<DateCandidate> expiryDates,
+            String referenceDate
+    ) {
+        dedupeDateCandidates(unhintedDates);
+        List<DateCandidate> remaining = new ArrayList<DateCandidate>();
+        for (DateCandidate candidate : unhintedDates) {
+            if (!containsDate(productionDates, candidate.normalized)
+                    && !containsDate(expiryDates, candidate.normalized)) {
+                remaining.add(candidate);
+            }
+        }
+        Collections.sort(remaining, new Comparator<DateCandidate>() {
+            @Override
+            public int compare(DateCandidate left, DateCandidate right) {
+                return left.normalized.compareTo(right.normalized);
+            }
+        });
+
+        if (remaining.size() == 2) {
+            DateCandidate older = remaining.get(0);
+            DateCandidate newer = remaining.get(1);
+            if (!older.normalized.equals(newer.normalized)) {
+                productionDates.add(asInferredDate(older, "productionDate", 0.68d));
+                expiryDates.add(asInferredDate(newer, "expiryDate", 0.68d));
+            }
+            return;
+        }
+        if (remaining.size() != 1) {
+            return;
+        }
+
+        DateCandidate only = remaining.get(0);
+        if (productionDates.size() == 1 && expiryDates.isEmpty()
+                && productionDates.get(0).normalized.compareTo(only.normalized) < 0) {
+            expiryDates.add(asInferredDate(only, "expiryDate", 0.64d));
+            return;
+        }
+        if (expiryDates.size() == 1 && productionDates.isEmpty()
+                && only.normalized.compareTo(expiryDates.get(0).normalized) < 0) {
+            productionDates.add(asInferredDate(only, "productionDate", 0.64d));
+            return;
+        }
+        if (!productionDates.isEmpty() || !expiryDates.isEmpty()) {
+            return;
+        }
+
+        String today = DateRules.isValidDateString(referenceDate)
+                ? referenceDate
+                : DateRules.getTodayString();
+        if (only.normalized.compareTo(today) > 0) {
+            expiryDates.add(asInferredDate(only, "expiryDate", 0.58d));
+        } else {
+            productionDates.add(asInferredDate(only, "productionDate", 0.58d));
+        }
+    }
+
+    private static DateCandidate asInferredDate(DateCandidate source, String type, double confidence) {
+        return new DateCandidate(
+                type,
+                source.raw,
+                source.normalized,
+                source.context,
+                confidence,
+                true,
+                false
+        );
+    }
+
+    private static void reconcileChronologicalDatePair(
+            List<DateCandidate> productionDates,
+            List<DateCandidate> expiryDates
+    ) {
+        if (productionDates.isEmpty()) {
+            reconcileOneSidedDatePair(expiryDates, productionDates, true);
+        } else if (expiryDates.isEmpty()) {
+            reconcileOneSidedDatePair(productionDates, expiryDates, false);
+        }
+    }
+
+    private static void reconcileOneSidedDatePair(
+            List<DateCandidate> source,
+            List<DateCandidate> destination,
+            boolean sourceIsExpiry
+    ) {
+        if (!sourceIsExpiry && allCandidatesHaveStrongHints(source)) {
+            return;
+        }
+        Map<String, DateCandidate> distinct = new LinkedHashMap<String, DateCandidate>();
+        for (DateCandidate candidate : source) {
+            if (!distinct.containsKey(candidate.normalized)) {
+                distinct.put(candidate.normalized, candidate);
+            }
+        }
+        if (distinct.size() != 2) {
+            return;
+        }
+
+        List<DateCandidate> ordered = new ArrayList<DateCandidate>(distinct.values());
+        Collections.sort(ordered, new Comparator<DateCandidate>() {
+            @Override
+            public int compare(DateCandidate left, DateCandidate right) {
+                return left.normalized.compareTo(right.normalized);
+            }
+        });
+        DateCandidate moved = sourceIsExpiry ? ordered.get(0) : ordered.get(1);
+        String movedType = sourceIsExpiry ? "productionDate" : "expiryDate";
+        for (int index = source.size() - 1; index >= 0; index--) {
+            if (source.get(index).normalized.equals(moved.normalized)) {
+                source.remove(index);
+            }
+        }
+        destination.add(asInferredDate(moved, movedType, 0.66d));
+    }
+
+    private static boolean allCandidatesHaveStrongHints(List<DateCandidate> candidates) {
+        if (candidates.isEmpty()) {
+            return false;
+        }
+        for (DateCandidate candidate : candidates) {
+            if (candidate.weakHint) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    private static boolean containsDate(List<DateCandidate> candidates, String normalized) {
+        for (DateCandidate candidate : candidates) {
+            if (candidate.normalized.equals(normalized)) {
+                return true;
+            }
+        }
+        return false;
     }
 
     private static void promoteCompactDateRange(
@@ -281,6 +477,10 @@ final class DateOcrParser {
         while (matcher.find()) {
             int value = parsePositiveInt(matcher.group(2));
             String unit = normalizeShelfLifeUnit(matcher.group(3));
+            if ("week".equals(unit)) {
+                value *= 7;
+                unit = "day";
+            }
             if (value <= 0 || unit.length() == 0) {
                 continue;
             }
@@ -310,6 +510,38 @@ final class DateOcrParser {
                     context,
                     0.62d
             ));
+        }
+    }
+
+    private static void collectYearMonths(
+            String text,
+            Pattern pattern,
+            List<DateCandidate> expiryDates,
+            List<DateCandidate> unhintedDates,
+            boolean monthFirst
+    ) {
+        Matcher matcher = pattern.matcher(text);
+        while (matcher.find()) {
+            int expiryDistance = nearestHintDistance(text, matcher.start(1), matcher.end(1), EXPIRY_HINT);
+            String raw = matcher.group(1);
+            String normalized = normalizeExpiryMonth(raw, monthFirst);
+            if (!DateRules.isValidDateString(normalized)) {
+                continue;
+            }
+            DateCandidate candidate = new DateCandidate(
+                    expiryDistance <= MAX_HINT_DISTANCE ? "expiryDate" : "unhintedDate",
+                    raw,
+                    normalized,
+                    nearbyText(text, matcher.start(1), matcher.end(1), 30),
+                    expiryDistance <= MAX_HINT_DISTANCE ? 0.90d : 0.50d,
+                    expiryDistance > MAX_HINT_DISTANCE,
+                    false
+            );
+            if (expiryDistance <= MAX_HINT_DISTANCE) {
+                expiryDates.add(candidate);
+            } else {
+                unhintedDates.add(candidate);
+            }
         }
     }
 
@@ -390,6 +622,8 @@ final class DateOcrParser {
                 builder.append('-');
             } else if (ch == '．') {
                 builder.append('.');
+            } else if (ch == '\r' || ch == '\n') {
+                builder.append('\n');
             } else if (Character.isWhitespace(ch)) {
                 builder.append(' ');
             } else {
@@ -422,6 +656,43 @@ final class DateOcrParser {
         }
 
         return "";
+    }
+
+    private static String normalizeExpiryMonth(String raw, boolean monthFirst) {
+        List<String> numbers = new ArrayList<String>();
+        Matcher matcher = NUMBER.matcher(raw);
+        while (matcher.find()) {
+            numbers.add(matcher.group());
+        }
+
+        String yearText;
+        String monthText;
+        if (numbers.size() == 1 && numbers.get(0).length() == 6) {
+            String digits = numbers.get(0);
+            yearText = digits.substring(0, 4);
+            monthText = digits.substring(4, 6);
+        } else if (numbers.size() >= 2) {
+            String first = numbers.get(0);
+            String second = numbers.get(1);
+            if (monthFirst) {
+                yearText = second;
+                monthText = first;
+            } else {
+                yearText = first.length() == 2 ? twoDigitYear(first) : first;
+                monthText = second;
+            }
+        } else {
+            return "";
+        }
+
+        return DateRules.lastDayOfMonthString(parsePositiveInt(yearText), parsePositiveInt(monthText));
+    }
+
+    static boolean isMonthOnlyExpiryRaw(String raw) {
+        String normalized = normalizeText(raw);
+        return YEAR_MONTH_WITH_SEPARATOR.matcher(normalized).find()
+                || COMPACT_YEAR_MONTH.matcher(normalized).find()
+                || MONTH_YEAR_WITH_SEPARATOR.matcher(normalized).find();
     }
 
     private static int compactDigitLength(String raw) {
@@ -471,6 +742,10 @@ final class DateOcrParser {
         if ("年".equals(unit) || "year".equals(unit) || "years".equals(unit)) {
             return "year";
         }
+        if ("周".equals(unit) || "星期".equals(unit)
+                || "week".equals(unit) || "weeks".equals(unit)) {
+            return "week";
+        }
         return "";
     }
 
@@ -480,10 +755,25 @@ final class DateOcrParser {
         return text.substring(safeStart, safeEnd).trim().replaceAll("\\s+", " ");
     }
 
-    private static String nearbyHintText(String text, int start, int end) {
-        int safeStart = Math.max(0, start - 24);
-        int safeEnd = Math.min(text.length(), end + 10);
-        return text.substring(safeStart, safeEnd).trim().replaceAll("\\s+", " ");
+    private static int nearestHintDistance(String text, int start, int end, Pattern hintPattern) {
+        int safeStart = Math.max(0, start - MAX_HINT_DISTANCE);
+        int safeEnd = Math.min(text.length(), end + MAX_HINT_DISTANCE);
+        Matcher matcher = hintPattern.matcher(text.substring(safeStart, safeEnd));
+        int best = Integer.MAX_VALUE;
+        while (matcher.find()) {
+            int absoluteStart = safeStart + matcher.start();
+            int absoluteEnd = safeStart + matcher.end();
+            int distance;
+            if (absoluteEnd <= start) {
+                distance = start - absoluteEnd;
+            } else if (absoluteStart >= end) {
+                distance = absoluteStart - end + 8;
+            } else {
+                distance = 0;
+            }
+            best = Math.min(best, distance);
+        }
+        return best;
     }
 
     private static void dedupeDateCandidates(List<DateCandidate> candidates) {

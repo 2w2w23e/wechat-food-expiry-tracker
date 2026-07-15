@@ -1328,14 +1328,19 @@ public final class LocalLogicTest {
             }
         });
 
-        test("DateOcrParser keeps unhinted dates ambiguous without inventing expiry", new TestCase() {
+        test("DateOcrParser orders two unhinted dates as production and expiry candidates", new TestCase() {
             public void run() {
-                DateOcrParser.Result result = DateOcrParser.parse("画面里看到 20260705 和 20260706");
+                DateOcrParser.Result result = DateOcrParser.parse(
+                        "画面里看到 20260705 和 20260706",
+                        "2026-07-15"
+                );
 
-                assertEquals(2, result.productionDates.size());
-                assertEquals(0, result.expiryDates.size());
+                assertEquals(1, result.productionDates.size());
+                assertEquals(1, result.expiryDates.size());
+                assertEquals("2026-07-05", result.productionDates.get(0).normalized);
+                assertEquals("2026-07-06", result.expiryDates.get(0).normalized);
                 assertTrue(result.productionDates.get(0).weakHint, "unhinted production date should be weak");
-                assertTrue(result.hasDateConflict(), "different dates should be a conflict");
+                assertTrue(result.expiryDates.get(0).weakHint, "inferred expiry date should require confirmation");
             }
         });
 
@@ -1356,6 +1361,147 @@ public final class LocalLogicTest {
                 assertEquals("2025-05-06", hinted.productionDates.get(0).normalized);
                 assertEquals(540, hinted.shelfLives.get(0).value);
                 assertEquals("day", hinted.shelfLives.get(0).unit);
+            }
+        });
+
+        test("DateOcrParser maps two-digit production date and month-only valid-until date", new TestCase() {
+            public void run() {
+                DateOcrParser.Result result = DateOcrParser.parse(
+                        "产品批号：L250321\n生产日期：25.03.13\n有效期：至 2029.02"
+                );
+
+                assertEquals(1, result.productionDates.size());
+                assertEquals("2025-03-13", result.productionDates.get(0).normalized);
+                assertEquals(1, result.expiryDates.size());
+                assertEquals("2029-02-28", result.expiryDates.get(0).normalized);
+                assertTrue(DateOcrParser.isMonthOnlyExpiryRaw(result.expiryDates.get(0).raw),
+                        "month-only expiry should stay identifiable for confirmation copy");
+                assertEquals(0, result.shelfLives.size());
+                assertEquals(0, result.calculatedExpiryDates.size());
+            }
+        });
+
+        test("DateOcrParser recovers chronological pair when OCR drops the production label", new TestCase() {
+            public void run() {
+                DateOcrParser.Result result = DateOcrParser.parse(
+                        "产品批号:\n有效期:至\nL25032 1\n25.03. 13\n2029. 02"
+                );
+
+                assertEquals(1, result.productionDates.size());
+                assertEquals("2025-03-13", result.productionDates.get(0).normalized);
+                assertEquals(1, result.expiryDates.size());
+                assertEquals("2029-02-28", result.expiryDates.get(0).normalized);
+                assertTrue(result.productionDates.get(0).weakHint,
+                        "chronology-recovered production date must remain a confirmation candidate");
+            }
+        });
+
+        test("DateOcrFrameVoter accepts repeated OCR evidence from the valid-until video frame", new TestCase() {
+            public void run() {
+                String raw = "产品批号:\n有效期: 至\nL25032 1\n25.03. 13\n2029. 02\n"
+                        + "产品批号:\n有效期:至\nL250321\n25.03. 13\n2029. 02\n"
+                        + "L250321\n25.03. 13\n2029. 02";
+                DateOcrParser.Result parsed = DateOcrParser.parseFocusedWithDateOnlySupplement("", raw);
+                DateOcrFrameVoter.VoteResult vote = DateOcrFrameVoter.vote(
+                        java.util.Arrays.asList(parsed, parsed)
+                );
+
+                assertEquals(1, parsed.productionDates.size());
+                assertEquals(1, parsed.expiryDates.size());
+                assertEquals(0, parsed.shelfLives.size());
+                assertEquals("2025-03-13", parsed.productionDates.get(0).normalized);
+                assertEquals("2029-02-28", parsed.expiryDates.get(0).normalized);
+                assertTrue(vote.readyForUserConfirmation(),
+                        "independent OCR repetitions in one video frame should stabilize the date pair");
+                assertEquals("2029-02-28", vote.expiryDate.value);
+            }
+        });
+
+        test("DateOcrParser supports direct valid-until aliases and compact expiry month", new TestCase() {
+            public void run() {
+                DateOcrParser.Result english = DateOcrParser.parse("MFG 250313 EXP 202902");
+                assertEquals(1, english.productionDates.size());
+                assertEquals(1, english.expiryDates.size());
+                assertEquals("2025-03-13", english.productionDates.get(0).normalized);
+                assertEquals("2029-02-28", english.expiryDates.get(0).normalized);
+
+                DateOcrParser.Result leapYear = DateOcrParser.parse("有效期限至 2028年2月");
+                assertEquals(1, leapYear.expiryDates.size());
+                assertEquals("2028-02-29", leapYear.expiryDates.get(0).normalized);
+
+                DateOcrParser.Result fullDate = DateOcrParser.parse("限用日期 2027/11/06");
+                assertEquals(1, fullDate.expiryDates.size());
+                assertEquals("2027-11-06", fullDate.expiryDates.get(0).normalized);
+            }
+        });
+
+        test("DateOcrParser assigns adjacent production and expiry hints to their nearest dates", new TestCase() {
+            public void run() {
+                DateOcrParser.Result result = DateOcrParser.parse(
+                        "生产日期 2025-03-13\n有效期至 2029-02-28"
+                );
+
+                assertEquals(1, result.productionDates.size());
+                assertEquals("2025-03-13", result.productionDates.get(0).normalized);
+                assertEquals(1, result.expiryDates.size());
+                assertEquals("2029-02-28", result.expiryDates.get(0).normalized);
+
+                DateOcrParser.Result unhintedMonth = DateOcrParser.parse("包装上看到 2029.02");
+                assertEquals("2029-02-28", unhintedMonth.expiryDates.get(0).normalized);
+            }
+        });
+
+        test("DateOcrParser applies current-date fallback to one unhinted date", new TestCase() {
+            public void run() {
+                DateOcrParser.Result past = DateOcrParser.parse("D250912", "2026-07-15");
+                assertEquals("2025-09-12", past.productionDates.get(0).normalized);
+                assertEquals(0, past.expiryDates.size());
+
+                DateOcrParser.Result future = DateOcrParser.parse("20270911", "2026-07-15");
+                assertEquals(0, future.productionDates.size());
+                assertEquals("2027-09-11", future.expiryDates.get(0).normalized);
+
+                DateOcrParser.Result embossedPair = DateOcrParser.parse(
+                        "D250912\n20270911",
+                        "2026-07-15"
+                );
+                assertEquals("2025-09-12", embossedPair.productionDates.get(0).normalized);
+                assertEquals("2027-09-11", embossedPair.expiryDates.get(0).normalized);
+            }
+        });
+
+        test("DateOcrParser covers common market aliases month-year and week shelf life", new TestCase() {
+            public void run() {
+                DateOcrParser.Result chinese = DateOcrParser.parse(
+                        "分装日期 2025年3月13日 最佳食用期至 2027年3月12日"
+                );
+                assertEquals("2025-03-13", chinese.productionDates.get(0).normalized);
+                assertEquals("2027-03-12", chinese.expiryDates.get(0).normalized);
+
+                DateOcrParser.Result imported = DateOcrParser.parse("MFD 250313 USE BY 03/2029");
+                assertEquals("2025-03-13", imported.productionDates.get(0).normalized);
+                assertEquals("2029-03-31", imported.expiryDates.get(0).normalized);
+
+                DateOcrParser.Result weeks = DateOcrParser.parse("生产日期 2025-03-13 保质期 6周");
+                assertEquals(42, weeks.shelfLives.get(0).value);
+                assertEquals("day", weeks.shelfLives.get(0).unit);
+            }
+        });
+
+        test("DateOcrResultPayload keeps direct month-only expiry in manual confirmation mode", new TestCase() {
+            public void run() {
+                List<DateOcrParser.Result> frames = new ArrayList<DateOcrParser.Result>();
+                frames.add(DateOcrParser.parse("生产日期 25.03.13 有效期：至 2029.02"));
+                frames.add(DateOcrParser.parse("生 产 日 期 25.03.13 有 效 期 : 至 2029.02"));
+
+                DateOcrFrameVoter.VoteResult vote = DateOcrFrameVoter.vote(frames);
+                FoodItem draft = DateOcrResultPayload.toDraft(vote);
+
+                assertTrue(vote.readyForUserConfirmation(), "direct expiry should become a stable candidate");
+                assertEquals("2025-03-13", draft.productionDate);
+                assertEquals("2029-02-28", draft.expiryDate);
+                assertEquals("manual", draft.dateSource);
+                assertEquals(null, draft.shelfLifeValue);
             }
         });
 
@@ -1487,17 +1633,18 @@ public final class LocalLogicTest {
             }
         });
 
-        test("DateOcrFrameVoter blocks confirmation when repeated dates conflict", new TestCase() {
+        test("DateOcrFrameVoter accepts a repeated inferred date pair", new TestCase() {
             public void run() {
                 List<DateOcrParser.Result> frames = new ArrayList<DateOcrParser.Result>();
-                frames.add(DateOcrParser.parse("画面里看到 20260705 和 20260706"));
-                frames.add(DateOcrParser.parse("画面里看到 20260705 和 20260706"));
+                frames.add(DateOcrParser.parse("D250912 20270911", "2026-07-15"));
+                frames.add(DateOcrParser.parse("D250912 20270911", "2026-07-15"));
 
                 DateOcrFrameVoter.VoteResult result = DateOcrFrameVoter.vote(frames);
 
-                assertTrue(result.hasConflict, "repeated conflicting candidates should be flagged");
-                assertFalse(result.readyForUserConfirmation(), "conflict must require manual confirmation");
-                assertEquals(null, result.productionDate);
+                assertFalse(result.hasConflict, "chronological pair should not be treated as a conflict");
+                assertTrue(result.readyForUserConfirmation(), "repeated inferred pair should be confirmable");
+                assertEquals("2025-09-12", result.productionDate.value);
+                assertEquals("2027-09-11", result.expiryDate.value);
             }
         });
     }
@@ -1615,6 +1762,62 @@ public final class LocalLogicTest {
             }
         });
 
+        test("RecognitionTextCleaner rejects numbered medical explanation without rejecting numeric food names", new TestCase() {
+            public void run() {
+                String medicalExplanation = "2.用于非增殖性糖尿病视网膜病变，可改善相关症状";
+
+                assertEquals(0, RecognitionTextCleaner.productNameScore(medicalExplanation));
+                assertEquals(0, RecognitionTextCleaner.productNameScore(
+                        "用于非增殖性糖尿病视网膜病变的患者说明"
+                ));
+                assertEquals(0, RecognitionTextCleaner.productNameScore(
+                        "病变气滞花食的视物昏花 面色晦暗 眼底点片状出血 舌质紫"
+                ));
+                assertEquals(0, RecognitionTextCleaner.productNameScore(
+                        "状本品为橙色的薄衣片，除去包装后显黄棕色至棕色，气香"
+                ));
+                assertEquals(0, RecognitionTextCleaner.productNameScore(
+                        "不良反应临床试验和监测中可见以下不良反应 胃肠系统"
+                ));
+                assertTrue(RecognitionTextCleaner.productNameScore("3+2苏打饼干") > 0,
+                        "a normal food name containing digits should remain eligible");
+                assertTrue(RecognitionTextCleaner.productNameScore("0糖可乐") > 0,
+                        "a numeric product attribute should not be treated as a numbered sentence");
+
+                String extracted = RecognitionTextCleaner.extractProductNameFromOcr(
+                        medicalExplanation + "\n3+2苏打饼干"
+                );
+                assertTrue(extracted.contains("饼干"),
+                        "the real food candidate should survive canonical phrase extraction");
+                assertFalse(extracted.contains("糖尿病"),
+                        "the medical explanation must never win product-name extraction");
+
+                List<PackagingTextAnalyzer.Candidate> candidates = PackagingTextAnalyzer.analyze(Arrays.asList(
+                        new PackagingTextAnalyzer.Observation(
+                                medicalExplanation,
+                                0.20d,
+                                0.90d,
+                                0.5d,
+                                0.5d,
+                                1d
+                        ),
+                        new PackagingTextAnalyzer.Observation(
+                                "3+2苏打饼干",
+                                0.05d,
+                                0.35d,
+                                0.5d,
+                                0.5d,
+                                0.8d
+                        )
+                ));
+                assertEquals(1, candidates.size());
+                assertTrue(candidates.get(0).text.contains("饼干"),
+                        "the analyzer should retain the food candidate");
+                assertFalse(candidates.get(0).text.contains("糖尿病"),
+                        "the analyzer must discard the medical explanation even when it is visually larger");
+            }
+        });
+
         test("DateOcrFrameVoter prefers a repeated laser date pair over more weak single-date frames", new TestCase() {
             public void run() {
                 List<DateOcrParser.Result> frames = new ArrayList<DateOcrParser.Result>();
@@ -1659,6 +1862,23 @@ public final class LocalLogicTest {
                 assertEquals("2026-06-12", result.productionDate.value);
                 assertEquals("2027-06-11", result.expiryDate.value);
                 assertFalse(result.hasConflict, "matching OCR variants should corroborate the date pair");
+            }
+        });
+
+        test("DateOcrFrameVoter accepts the full noisy laser-video OCR transcript", new TestCase() {
+            public void run() {
+                String raw = "20260612/20270611\n酸酸爽\n配啥者\n"
+                        + "2026061212027\n酸酸\n配\n2026061212027\n"
+                        + "0260612/20270611\n酸酸爽爽\n啥都好吃!\n爽爽\nF吃!\n奖爽\nF吃";
+                DateOcrParser.Result parsed = DateOcrParser.parseFocusedWithDateOnlySupplement("", raw);
+                DateOcrFrameVoter.VoteResult result = DateOcrFrameVoter.vote(
+                        java.util.Collections.singletonList(parsed),
+                        3
+                );
+
+                assertEquals("2026-06-12", result.productionDate.value);
+                assertEquals("2027-06-11", result.expiryDate.value);
+                assertFalse(result.hasConflict, "damaged duplicates must not defeat the clear repeated date pair");
             }
         });
 
@@ -1762,7 +1982,7 @@ public final class LocalLogicTest {
             }
         });
 
-        test("PackagingTextAnalyzer returns at most three score-ranked candidates", new TestCase() {
+        test("PackagingTextAnalyzer keeps only plausible food names and score ranks them", new TestCase() {
             public void run() {
                 List<PackagingTextAnalyzer.Candidate> candidates = PackagingTextAnalyzer.analyze(Arrays.asList(
                         new PackagingTextAnalyzer.Observation("大董炸酱面", 0.18d, 0.72d, 0.5d, 0.45d, 0.95d),
@@ -1770,9 +1990,73 @@ public final class LocalLogicTest {
                         new PackagingTextAnalyzer.Observation("手工宽面", 0.08d, 0.45d, 0.5d, 0.60d, 0.85d),
                         new PackagingTextAnalyzer.Observation("传统酱香", 0.05d, 0.38d, 0.5d, 0.65d, 0.80d)
                 ));
-                assertEquals(3, candidates.size());
+                assertEquals(2, candidates.size());
                 assertTrue(candidates.get(0).score >= candidates.get(1).score, "candidates should be score sorted");
-                assertTrue(candidates.get(1).score >= candidates.get(2).score, "candidates should be score sorted");
+                assertTrue(RecognitionTextCleaner.isLikelyFoodProductName(candidates.get(0).text),
+                        "every visible candidate must look like a real food name");
+                assertTrue(RecognitionTextCleaner.isLikelyFoodProductName(candidates.get(1).text),
+                        "low-confidence slogan text must not remain in the candidate list");
+            }
+        });
+
+        test("PackagingTextAnalyzer prioritizes labeled names and rejects medical screen text", new TestCase() {
+            public void run() {
+                List<PackagingTextAnalyzer.Candidate> labeled = PackagingTextAnalyzer.analyze(Arrays.asList(
+                        new PackagingTextAnalyzer.Observation(
+                                "产品名称：清水鹌鹑蛋 净含量 100克",
+                                0.08d, 0.60d, 0.5d, 0.5d, 0.95d
+                        ),
+                        new PackagingTextAnalyzer.Observation(
+                                "功能主治活血化瘀用于气滞血瘀所致的胸闷",
+                                0.16d, 0.80d, 0.5d, 0.5d, 0.95d
+                        )
+                ));
+                assertEquals(1, labeled.size());
+                assertEquals("清水鹌鹑蛋", labeled.get(0).text);
+                assertEquals("", RecognitionTextCleaner.extractLabeledProductName(
+                        "企业名称：天士力医药集团股份有限公司"
+                ));
+                assertFalse(RecognitionTextCleaner.isLikelyFoodProductName(
+                        "天士力医药集团股份有限公司"
+                ), "company names must not be shown as product-name candidates");
+
+                List<PackagingTextAnalyzer.Candidate> medical = PackagingTextAnalyzer.analyze(Arrays.asList(
+                        new PackagingTextAnalyzer.Observation(
+                                "不良反应临床试验和监测中可见以下不良反应 胃肠系统",
+                                0.18d, 0.90d, 0.5d, 0.5d, 1d
+                        )
+                ));
+                assertEquals(0, medical.size());
+            }
+        });
+
+        test("RecognitionTextCleaner rejects garbled labels and reduces duplicate food names", new TestCase() {
+            public void run() {
+                assertEquals("炸酱面", RecognitionTextCleaner.intelligentProductNameCandidate(
+                        "AJANGuIAS 炸酱面"
+                ));
+                assertEquals("", RecognitionTextCleaner.intelligentProductNameCandidate(
+                        "存去元承水鸭蛋OF品类型:再"
+                ));
+                assertEquals("酸菜", RecognitionTextCleaner.intelligentProductNameCandidate(
+                        "发醇酸菜 區酸菜"
+                ));
+                assertEquals("去壳清水鹌鹑蛋", RecognitionTextCleaner.intelligentProductNameCandidate(
+                        "去壳清水鹌鹑蛋"
+                ));
+            }
+        });
+
+        test("PackagingTextAnalyzer lets a clean food line beat a garbled product label", new TestCase() {
+            public void run() {
+                List<PackagingTextAnalyzer.Candidate> candidates = PackagingTextAnalyzer.analyze(Arrays.asList(
+                        new PackagingTextAnalyzer.Observation(
+                                "去壳清水鹌鹑蛋\nOP品名存去元承水鸭蛋OF品类型:再",
+                                0.12d, 0.75d, 0.5d, 0.5d, 0.9d
+                        )
+                ));
+                assertTrue(candidates.size() > 0, "clean package text should remain usable");
+                assertEquals("去壳清水鹌鹑蛋", candidates.get(0).text);
             }
         });
 
@@ -1931,6 +2215,50 @@ public final class LocalLogicTest {
             }
         });
 
+        test("UnifiedRecognitionStabilizer hides repeated low-confidence non-food names", new TestCase() {
+            public void run() {
+                UnifiedRecognitionStabilizer stabilizer = new UnifiedRecognitionStabilizer(8, 3);
+                UnifiedRecognitionStabilizer.Snapshot snapshot = null;
+                for (int index = 0; index < 6; index++) {
+                    snapshot = stabilizer.addFrame(
+                            "",
+                            DateOcrParser.parse(""),
+                            "功能主治活血化瘀用于气滞血瘀所致的胸闷",
+                            Arrays.asList(new PackagingTextAnalyzer.Candidate(
+                                    "功能主治活血化瘀用于气滞血瘀所致的胸闷",
+                                    240d
+                            )),
+                            false
+                    );
+                }
+                assertEquals(0, snapshot.rankedPackagingCandidates.size());
+                assertFalse(snapshot.hasStablePackagingName(),
+                        "repetition alone must never promote non-food explanatory text");
+            }
+        });
+
+        test("UnifiedRecognitionStabilizer exposes one gated name to the confirmation form", new TestCase() {
+            public void run() {
+                UnifiedRecognitionStabilizer stabilizer = new UnifiedRecognitionStabilizer(8, 3);
+                UnifiedRecognitionStabilizer.Snapshot snapshot = null;
+                for (int index = 0; index < 2; index++) {
+                    snapshot = stabilizer.addFrame(
+                            "",
+                            DateOcrParser.parse(""),
+                            "酸菜",
+                            Arrays.asList(new PackagingTextAnalyzer.Candidate("酸菜", 160d)),
+                            false
+                    );
+                }
+
+                assertFalse(snapshot.hasStablePackagingName(),
+                        "two frames should remain below the automatic lock threshold");
+                assertEquals("酸菜", snapshot.bestPackagingNameForConfirmation());
+                assertTrue(snapshot.hasFillableCandidate(),
+                        "the only name that passed strict display gating should fill the review form");
+            }
+        });
+
         test("UnifiedRecognitionStabilizer caps repeated-slogan duration bias", new TestCase() {
             public void run() {
                 UnifiedRecognitionStabilizer stabilizer = new UnifiedRecognitionStabilizer(20, 3);
@@ -2023,6 +2351,25 @@ public final class LocalLogicTest {
                             false
                     );
                 }
+
+                assertEquals("2026-06-12", snapshot.stableDateVote.productionDate.value);
+                assertEquals("2027-06-11", snapshot.stableDateVote.expiryDate.value);
+            }
+        });
+
+        test("UnifiedRecognitionStabilizer promotes a clear final video transcript for confirmation", new TestCase() {
+            public void run() {
+                UnifiedRecognitionStabilizer stabilizer = new UnifiedRecognitionStabilizer(12, 3);
+                stabilizer.addFrame(
+                        "",
+                        DateOcrParser.parse("20260612"),
+                        "20260612",
+                        false
+                );
+                UnifiedRecognitionStabilizer.Snapshot snapshot =
+                        stabilizer.promoteDirectDatePairForConfirmation(
+                                DateOcrParser.parse("20260612/20270611\n0260612/20270611")
+                        );
 
                 assertEquals("2026-06-12", snapshot.stableDateVote.productionDate.value);
                 assertEquals("2027-06-11", snapshot.stableDateVote.expiryDate.value);
