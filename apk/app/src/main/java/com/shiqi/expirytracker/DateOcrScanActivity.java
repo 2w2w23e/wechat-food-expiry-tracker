@@ -82,6 +82,7 @@ public final class DateOcrScanActivity extends ComponentActivity {
     static final String EXTRA_START_VIDEO_REPLAY = "com.shiqi.expirytracker.START_VIDEO_REPLAY";
     static final String EXTRA_QA_VIDEO_PATH = "com.shiqi.expirytracker.QA_VIDEO_PATH";
     static final String EXTRA_QA_IMAGE_PATH = "com.shiqi.expirytracker.QA_IMAGE_PATH";
+    static final String EXTRA_DATE_ONLY_MODE = "com.shiqi.expirytracker.DATE_ONLY_MODE";
     static final String EXTRA_BARCODE_LOOKUP_ONLY =
             "com.shiqi.expirytracker.BARCODE_LOOKUP_ONLY";
 
@@ -157,6 +158,7 @@ public final class DateOcrScanActivity extends ComponentActivity {
     private volatile boolean analysisInFlight;
     private volatile boolean videoReplayActive;
     private volatile boolean barcodeLookupOnly;
+    private volatile boolean dateOnlyMode;
     private volatile boolean cameraSimulationActive;
     private volatile boolean cameraSimulationScreenRecording;
     private volatile boolean longVideoProfile;
@@ -205,6 +207,8 @@ public final class DateOcrScanActivity extends ComponentActivity {
         Intent intent = getIntent();
         barcodeLookupOnly = intent != null
                 && intent.getBooleanExtra(EXTRA_BARCODE_LOOKUP_ONLY, false);
+        dateOnlyMode = intent != null
+                && intent.getBooleanExtra(EXTRA_DATE_ONLY_MODE, false);
 
         cameraAnalyzerExecutor = Executors.newSingleThreadExecutor();
         cameraExecutor = Executors.newSingleThreadExecutor();
@@ -354,7 +358,7 @@ public final class DateOcrScanActivity extends ComponentActivity {
         topPanel.addView(closeButton, fixed(64, 48));
 
         TextView title = new TextView(this);
-        title.setText("智能识别");
+        title.setText(dateOnlyMode ? "识别本批次日期" : "智能识别");
         title.setTextColor(Color.WHITE);
         title.setTextSize(18);
         title.setTypeface(Typeface.DEFAULT, Typeface.BOLD);
@@ -429,7 +433,7 @@ public final class DateOcrScanActivity extends ComponentActivity {
         resultHeader.addView(rawButton, fixed(64, 48));
 
         productValue = new TextView(this);
-        productValue.setText("正在寻找商品名");
+        productValue.setText(dateOnlyMode ? "正在寻找日期文字" : "正在寻找商品名");
         productValue.setTextColor(Color.rgb(24, 30, 27));
         productValue.setTextSize(18);
         productValue.setTypeface(Typeface.DEFAULT, Typeface.BOLD);
@@ -579,6 +583,8 @@ public final class DateOcrScanActivity extends ComponentActivity {
         statusBadge.setText("待识别");
         statusText.setText(barcodeLookupOnly
                 ? "正在准备相机，请让条码尽量占满识别框。"
+                : dateOnlyMode
+                ? "保持约 15–25 厘米，让日期小字清晰占满识别框，再轻点文字对焦。"
                 : "正在准备相机，请让包装文字和喷码尽量占满识别框。");
         updateResultUi(stabilizer.snapshot());
     }
@@ -1174,7 +1180,7 @@ public final class DateOcrScanActivity extends ComponentActivity {
                 }
             }
             boolean targetedCameraDatePass = cameraLive
-                    && paddleDetectedLineCameraFramesUsed < 3
+                    && paddleDetectedLineCameraFramesUsed < (dateOnlyMode ? 5 : 3)
                     && (!hasCompleteCameraDateCandidate()
                     || hasDatePairObservation(textObservations))
                     && hasDateLineObservation(textObservations);
@@ -1770,7 +1776,11 @@ public final class DateOcrScanActivity extends ComponentActivity {
         boolean calculatedDatePair = vote.productionDate != null
                 && vote.shelfLife != null
                 && vote.calculatedExpiryDate != null;
-        return (directDatePair || calculatedDatePair)
+        boolean completeDate = directDatePair || calculatedDatePair;
+        if (dateOnlyMode) {
+            return completeDate;
+        }
+        return completeDate
                 && (snapshot.hasStableBarcode()
                 || snapshot.hasStablePackagingName());
     }
@@ -1989,7 +1999,8 @@ public final class DateOcrScanActivity extends ComponentActivity {
                     frameMetrics.visualScore,
                     frameMetrics.sharpness,
                     frameMetrics.glareRatio,
-                    hasCompleteCameraDateCandidate()
+                    hasCompleteCameraDateCandidate(),
+                    dateOnlyMode
             );
         }
         if (!videoReplayActive || !videoDetailFrame) {
@@ -2032,7 +2043,7 @@ public final class DateOcrScanActivity extends ComponentActivity {
         }
 
         int cameraPass = paddleDetectionCameraFramesUsed;
-        int cameraInputSide = cameraPass == 0 ? 640 : 960;
+        int cameraInputSide = cameraPass == 0 ? 960 : 1280;
         Bitmap detectorInput = bitmap;
         if (cameraLive && cameraPass >= 2) {
             Bitmap enhancedDetectorInput = cameraPass % 2 == 1
@@ -2047,7 +2058,7 @@ public final class DateOcrScanActivity extends ComponentActivity {
         try {
             int maxRegions = requestedMaxRegions > 0
                     ? requestedMaxRegions
-                    : cameraLive ? 18 : videoReplayActive ? 10 : 24;
+                    : cameraLive ? (dateOnlyMode ? 28 : 22) : videoReplayActive ? 10 : 24;
             detectedRegions = detector.detect(
                     detectorInput,
                     maxRegions,
@@ -2063,7 +2074,7 @@ public final class DateOcrScanActivity extends ComponentActivity {
         List<RecognitionEvidence.NormalizedRect> cropRects =
                 new ArrayList<RecognitionEvidence.NormalizedRect>();
         int dateRegionCount = cameraLive
-                ? Math.min(6, detectedRegions.size())
+                ? Math.min(dateOnlyMode ? 12 : 8, detectedRegions.size())
                 : detectedRegions.size();
         for (int index = 0; index < dateRegionCount; index++) {
             PaddleTextDetectionEngine.TextRegion region = detectedRegions.get(index);
@@ -2077,7 +2088,7 @@ public final class DateOcrScanActivity extends ComponentActivity {
                 }
                 regions.add(region);
                 cropRects.add(region.tightTextRect());
-                if (regions.size() >= dateRegionCount + 5) {
+                if (regions.size() >= dateRegionCount + (dateOnlyMode ? 8 : 5)) {
                     break;
                 }
             }
@@ -2117,7 +2128,7 @@ public final class DateOcrScanActivity extends ComponentActivity {
             recognitionCrops = new ArrayList<Bitmap>(crops);
             for (int cropIndex = 0; cropIndex < crops.size(); cropIndex++) {
                 Bitmap crop = crops.get(cropIndex);
-                if (cropIndex >= 4) {
+                if (cropIndex >= (dateOnlyMode ? 8 : 5)) {
                     continue;
                 }
                 Bitmap laser = LowContrastTextPreprocessor.enhanceLaserPrintedText(crop);
@@ -3748,6 +3759,8 @@ public final class DateOcrScanActivity extends ComponentActivity {
                     statusBadge.setText("相机");
                     statusText.setText(barcodeLookupOnly
                             ? "请对准商品条码，连续两帧一致后会自动查找。"
+                            : dateOnlyMode
+                            ? "保持约 15–25 厘米，让日期小字清晰占满识别框；不清晰时轻点日期对焦。"
                             : "正在寻找条码、中文商品名和日期，请让包装主体占满识别框。");
                 } catch (Exception error) {
                     showCameraUnavailable("相机启动失败，请检查相机权限或重新打开应用。");
@@ -3786,7 +3799,7 @@ public final class DateOcrScanActivity extends ComponentActivity {
 
         ResolutionSelector resolutionSelector = new ResolutionSelector.Builder()
                 .setResolutionStrategy(new ResolutionStrategy(
-                        new Size(1280, 960),
+                        new Size(1920, 1080),
                         ResolutionStrategy.FALLBACK_RULE_CLOSEST_HIGHER_THEN_LOWER
                 ))
                 .build();
@@ -3808,6 +3821,11 @@ public final class DateOcrScanActivity extends ComponentActivity {
                 preview,
                 imageAnalysis
         );
+        try {
+            camera.getCameraControl().setLinearZoom(dateOnlyMode ? 0.12f : 0.06f);
+        } catch (RuntimeException ignored) {
+            // Some fixed-focus and virtual cameras expose no usable zoom range.
+        }
         configureCameraFocus(camera);
     }
 
@@ -3831,7 +3849,7 @@ public final class DateOcrScanActivity extends ComponentActivity {
                 startFocusAndMetering(
                         boundCamera,
                         previewView.getWidth() / 2f,
-                        previewView.getHeight() * 0.36f,
+                        previewView.getHeight() * 0.48f,
                         false
                 );
             }
@@ -3846,7 +3864,7 @@ public final class DateOcrScanActivity extends ComponentActivity {
         FocusMeteringAction action = new FocusMeteringAction.Builder(
                 point,
                 FocusMeteringAction.FLAG_AF | FocusMeteringAction.FLAG_AE | FocusMeteringAction.FLAG_AWB
-        ).setAutoCancelDuration(4, TimeUnit.SECONDS).build();
+        ).setAutoCancelDuration(8, TimeUnit.SECONDS).build();
         if (!boundCamera.getCameraInfo().isFocusMeteringSupported(action)) {
             if (announceResult) {
                 statusText.setText("此设备不支持点按对焦，请保持包装稳定并靠近小字。");

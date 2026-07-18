@@ -62,6 +62,7 @@ public final class MainActivity extends Activity {
     private static final int REQUEST_EXCEL_EXPORT = 4303;
     private static final int REQUEST_EXCEL_IMPORT = 4304;
     private static final int REQUEST_DATE_OCR = 4305;
+    private static final int REQUEST_REPLENISHMENT_OCR = 4306;
     private static final String PREFS_NAME = "shiqi_android_v0";
     private static final String PREF_NOTIFICATION_PERMISSION_PROMPTED = "notification_permission_prompted_v0";
     private static final String FOOD_ACTION_EDIT = "edit";
@@ -78,6 +79,8 @@ public final class MainActivity extends Activity {
             "com.shiqi.expirytracker.QA_FORCE_IMPORT_SAVE_FAILURE";
     private static final String EXTRA_QA_FORCE_SAVE_FAILURE =
             "com.shiqi.expirytracker.QA_FORCE_SAVE_FAILURE";
+    private static final String EXTRA_QA_REPLENISHMENT_VIDEO_PATH =
+            "com.shiqi.expirytracker.QA_REPLENISHMENT_VIDEO_PATH";
 
     private static final int COLOR_BG = Color.rgb(246, 247, 248);
     private static final int COLOR_CARD = Color.WHITE;
@@ -111,6 +114,7 @@ public final class MainActivity extends Activity {
     private Button reminderSettingsButton;
     private TextView activeFilterSummary;
     private ReminderSettings reminderSettings = ReminderSettings.defaults();
+    private ReplenishmentRecognitionTarget pendingReplenishmentRecognitionTarget;
     private EditText searchInput;
     private final List<String> selectedStatuses = new ArrayList<String>(FoodData.statusFilterValues());
     private final List<String> selectedCategories = new ArrayList<String>();
@@ -608,6 +612,9 @@ public final class MainActivity extends Activity {
     protected void onActivityResult(int requestCode, int resultCode, Intent data) {
         super.onActivityResult(requestCode, resultCode, data);
         if (resultCode != RESULT_OK) {
+            if (requestCode == REQUEST_REPLENISHMENT_OCR) {
+                pendingReplenishmentRecognitionTarget = null;
+            }
             return;
         }
 
@@ -620,6 +627,8 @@ public final class MainActivity extends Activity {
             readExcelImport(data == null ? null : data.getData());
         } else if (requestCode == REQUEST_DATE_OCR) {
             handleUnifiedRecognitionResult(data);
+        } else if (requestCode == REQUEST_REPLENISHMENT_OCR) {
+            handleReplenishmentRecognitionResult(data);
         }
     }
 
@@ -1068,13 +1077,7 @@ public final class MainActivity extends Activity {
 
     private void showReplenishmentForm(FoodItem profile, FoodItem recognizedDraft) {
         FoodItem draft = ReplenishmentDraftFactory.createDraft(profile);
-        if (recognizedDraft != null) {
-            draft.productionDate = recognizedDraft.productionDate;
-            draft.shelfLifeValue = recognizedDraft.shelfLifeValue;
-            draft.shelfLifeUnit = recognizedDraft.shelfLifeUnit;
-            draft.expiryDate = recognizedDraft.expiryDate;
-            draft.dateSource = recognizedDraft.dateSource;
-        }
+        draft = ReplenishmentRecognitionMerge.mergeDates(draft, recognizedDraft);
         String title = "补货新批次\n" + profile.name;
         if (BarcodeUtils.isSupportedProductCode(profile.barcode)) {
             title = title + " · " + BarcodeUtils.digitsOnly(profile.barcode);
@@ -1181,20 +1184,7 @@ public final class MainActivity extends Activity {
             return;
         }
 
-        Integer shelfLifeValue = data.hasExtra(DateOcrResultPayload.EXTRA_SHELF_LIFE_VALUE)
-                ? Integer.valueOf(data.getIntExtra(DateOcrResultPayload.EXTRA_SHELF_LIFE_VALUE, 0))
-                : null;
-        final FoodItem draft = UnifiedRecognitionPayload.toDraft(
-                data.getStringExtra(UnifiedRecognitionPayload.EXTRA_BARCODE),
-                data.getStringExtra(UnifiedRecognitionPayload.EXTRA_PRODUCT_NAME),
-                data.getStringExtra(UnifiedRecognitionPayload.EXTRA_PRODUCT_CATEGORY),
-                data.getStringExtra(UnifiedRecognitionPayload.EXTRA_PRODUCT_NOTES),
-                data.getStringExtra(DateOcrResultPayload.EXTRA_PRODUCTION_DATE),
-                data.getStringExtra(DateOcrResultPayload.EXTRA_EXPIRY_DATE),
-                data.getBooleanExtra(DateOcrResultPayload.EXTRA_EXPIRY_CALCULATED, false),
-                shelfLifeValue,
-                data.getStringExtra(DateOcrResultPayload.EXTRA_SHELF_LIFE_UNIT)
-        );
+        final FoodItem draft = recognitionDraftFromIntent(data);
         if (!UnifiedRecognitionPayload.hasUsableDraft(draft)) {
             String rawText = dateOcrSnippet(data.getStringExtra(DateOcrResultPayload.EXTRA_RAW_TEXT), 260);
             new AlertDialog.Builder(this)
@@ -1210,6 +1200,105 @@ public final class MainActivity extends Activity {
                 || !showKnownBarcodeAction(draft.barcode, draft)) {
             showFoodForm(draft, false);
             toast("已填入识别候选，请检查后保存");
+        }
+    }
+
+    private FoodItem recognitionDraftFromIntent(Intent data) {
+        if (data == null) {
+            return new FoodItem();
+        }
+        Integer shelfLifeValue = data != null && data.hasExtra(DateOcrResultPayload.EXTRA_SHELF_LIFE_VALUE)
+                ? Integer.valueOf(data.getIntExtra(DateOcrResultPayload.EXTRA_SHELF_LIFE_VALUE, 0))
+                : null;
+        return UnifiedRecognitionPayload.toDraft(
+                data.getStringExtra(UnifiedRecognitionPayload.EXTRA_BARCODE),
+                data.getStringExtra(UnifiedRecognitionPayload.EXTRA_PRODUCT_NAME),
+                data.getStringExtra(UnifiedRecognitionPayload.EXTRA_PRODUCT_CATEGORY),
+                data.getStringExtra(UnifiedRecognitionPayload.EXTRA_PRODUCT_NOTES),
+                data.getStringExtra(DateOcrResultPayload.EXTRA_PRODUCTION_DATE),
+                data.getStringExtra(DateOcrResultPayload.EXTRA_EXPIRY_DATE),
+                data.getBooleanExtra(DateOcrResultPayload.EXTRA_EXPIRY_CALCULATED, false),
+                shelfLifeValue,
+                data.getStringExtra(DateOcrResultPayload.EXTRA_SHELF_LIFE_UNIT)
+        );
+    }
+
+    private void handleReplenishmentRecognitionResult(Intent data) {
+        ReplenishmentRecognitionTarget target = pendingReplenishmentRecognitionTarget;
+        pendingReplenishmentRecognitionTarget = null;
+        if (target == null || data == null) {
+            toast("补货表单已关闭，未回填识别结果");
+            return;
+        }
+
+        FoodItem recognized = recognitionDraftFromIntent(data);
+        if (!ReplenishmentRecognitionMerge.hasRecognizedDate(recognized)) {
+            String rawText = dateOcrSnippet(data.getStringExtra(DateOcrResultPayload.EXTRA_RAW_TEXT), 220);
+            new AlertDialog.Builder(this)
+                    .setTitle("没有识别到本批次日期")
+                    .setMessage("请让日期小字占满取景框并轻点文字对焦，再重新识别。\n\n原始片段：\n" + rawText)
+                    .setPositiveButton("知道了", null)
+                    .show();
+            return;
+        }
+
+        target.noExpiryInput.setChecked(false);
+        if (DateRules.isValidDateString(recognized.productionDate)) {
+            target.productionDateInput.setText(recognized.productionDate);
+        }
+        if (recognized.shelfLifeValue != null && recognized.shelfLifeValue.intValue() > 0) {
+            target.shelfLifeInput.setText(String.valueOf(recognized.shelfLifeValue));
+            target.shelfLifeUnitInput.setSelection(indexOf(
+                    FoodData.SHELF_LIFE_UNITS,
+                    recognized.shelfLifeUnit,
+                    "day"
+            ));
+        }
+
+        boolean directExpiry = DateRules.isValidDateString(recognized.expiryDate)
+                && !"calculated".equals(recognized.dateSource);
+        target.manualExpiryOverride[0] = directExpiry;
+        if (directExpiry) {
+            target.updatingCalculatedExpiry[0] = true;
+            target.expiryDateInput.setText(recognized.expiryDate);
+            target.updatingCalculatedExpiry[0] = false;
+        }
+        target.updateNoExpiryViews.run();
+        target.updateCalculatedExpiry.run();
+        toast("已回填本批次日期，请核对后保存");
+    }
+
+    private static final class ReplenishmentRecognitionTarget {
+        final EditText productionDateInput;
+        final EditText shelfLifeInput;
+        final Spinner shelfLifeUnitInput;
+        final EditText expiryDateInput;
+        final CheckBox noExpiryInput;
+        final boolean[] manualExpiryOverride;
+        final boolean[] updatingCalculatedExpiry;
+        final Runnable updateCalculatedExpiry;
+        final Runnable updateNoExpiryViews;
+
+        ReplenishmentRecognitionTarget(
+                EditText productionDateInput,
+                EditText shelfLifeInput,
+                Spinner shelfLifeUnitInput,
+                EditText expiryDateInput,
+                CheckBox noExpiryInput,
+                boolean[] manualExpiryOverride,
+                boolean[] updatingCalculatedExpiry,
+                Runnable updateCalculatedExpiry,
+                Runnable updateNoExpiryViews
+        ) {
+            this.productionDateInput = productionDateInput;
+            this.shelfLifeInput = shelfLifeInput;
+            this.shelfLifeUnitInput = shelfLifeUnitInput;
+            this.expiryDateInput = expiryDateInput;
+            this.noExpiryInput = noExpiryInput;
+            this.manualExpiryOverride = manualExpiryOverride;
+            this.updatingCalculatedExpiry = updatingCalculatedExpiry;
+            this.updateCalculatedExpiry = updateCalculatedExpiry;
+            this.updateNoExpiryViews = updateNoExpiryViews;
         }
     }
 
@@ -2640,9 +2729,15 @@ public final class MainActivity extends Activity {
         LinearLayout quickActions = new LinearLayout(this);
         quickActions.setOrientation(LinearLayout.HORIZONTAL);
 
+        if (!food.isFinished) {
+            Button decreaseOne = outlineButton("减少 1");
+            decreaseOne.setOnClickListener(new FoodActionClickListener(food, FOOD_ACTION_DECREASE_ONE));
+            quickActions.addView(decreaseOne, withMargins(weightWrap(1), 0, 0, dp(6), 0));
+        }
+
         Button replenish = outlineButton("补货");
         replenish.setOnClickListener(new FoodActionClickListener(food, FOOD_ACTION_REPLENISH));
-        quickActions.addView(replenish, withMargins(weightWrap(1), 0, 0, dp(8), 0));
+        quickActions.addView(replenish, withMargins(weightWrap(1), 0, 0, dp(6), 0));
 
         Button more = utilityButton("更多操作");
         more.setOnClickListener(new FoodActionClickListener(food, FOOD_ACTION_MORE));
@@ -2948,6 +3043,21 @@ public final class MainActivity extends Activity {
         form.addView(basicSection, withMargins(matchWrap(), 0, 0, 0, dp(4)));
 
         LinearLayout dateSection = formSection("日期信息");
+        final Button replenishmentCameraButton;
+        if (isReplenishment) {
+            TextView cameraIntro = text(
+                    "拍摄本批次的生产日期、保质期或有效期，识别结果只回填本批次。",
+                    13,
+                    COLOR_MUTED,
+                    Typeface.NORMAL
+            );
+            cameraIntro.setPadding(0, dp(6), 0, dp(6));
+            dateSection.addView(cameraIntro, matchWrap());
+            replenishmentCameraButton = button("相机识别本批次日期", COLOR_PRIMARY);
+            dateSection.addView(replenishmentCameraButton, withMargins(matchWrap(), 0, 0, 0, dp(8)));
+        } else {
+            replenishmentCameraButton = null;
+        }
         addFormField(dateSection, "生产日期", productionDateInput);
         dateSection.addView(noExpiryInput, matchWrap());
 
@@ -3187,6 +3297,37 @@ public final class MainActivity extends Activity {
                 .setPositiveButton("保存", null)
                 .create();
 
+        if (replenishmentCameraButton != null) {
+            replenishmentCameraButton.setOnClickListener(new View.OnClickListener() {
+                @Override
+                public void onClick(View view) {
+                    final ReplenishmentRecognitionTarget target = new ReplenishmentRecognitionTarget(
+                            productionDateInput,
+                            shelfLifeInput,
+                            shelfLifeUnitInput,
+                            expiryDateInput,
+                            noExpiryInput,
+                            manualExpiryOverride,
+                            updatingCalculatedExpiry,
+                            updateCalculatedExpiry,
+                            updateNoExpiryViews
+                    );
+                    pendingReplenishmentRecognitionTarget = target;
+                    Intent intent = new Intent(MainActivity.this, DateOcrScanActivity.class);
+                    intent.putExtra(DateOcrScanActivity.EXTRA_DATE_ONLY_MODE, true);
+                    if (isDebuggable() && getIntent() != null) {
+                        String qaVideoPath = FoodItem.cleanText(
+                                getIntent().getStringExtra(EXTRA_QA_REPLENISHMENT_VIDEO_PATH)
+                        );
+                        if (qaVideoPath.length() > 0) {
+                            intent.putExtra(DateOcrScanActivity.EXTRA_QA_VIDEO_PATH, qaVideoPath);
+                        }
+                    }
+                    startActivityForResult(intent, REQUEST_REPLENISHMENT_OCR);
+                }
+            });
+        }
+
         dialog.setOnShowListener(new DialogInterface.OnShowListener() {
             @Override
             public void onShow(DialogInterface dialogInterface) {
@@ -3236,6 +3377,13 @@ public final class MainActivity extends Activity {
                         toast(isEdit ? "已更新食品" : "已新增食品");
                     }
                 });
+            }
+        });
+
+        dialog.setOnDismissListener(new DialogInterface.OnDismissListener() {
+            @Override
+            public void onDismiss(DialogInterface dialogInterface) {
+                pendingReplenishmentRecognitionTarget = null;
             }
         });
 
@@ -3420,9 +3568,8 @@ public final class MainActivity extends Activity {
             labels = new String[] { "补货", "复制当前批次", "恢复在库", "删除" };
             actions = new String[] { FOOD_ACTION_REPLENISH, FOOD_ACTION_COPY, FOOD_ACTION_RESTORE, FOOD_ACTION_DELETE_CONFIRM };
         } else {
-            labels = new String[] { "减少 1", "剩余归 0", "补货", "复制当前批次", "编辑", "标记已用完", "删除" };
+            labels = new String[] { "剩余归 0", "补货", "复制当前批次", "编辑", "标记已用完", "删除" };
             actions = new String[] {
-                    FOOD_ACTION_DECREASE_ONE,
                     FOOD_ACTION_ZERO_REMAINING,
                     FOOD_ACTION_REPLENISH,
                     FOOD_ACTION_COPY,

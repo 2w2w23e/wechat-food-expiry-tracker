@@ -1213,6 +1213,37 @@ public final class LocalLogicTest {
             }
         });
 
+        test("Replenishment camera recognition only merges the new batch dates", new TestCase() {
+            public void run() {
+                FoodItem source = food("Milk", "dairy", "refrigerated", "2026-06-01", "2026-07-01", 2);
+                source.productProfileId = "profile-camera";
+                source.barcode = "4006381333931";
+                FoodItem draft = ReplenishmentDraftFactory.createDraft(source);
+
+                FoodItem recognized = new FoodItem();
+                recognized.name = "wrong OCR name";
+                recognized.barcode = "6901234567892";
+                recognized.productionDate = "2026-07-18";
+                recognized.shelfLifeValue = Integer.valueOf(30);
+                recognized.shelfLifeUnit = "day";
+                recognized.expiryDate = "2026-08-17";
+                recognized.dateSource = "calculated";
+
+                FoodItem merged = ReplenishmentRecognitionMerge.mergeDates(draft, recognized);
+                assertEquals("Milk", merged.name);
+                assertEquals("4006381333931", merged.barcode);
+                assertEquals("profile-camera", merged.productProfileId);
+                assertEquals("2026-07-18", merged.productionDate);
+                assertEquals(Integer.valueOf(30), merged.shelfLifeValue);
+                assertEquals("2026-08-17", merged.expiryDate);
+                assertTrue(
+                        ReplenishmentRecognitionMerge.hasRecognizedDate(recognized),
+                        "recognized batch dates should be accepted"
+                );
+                assertEquals("2026-06-01", source.productionDate);
+            }
+        });
+
         test("Editing reusable identity detaches one batch without splitting equivalent GTIN", new TestCase() {
             public void run() {
                 FoodItem original = food("Milk", "dairy", "refrigerated", "2026-07-01", "2026-07-20", 1);
@@ -2179,6 +2210,20 @@ public final class LocalLogicTest {
                 assertFalse(RecognitionFrameSelector.shouldRunHeavyCameraOcr(
                         5, 0, 0.90d, 0.90d, 0d, true
                 ), "a complete stable date should stop heavy OCR");
+            }
+        });
+
+        test("RecognitionFrameSelector gives date-only camera a faster bounded search", new TestCase() {
+            public void run() {
+                assertTrue(RecognitionFrameSelector.shouldRunHeavyCameraOcr(
+                        3, 1, 0.70d, 0.65d, 0.02d, false, true
+                ), "date-only replenishment should inspect a new clear frame without waiting two frames");
+                assertTrue(RecognitionFrameSelector.shouldRunHeavyCameraOcr(
+                        8, 6, 0.70d, 0.65d, 0.02d, false, true
+                ), "date-only mode should retain a seventh pass for low-contrast printing");
+                assertFalse(RecognitionFrameSelector.shouldRunHeavyCameraOcr(
+                        9, 7, 0.90d, 0.90d, 0d, false, true
+                ), "date-only heavy OCR must remain bounded");
             }
         });
 

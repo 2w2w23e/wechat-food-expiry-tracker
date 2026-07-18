@@ -89,10 +89,33 @@ final class RecognitionFrameSelector {
             double glareRatio,
             boolean hasCompleteDateCandidate
     ) {
-        if (hasCompleteDateCandidate || completedHeavyPasses >= 5 || analyzedFrames < 2) {
+        return shouldRunHeavyCameraOcr(
+                analyzedFrames,
+                completedHeavyPasses,
+                visualScore,
+                sharpness,
+                glareRatio,
+                hasCompleteDateCandidate,
+                false
+        );
+    }
+
+    static boolean shouldRunHeavyCameraOcr(
+            int analyzedFrames,
+            int completedHeavyPasses,
+            double visualScore,
+            double sharpness,
+            double glareRatio,
+            boolean hasCompleteDateCandidate,
+            boolean dateOnlyMode
+    ) {
+        int maxPasses = dateOnlyMode ? 7 : 5;
+        if (hasCompleteDateCandidate || completedHeavyPasses >= maxPasses || analyzedFrames < 2) {
             return false;
         }
-        int earliestFrame = 2 + (completedHeavyPasses * 2);
+        int earliestFrame = dateOnlyMode
+                ? 2 + completedHeavyPasses
+                : 2 + (completedHeavyPasses * 2);
         if (analyzedFrames < earliestFrame) {
             return false;
         }
