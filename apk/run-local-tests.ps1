@@ -70,6 +70,7 @@ $MainSources = @(
   'BarcodeHistoryItem.java',
   'ProductProfileIndex.java',
   'ReplenishmentDraftFactory.java',
+  'ReplenishmentRecognitionMerge.java',
   'FoodExcelExporter.java',
   'FoodExcelImporter.java',
   'FoodIdGenerator.java',
