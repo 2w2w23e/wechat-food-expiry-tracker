@@ -73,6 +73,14 @@ public final class LocalLogicTest {
                 assertFalse(BarcodeUtils.isSupportedProductCode("1234567"), "unsupported length should be rejected");
                 assertEquals("04006381333931", BarcodeUtils.toGtin14("4006381333931"));
                 assertEquals("4006381333931", BarcodeUtils.stripLeadingGtinZero("04006381333931"));
+                assertEquals("6926265313430", BarcodeUtils.recoverEan13FromPrintedDigits("6 926265 313439"));
+                assertEquals("6926265313430", BarcodeUtils.recoverEan13FromPrintedDigits("692626531343"));
+                assertEquals("", BarcodeUtils.recoverEan13FromPrintedDigits("202601205742"));
+                assertEquals("", BarcodeUtils.recoverEan13FromPrintedDigits("批次 692626531343"));
+                UnifiedRecognitionStabilizer barcodeStabilizer = new UnifiedRecognitionStabilizer();
+                UnifiedRecognitionStabilizer.Snapshot promoted =
+                        barcodeStabilizer.promoteChecksumConstrainedBarcode("6926265313430");
+                assertEquals("6926265313430", promoted.stableBarcode);
             }
         });
 
@@ -84,6 +92,33 @@ public final class LocalLogicTest {
                 assertEquals("04006381333931", BarcodeUtils.extractProductCode("https://id.gs1.org/01/04006381333931/10/LOT123"));
                 assertEquals("04006381333931", BarcodeUtils.extractProductCode("(01)04006381333931(17)260101"));
                 assertEquals("", BarcodeUtils.extractProductCode("no supported product code here 1234567"));
+                assertEquals("036000291452", BarcodeUtils.productCodeFromScannerValue(
+                        "036000291452", true
+                ));
+                assertEquals("", BarcodeUtils.productCodeFromScannerValue(
+                        "599847218414", false
+                ));
+                assertEquals("4006381333931", BarcodeUtils.productCodeFromScannerValue(
+                        "4006381333931", false
+                ));
+                assertEquals("036000291452", BarcodeUtils.productCodeFromScannerValue(
+                        "https://example.test/item?gtin=036000291452", false
+                ));
+            }
+        });
+
+        test("VerifiedBarcodeCatalog provides the precise offline video sample identity", new TestCase() {
+            public void run() {
+                VerifiedBarcodeCatalog.Entry entry = VerifiedBarcodeCatalog.find("6920-4599-40310");
+                assertTrue(entry != null, "verified sample barcode should be available offline");
+                assertEquals("康师傅喝开水", entry.name);
+                assertEquals("熟水饮用水", entry.generalName);
+                assertEquals("550毫升", entry.specification);
+                VerifiedBarcodeCatalog.Entry chips = VerifiedBarcodeCatalog.find("6926265313430");
+                assertTrue(chips != null, "shelf-life sample barcode should be available offline");
+                assertEquals("上好佳薯条", chips.name);
+                assertEquals("原味 80克", chips.specification);
+                assertEquals(null, VerifiedBarcodeCatalog.find("4006381333931"));
             }
         });
 
@@ -917,6 +952,7 @@ public final class LocalLogicTest {
         });
 
         runFoodStoreMigrationTestsIfAvailable();
+        runProductProfileAndBatchTests();
         runBarcodeHistoryTestsIfAvailable();
         runFoodExcelExporterTests();
         runFoodExcelImporterTests();
@@ -1030,6 +1066,199 @@ public final class LocalLogicTest {
                 assertEquals("manual", fieldText(foods.get(0), "dateSource"));
             }
         });
+
+        test("FoodStoreMigration upgrades v1 records without losing batch data", new TestCase() {
+            public void run() {
+                String raw = "{\"schemaVersion\":1,\"foods\":[{"
+                        + "\"id\":\"legacy-batch\",\"name\":\"Legacy milk\","
+                        + "\"category\":\"dairy\",\"quantity\":3,\"remainingQuantity\":2,"
+                        + "\"productionDate\":\"2026-07-01\",\"expiryDate\":\"2026-07-20\","
+                        + "\"dateSource\":\"manual\",\"notes\":\"保留这段备注\\n条码：4006381333931\"}]}";
+
+                try {
+                    FoodStoreMigration.MigrationResult result = FoodStoreMigration.migrate(raw, 2);
+                    assertTrue(result.needsWriteBack, "v1 data should be written back as v2");
+                    assertEquals(1, result.foods.size());
+                    FoodItem migrated = result.foods.get(0);
+                    assertEquals("legacy-batch", migrated.id);
+                    assertEquals("Legacy milk", migrated.name);
+                    assertEquals("2026-07-01", migrated.productionDate);
+                    assertEquals("2026-07-20", migrated.expiryDate);
+                    assertEquals("4006381333931", migrated.barcode);
+                    assertTrue(migrated.productProfileId.startsWith("profile_"), "migration should create a stable profile id");
+                    assertTrue(migrated.notes.contains("保留这段备注"), "migration must preserve original notes");
+                    assertEquals(3.0, migrated.quantity);
+                    assertEquals(2.0, migrated.remainingQuantity);
+                } catch (Exception error) {
+                    throw new AssertionError("v1 migration failed: " + error.getMessage());
+                }
+            }
+        });
+    }
+
+    private void runProductProfileAndBatchTests() {
+        test("ProductProfileIndex keeps multiple products for one barcode", new TestCase() {
+            public void run() {
+                FoodItem first = food("Milk", "dairy", "refrigerated", "2026-07-01", "2026-07-20", 1);
+                first.id = "batch-a";
+                first.productProfileId = "profile-a";
+                first.barcode = "4006381333931";
+                FoodItem second = food("Milk gift box", "dairy", "refrigerated", "2026-07-02", "2026-07-22", 1);
+                second.id = "batch-b";
+                second.productProfileId = "profile-b";
+                second.barcode = "4006381333931";
+                FoodItem newerBatch = first.copyAsNewRecord("batch-c", "2026-07-17T08:00:00+0800");
+
+                List<FoodItem> matches = ProductProfileIndex.fromFoods(
+                        Arrays.asList(first, second, newerBatch)
+                ).findByBarcode("4006381333931");
+                assertEquals(2, matches.size());
+                assertEquals("profile-a", matches.get(0).productProfileId);
+                assertEquals("batch-c", matches.get(0).id);
+                assertEquals("profile-b", matches.get(1).productProfileId);
+                assertEquals(2, ProductProfileIndex.fromFoods(
+                        Arrays.asList(first, second, newerBatch)
+                ).findByBarcode("04006381333931").size());
+            }
+        });
+
+        test("ProductProfileIndex collapses equivalent legacy profiles", new TestCase() {
+            public void run() {
+                FoodItem older = food("Drinking water", "drink", "room_temp", "", "", 1);
+                older.id = "legacy-batch-a";
+                older.productProfileId = "legacy-profile-a";
+                older.barcode = "6920459940310";
+                older.updatedAt = "2026-07-10T08:00:00+0800";
+                FoodItem newer = older.copy();
+                newer.id = "legacy-batch-b";
+                newer.productProfileId = "legacy-profile-b";
+                newer.updatedAt = "2026-07-11T08:00:00+0800";
+
+                List<FoodItem> matches = ProductProfileIndex.fromFoods(
+                        Arrays.asList(older, newer)
+                ).findByBarcode("6920459940310");
+                assertEquals(1, matches.size());
+                assertEquals("legacy-batch-b", matches.get(0).id);
+            }
+        });
+
+        test("ProductProfileIndex falls back to newest createdAt when updatedAt is empty", new TestCase() {
+            public void run() {
+                FoodItem older = food("Milk", "dairy", "refrigerated", "2026-07-01", "2026-07-20", 1);
+                older.id = "batch-old";
+                older.productProfileId = "profile-created-at";
+                older.barcode = "4006381333931";
+                older.createdAt = "2026-07-10T08:00:00+0800";
+                older.updatedAt = "";
+                FoodItem newer = older.copy();
+                newer.id = "batch-new";
+                newer.createdAt = "2026-07-11T08:00:00+0800";
+
+                List<FoodItem> matches = ProductProfileIndex.fromFoods(
+                        Arrays.asList(older, newer)
+                ).findByBarcode("4006381333931");
+                assertEquals(1, matches.size());
+                assertEquals("batch-new", matches.get(0).id);
+            }
+        });
+
+        test("ProductProfileIndex prefers the latest updatedAt over batch creation order", new TestCase() {
+            public void run() {
+                FoodItem first = food("Milk", "dairy", "refrigerated", "2026-07-01", "2026-07-20", 1);
+                first.id = "batch-created-later";
+                first.productProfileId = "profile-updated-at";
+                first.barcode = "4006381333931";
+                first.createdAt = "2026-07-12T08:00:00+0800";
+                first.updatedAt = "2026-07-12T08:00:00+0800";
+                FoodItem editedOlderBatch = first.copy();
+                editedOlderBatch.id = "batch-edited-latest";
+                editedOlderBatch.createdAt = "2026-07-01T08:00:00+0800";
+                editedOlderBatch.updatedAt = "2026-07-13T08:00:00+0800";
+
+                List<FoodItem> matches = ProductProfileIndex.fromFoods(
+                        Arrays.asList(first, editedOlderBatch)
+                ).findByBarcode("4006381333931");
+                assertEquals(1, matches.size());
+                assertEquals("batch-edited-latest", matches.get(0).id);
+            }
+        });
+
+        test("Replenishment creates an empty independent batch draft", new TestCase() {
+            public void run() {
+                FoodItem source = food("Milk", "dairy", "refrigerated", "2026-07-01", "2026-07-20", 4);
+                source.id = "old-batch";
+                source.productProfileId = "profile-a";
+                source.barcode = "4006381333931";
+                source.remainingQuantity = 2;
+                source.openedDate = "2026-07-10";
+                source.notes = "old batch note";
+                source.isFinished = true;
+                source.finishedAt = "2026-07-16T08:00:00+0800";
+                source.smartReminderOffsets.add(Integer.valueOf(3));
+
+                FoodItem draft = ReplenishmentDraftFactory.createDraft(source);
+                assertEquals("", draft.id);
+                assertEquals("profile-a", draft.productProfileId);
+                assertEquals("4006381333931", draft.barcode);
+                assertEquals("Milk", draft.name);
+                assertEquals("", draft.productionDate);
+                assertEquals("", draft.expiryDate);
+                assertEquals("", draft.openedDate);
+                assertEquals("", draft.notes);
+                assertEquals(0.0, draft.quantity);
+                assertEquals(0.0, draft.remainingQuantity);
+                assertFalse(draft.isFinished, "new batch must not inherit finished state");
+                assertEquals(4.0, source.quantity);
+                assertEquals("2026-07-01", source.productionDate);
+            }
+        });
+
+        test("Editing reusable identity detaches one batch without splitting equivalent GTIN", new TestCase() {
+            public void run() {
+                FoodItem original = food("Milk", "dairy", "refrigerated", "2026-07-01", "2026-07-20", 1);
+                original.productProfileId = "profile-a";
+                original.barcode = "4006381333931";
+                original.unit = "box";
+                original.location = "fridge";
+
+                FoodItem datesOnly = original.copy();
+                datesOnly.productionDate = "2026-07-02";
+                assertFalse(
+                        ReplenishmentDraftFactory.hasReusableIdentityChanged(original, datesOnly),
+                        "batch-only dates must keep the product profile"
+                );
+                assertEquals(
+                        "profile-a",
+                        ReplenishmentDraftFactory.resolveProductProfileId(original, datesOnly, "profile-generated")
+                );
+
+                FoodItem equivalentGtin = original.copy();
+                equivalentGtin.barcode = "04006381333931";
+                assertFalse(
+                        ReplenishmentDraftFactory.hasReusableIdentityChanged(original, equivalentGtin),
+                        "equivalent GTIN representations must keep the product profile"
+                );
+
+                FoodItem storageChanged = original.copy();
+                storageChanged.storageMethod = "room_temp";
+                storageChanged.location = "pantry";
+                assertFalse(
+                        ReplenishmentDraftFactory.hasReusableIdentityChanged(original, storageChanged),
+                        "batch storage state must not split one product profile"
+                );
+
+                FoodItem renamed = original.copy();
+                renamed.name = "Milk gift box";
+                assertTrue(
+                        ReplenishmentDraftFactory.hasReusableIdentityChanged(original, renamed),
+                        "a changed reusable identity must detach this batch"
+                );
+                assertEquals(
+                        "profile-generated",
+                        ReplenishmentDraftFactory.resolveProductProfileId(original, renamed, "profile-generated")
+                );
+            }
+        });
     }
 
     private void runFoodExcelExporterTests() {
@@ -1045,6 +1274,8 @@ public final class LocalLogicTest {
                 item.location = "fridge";
                 item.unit = "box";
                 item.notes = "line 1 & line 2";
+                item.productProfileId = "profile-xlsx";
+                item.barcode = "4006381333931";
                 item.createdAt = "2026-07-05T08:30:00+0800";
                 item.updatedAt = item.createdAt;
 
@@ -1072,6 +1303,9 @@ public final class LocalLogicTest {
                     assertTrue(foodsSheet.indexOf("<t>2026-07-08</t>") >= 0, "foods sheet should include expiryDate value");
                     assertTrue(foodsSheet.indexOf("QA Milk &amp; &lt;Fresh&gt;") >= 0, "foods sheet should escape XML text");
                     assertTrue(foodsSheet.indexOf("<t>xlsx-1</t>") >= 0, "foods sheet should include item id");
+                    assertTrue(foodsSheet.indexOf("<t>productProfileId</t>") >= 0, "foods sheet should include product profile header");
+                    assertTrue(foodsSheet.indexOf("<t>barcode</t>") >= 0, "foods sheet should include barcode header");
+                    assertTrue(foodsSheet.indexOf("<t>profile-xlsx</t>") >= 0, "foods sheet should include product profile value");
 
                     String readmeSheet = entries.get("xl/worksheets/sheet2.xml");
                     assertTrue(readmeSheet.indexOf("OCR or AI results must never be auto-saved") >= 0,
@@ -1283,6 +1517,135 @@ public final class LocalLogicTest {
             }
         });
 
+        test("FoodExcelImporter round-trips product profiles and barcodes", new TestCase() {
+            public void run() {
+                FoodItem item = food("Profile milk", "dairy", "refrigerated", "2026-07-01", "2026-07-20", 1);
+                item.productProfileId = "profile-round-trip";
+                item.barcode = "4006381333931";
+                FoodExcelImporter.ImportPreview preview = readWorkbookPreview(Arrays.asList(item));
+                assertEquals(1, preview.importableRows);
+                FoodItem imported = preview.importableFoods().get(0);
+                assertEquals("profile-round-trip", imported.productProfileId);
+                assertEquals("4006381333931", imported.barcode);
+            }
+        });
+
+        test("FoodExcelImporter keeps a conflicting imported profile independent during append", new TestCase() {
+            public void run() {
+                FoodItem first = food("Milk", "dairy", "refrigerated", "2026-07-01", "2026-07-20", 1);
+                first.productProfileId = "profile-import";
+                first.barcode = "4006381333931";
+                FoodItem second = food("Milk", "dairy", "refrigerated", "2026-07-02", "2026-07-21", 1);
+                second.productProfileId = "profile-import";
+                second.barcode = "4006381333931";
+                FoodItem existing = food("Existing", "other", "room_temp", "", "", 1);
+                existing.productProfileId = "profile-import";
+
+                FoodExcelImporter.ImportPreview preview = readWorkbookPreview(Arrays.asList(first, second));
+                List<FoodItem> appended = preview.importableFoods(false, Arrays.asList(existing));
+                assertEquals(2, appended.size());
+                assertEquals(appended.get(0).productProfileId, appended.get(1).productProfileId);
+                assertFalse("profile-import".equals(appended.get(0).productProfileId),
+                        "append must not collide with an existing local profile");
+            }
+        });
+
+        test("FoodExcelImporter reuses an equivalent existing profile during append", new TestCase() {
+            public void run() {
+                FoodItem importedBatch = food("Milk", "dairy", "refrigerated", "2026-07-02", "2026-07-21", 1);
+                importedBatch.productProfileId = "profile-reuse";
+                importedBatch.barcode = "4006381333931";
+                FoodItem existing = food("Milk", "dairy", "refrigerated", "2026-07-01", "2026-07-20", 1);
+                existing.productProfileId = "profile-reuse";
+                existing.barcode = "04006381333931";
+
+                FoodExcelImporter.ImportPreview preview = readWorkbookPreview(Arrays.asList(importedBatch));
+                List<FoodItem> appended = preview.importableFoods(false, Arrays.asList(existing));
+                assertEquals(1, appended.size());
+                assertEquals("profile-reuse", appended.get(0).productProfileId);
+            }
+        });
+
+        test("FoodExcelImporter never merges different profiles that share one barcode", new TestCase() {
+            public void run() {
+                FoodItem imported = food("Milk gift box", "dairy", "refrigerated", "2026-07-02", "2026-07-21", 1);
+                imported.productProfileId = "profile-gift";
+                imported.barcode = "4006381333931";
+                FoodItem existing = food("Milk", "dairy", "refrigerated", "2026-07-01", "2026-07-20", 1);
+                existing.productProfileId = "profile-plain";
+                existing.barcode = "4006381333931";
+
+                FoodExcelImporter.ImportPreview preview = readWorkbookPreview(Arrays.asList(imported));
+                List<FoodItem> appended = preview.importableFoods(false, Arrays.asList(existing));
+                assertEquals(1, appended.size());
+                assertEquals("profile-gift", appended.get(0).productProfileId);
+                assertFalse(existing.productProfileId.equals(appended.get(0).productProfileId),
+                        "same barcode must not imply the same product profile");
+            }
+        });
+
+        test("FoodExcelImporter reports conflicting barcodes for one profile", new TestCase() {
+            public void run() {
+                FoodItem first = food("Same product", "other", "room_temp", "2026-07-01", "2026-07-20", 1);
+                first.productProfileId = "profile-conflict";
+                first.barcode = "4006381333931";
+                FoodItem second = food("Same product", "other", "room_temp", "2026-07-01", "2026-07-20", 1);
+                second.productProfileId = "profile-conflict";
+                second.barcode = "96385074";
+
+                FoodExcelImporter.ImportPreview preview = readWorkbookPreview(Arrays.asList(first, second));
+                assertEquals(2, preview.errorRows);
+                assertEquals(0, preview.importableRows);
+                assertTrue(preview.rows.get(0).errors.get(0).contains("多个条码"), "conflict should be explained");
+            }
+        });
+
+        test("FoodExcelImporter rejects stable identity conflicts within one profile", new TestCase() {
+            public void run() {
+                FoodItem first = food("Plain milk", "dairy", "refrigerated", "2026-07-01", "2026-07-20", 1);
+                first.productProfileId = "profile-identity-conflict";
+                first.barcode = "4006381333931";
+                FoodItem second = food("Gift milk", "dairy", "refrigerated", "2026-07-02", "2026-07-21", 1);
+                second.productProfileId = "profile-identity-conflict";
+                second.barcode = "04006381333931";
+
+                FoodExcelImporter.ImportPreview preview = readWorkbookPreview(Arrays.asList(first, second));
+                assertEquals(2, preview.errorRows);
+                assertEquals(0, preview.importableRows);
+                assertTrue(preview.rows.get(0).errors.get(0).contains("商品名称"),
+                        "each conflicting row should explain the stable identity mismatch");
+                assertTrue(preview.rows.get(1).errors.get(0).contains("商品名称"),
+                        "each conflicting row should explain the stable identity mismatch");
+            }
+        });
+
+        test("FoodExcelImporter accepts equivalent EAN13 and GTIN14 for one profile", new TestCase() {
+            public void run() {
+                FoodItem first = food("Same product", "other", "room_temp", "2026-07-01", "2026-07-20", 1);
+                first.productProfileId = "profile-equivalent-gtin";
+                first.barcode = "4006381333931";
+                FoodItem second = food("Same product", "other", "room_temp", "2026-07-02", "2026-07-21", 1);
+                second.productProfileId = "profile-equivalent-gtin";
+                second.barcode = "04006381333931";
+
+                FoodExcelImporter.ImportPreview preview = readWorkbookPreview(Arrays.asList(first, second));
+                assertEquals(0, preview.errorRows);
+                assertEquals(2, preview.importableRows);
+            }
+        });
+
+        test("FoodExcelImporter rejects an invalid barcode check digit", new TestCase() {
+            public void run() {
+                FoodItem item = food("Bad barcode", "other", "room_temp", "2026-07-01", "2026-07-20", 1);
+                item.productProfileId = "profile-bad-barcode";
+                item.barcode = "4006381333932";
+                FoodExcelImporter.ImportPreview preview = readWorkbookPreview(Arrays.asList(item));
+                assertEquals(1, preview.errorRows);
+                assertEquals(0, preview.importableRows);
+                assertTrue(preview.rows.get(0).errors.get(0).contains("条码"), "invalid barcode should be explained");
+            }
+        });
+
         test("FoodExcelImporter rejects non-xlsx content", new TestCase() {
             public void run() {
                 try {
@@ -1311,6 +1674,45 @@ public final class LocalLogicTest {
                 assertTrue(result.productionDates.get(0).candidateOnly, "production candidate must not be saved directly");
                 assertTrue(result.shelfLives.get(0).candidateOnly, "shelf life candidate must not be saved directly");
                 assertTrue(result.calculatedExpiryDates.get(0).calculated, "calculated expiry should be marked");
+            }
+        });
+
+        test("DateOcrParser repairs a missing month classifier only with package date context", new TestCase() {
+            public void run() {
+                DateOcrParser.Result repaired = DateOcrParser.parse(
+                        "91月\n生产日期见白色区域 Y.M.D\n2026012057420",
+                        "2026-07-18"
+                );
+                assertEquals(1, repaired.shelfLives.size());
+                assertEquals(9, repaired.shelfLives.get(0).value);
+                assertEquals("month", repaired.shelfLives.get(0).unit);
+                assertEquals("2026-10-20", repaired.calculatedExpiryDates.get(0).normalized);
+
+                DateOcrParser.Result age = DateOcrParser.parse(
+                        "适用年龄 91月",
+                        "2026-07-18"
+                );
+                assertEquals(0, age.shelfLives.size());
+            }
+        });
+
+        test("Video completion consensus keeps repeated production with OCR shelf life", new TestCase() {
+            public void run() {
+                String transcript = "20200120S7420\n202001207420\n"
+                        + "2026012057420\n20260120S7420\n20260120S7420\n"
+                        + "期9个月\n生产日期见白色区域 Y.M.D";
+                DateOcrParser.Result selected =
+                        DateEvidencePolicy.chooseVideoCompletionEvidence(transcript, null);
+                assertEquals(1, selected.productionDates.size());
+                assertEquals("2026-01-20", selected.productionDates.get(0).normalized);
+                assertEquals(9, selected.shelfLives.get(0).value);
+                assertEquals("2026-10-20", selected.calculatedExpiryDates.get(0).normalized);
+
+                UnifiedRecognitionStabilizer stabilizer = new UnifiedRecognitionStabilizer();
+                UnifiedRecognitionStabilizer.Snapshot snapshot =
+                        stabilizer.promoteCalculatedDateForConfirmation(selected);
+                assertEquals("2026-01-20", snapshot.stableDateVote.productionDate.value);
+                assertEquals("2026-10-20", snapshot.stableDateVote.calculatedExpiryDate.value);
             }
         });
 
@@ -1350,6 +1752,17 @@ public final class LocalLogicTest {
                 DateOcrParser.Result result = DateOcrParser.parse("条码 6936832557442 保质期0天 日期 2026-02-30");
 
                 assertFalse(result.hasAnyCandidate(), "barcode-like and invalid data should not create candidates");
+            }
+        });
+
+        test("DateOcrParser does not treat daily meal copy as shelf life", new TestCase() {
+            public void run() {
+                DateOcrParser.Result result = DateOcrParser.parse(
+                        "一日三餐尽享口福\n20260612/2027061"
+                );
+
+                assertEquals(0, result.shelfLives.size());
+                assertEquals(0, result.calculatedExpiryDates.size());
             }
         });
 
@@ -1618,6 +2031,21 @@ public final class LocalLogicTest {
             }
         });
 
+        test("DateOcrParser repairs a noisy embossed pair using shelf-life constraints", new TestCase() {
+            public void run() {
+                DateOcrParser.Result result = DateOcrParser.parse(
+                        "保质期：9个月\n"
+                                + "026060810845183\n"
+                                + "保质期120270887",
+                        "2026-07-17"
+                );
+
+                assertEquals("2026-06-08", result.productionDates.get(0).normalized);
+                assertEquals("2027-03-07", result.expiryDates.get(0).normalized);
+                assertEquals(9, result.shelfLives.get(0).value);
+            }
+        });
+
         test("DateOcrParser recovers shelf life when Chinese hint is damaged by OCR", new TestCase() {
             public void run() {
                 DateOcrParser.Result result = DateOcrParser.parse(
@@ -1643,6 +2071,48 @@ public final class LocalLogicTest {
                 DateOcrParser.Result monthReadAsDay = DateOcrParser.parse("保期9个日");
                 assertEquals(9, monthReadAsDay.shelfLives.get(0).value);
                 assertEquals("month", monthReadAsDay.shelfLives.get(0).unit);
+
+                DateOcrParser.Result clippedHintMonthReadAsDay =
+                        DateOcrParser.parse("期9个日");
+                assertEquals(9, clippedHintMonthReadAsDay.shelfLives.get(0).value);
+                assertEquals("month", clippedHintMonthReadAsDay.shelfLives.get(0).unit);
+
+                DateOcrParser.Result damagedUnitSupportedByDaySpan = DateOcrParser.parse(
+                        "生产日期 2026-01-20\n有效期至 2026-01-29\n期9个日"
+                );
+                assertEquals("day", damagedUnitSupportedByDaySpan.shelfLives.get(0).unit);
+                assertEquals(0.88d, damagedUnitSupportedByDaySpan.shelfLives.get(0).confidence);
+
+                DateOcrParser.Result damagedUnitSupportedByMonthSpan = DateOcrParser.parse(
+                        "生产日期 2026-01-20\n有效期至 2026-10-20\n期9个日"
+                );
+                assertEquals("month", damagedUnitSupportedByMonthSpan.shelfLives.get(0).unit);
+                assertEquals(0.88d, damagedUnitSupportedByMonthSpan.shelfLives.get(0).confidence);
+
+                DateOcrParser.Result exactDayUnit = DateOcrParser.parse("保质期9日");
+                assertEquals("day", exactDayUnit.shelfLives.get(0).unit);
+
+                DateOcrParser.Result classifierWithExactDay =
+                        DateOcrParser.parse("保质期9个天");
+                assertEquals("day", classifierWithExactDay.shelfLives.get(0).unit);
+
+                assertFalse(
+                        DateOcrParser.parse("儿童适用期9个月").hasAnyCandidate(),
+                        "age applicability period must not become shelf life"
+                );
+                assertFalse(
+                        DateOcrParser.parse("活动期9个日").hasAnyCandidate(),
+                        "promotion period must not become shelf life"
+                );
+
+                assertFalse(
+                        DateOcrParser.parse("期540个日").hasAnyCandidate(),
+                        "an impossible month count needs date evidence instead of a guessed day unit"
+                );
+                DateOcrParser.Result largeValueSupportedByDaySpan = DateOcrParser.parse(
+                        "生产日期 2025-01-01\n有效期至 2026-06-25\n期540个日"
+                );
+                assertEquals("day", largeValueSupportedByDaySpan.shelfLives.get(0).unit);
 
                 DateOcrParser.Result supplemented = DateOcrParser.parseFocusedWithDateOnlySupplement(
                         "保廣明9个",
@@ -1677,6 +2147,41 @@ public final class LocalLogicTest {
     }
 
     private void runRecognitionFrameSelectorTests() {
+        test("RecognitionFrameSelector schedules progressive camera OCR without weakening voting", new TestCase() {
+            public void run() {
+                assertFalse(RecognitionFrameSelector.shouldRunHeavyCameraOcr(
+                        1, 0, 0.9d, 0.9d, 0d, false
+                ), "the first frame should stay on the fast recognition path");
+                assertTrue(RecognitionFrameSelector.shouldRunHeavyCameraOcr(
+                        2, 0, 0.60d, 0.55d, 0.03d, false
+                ), "the second clear frame should start detector OCR quickly");
+                assertFalse(RecognitionFrameSelector.shouldRunHeavyCameraOcr(
+                        3, 1, 0.70d, 0.65d, 0.02d, false
+                ), "the next detector pass should wait for a distinct frame");
+                assertTrue(RecognitionFrameSelector.shouldRunHeavyCameraOcr(
+                        4, 1, 0.70d, 0.65d, 0.02d, false
+                ), "the fourth clear frame should run enhanced confirmation");
+                assertTrue(RecognitionFrameSelector.shouldRunHeavyCameraOcr(
+                        6, 2, 0.90d, 0.90d, 0d, false
+                ), "a later clear frame may supply another stable vote");
+                assertTrue(RecognitionFrameSelector.shouldRunHeavyCameraOcr(
+                        8, 3, 0.90d, 0.90d, 0d, false
+                ), "late label regions must remain eligible");
+                assertTrue(RecognitionFrameSelector.shouldRunHeavyCameraOcr(
+                        10, 4, 0.90d, 0.90d, 0d, false
+                ), "the final bounded pass may capture a late date");
+                assertFalse(RecognitionFrameSelector.shouldRunHeavyCameraOcr(
+                        12, 5, 0.90d, 0.90d, 0d, false
+                ), "heavy OCR must stop after five passes");
+                assertFalse(RecognitionFrameSelector.shouldRunHeavyCameraOcr(
+                        4, 0, 0.25d, 0.10d, 0.45d, false
+                ), "poor frames must not consume the heavy OCR budget");
+                assertFalse(RecognitionFrameSelector.shouldRunHeavyCameraOcr(
+                        5, 0, 0.90d, 0.90d, 0d, true
+                ), "a complete stable date should stop heavy OCR");
+            }
+        });
+
         test("RecognitionFrameSelector normalizes quality score boundaries", new TestCase() {
             public void run() {
                 double ideal = RecognitionFrameSelector.qualityScore(
@@ -1915,8 +2420,8 @@ public final class LocalLogicTest {
                 assertEquals(null, result.shelfLife);
                 assertEquals(null, result.calculatedExpiryDate);
 
-                frames.set(1, frames.get(0));
-                frames.set(2, frames.get(0));
+                frames.set(1, DateOcrParser.parse("20260120S7420 保质期9个日"));
+                frames.set(2, DateOcrParser.parse("20260120S7420 保期9个节"));
                 result = DateOcrFrameVoter.vote(frames, 3);
                 assertEquals(9, result.shelfLife.value);
                 assertEquals("month", result.shelfLife.unit);
@@ -1932,6 +2437,43 @@ public final class LocalLogicTest {
                 DateOcrFrameVoter.VoteResult corrected = DateOcrFrameVoter.vote(noisy, 3);
                 assertEquals(9, corrected.shelfLife.value);
                 assertEquals("month", corrected.shelfLife.unit);
+            }
+        });
+
+        test("DateOcrFrameVoter flags direct expiry and shelf-life conflicts", new TestCase() {
+            public void run() {
+                List<DateOcrParser.Result> frames = new ArrayList<DateOcrParser.Result>();
+                String conflicting = "生产日期 2026-01-20 有效期至 2026-01-29 保质期9个月";
+                frames.add(DateOcrParser.parse(conflicting));
+                frames.add(DateOcrParser.parse(conflicting));
+
+                DateOcrFrameVoter.VoteResult result = DateOcrFrameVoter.vote(frames, 2);
+                assertTrue(result.hasConflict, "inconsistent explicit and calculated expiry must be reviewed");
+                assertFalse(
+                        result.readyForUserConfirmation(),
+                        "conflicting date evidence must not become a ready draft"
+                );
+            }
+        });
+
+        test("DateOcrFrameVoter never derives expiry from repeated weak day noise", new TestCase() {
+            public void run() {
+                List<DateOcrParser.Result> frames = new ArrayList<DateOcrParser.Result>();
+                frames.add(DateOcrParser.parse("20260120S7420 8日"));
+                frames.add(DateOcrParser.parse("20260120S7420 8日"));
+                frames.add(DateOcrParser.parse("20260120S7420 8日"));
+
+                DateOcrFrameVoter.VoteResult noisy = DateOcrFrameVoter.vote(frames, 3);
+                assertEquals("2026-01-20", noisy.productionDate.value);
+                assertEquals(null, noisy.shelfLife);
+                assertEquals(null, noisy.calculatedExpiryDate);
+
+                frames.add(DateOcrParser.parse("20260120S7420 保质期9个日"));
+                frames.add(DateOcrParser.parse("20260120S7420 保期9个节"));
+                DateOcrFrameVoter.VoteResult corrected = DateOcrFrameVoter.vote(frames, 3);
+                assertEquals(9, corrected.shelfLife.value);
+                assertEquals("month", corrected.shelfLife.unit);
+                assertEquals("2026-10-20", corrected.calculatedExpiryDate.value);
             }
         });
 
@@ -2083,6 +2625,80 @@ public final class LocalLogicTest {
             }
         });
 
+        test("Date evidence policy rejects an impossible OCR expiry decades after production", new TestCase() {
+            public void run() {
+                DateOcrParser.Result filtered = DateEvidencePolicy.apply(
+                        DateOcrParser.parse("20260120S7420\n530108"),
+                        ""
+                );
+                assertEquals("2026-01-20", filtered.productionDates.get(0).normalized);
+                assertEquals(0, filtered.expiryDates.size());
+
+                DateOcrFrameVoter.VoteResult vote = DateOcrFrameVoter.vote(
+                        Arrays.asList(
+                                DateOcrParser.parse("生产日期 2026-01-20 有效期至 2053-01-08"),
+                                DateOcrParser.parse("生产日期 2026-01-20 有效期至 2053-01-08")
+                        )
+                );
+                assertEquals("2026-01-20", vote.productionDate.value);
+                assertEquals(null, vote.expiryDate);
+            }
+        });
+
+        test("Independent Paddle evidence corrects a one-day ML Kit expiry error", new TestCase() {
+            public void run() {
+                DateOcrParser.Result mlKit = DateEvidencePolicy.apply(
+                        DateOcrParser.parse("20260612/20270612\n270611"),
+                        "20260612/20270612\n270611"
+                );
+                DateOcrParser.Result reconciled =
+                        DateEvidencePolicy.reconcileIndependentExpiryEvidence(
+                                mlKit,
+                                "270611",
+                                0.87d
+                        );
+
+                assertEquals(1, reconciled.productionDates.size());
+                assertEquals("2026-06-12", reconciled.productionDates.get(0).normalized);
+                assertEquals(1, reconciled.expiryDates.size());
+                assertEquals("2027-06-11", reconciled.expiryDates.get(0).normalized);
+                assertTrue(
+                        reconciled.expiryDates.get(0).confidence >= 0.87d,
+                        "independent OCR confidence should be preserved"
+                );
+            }
+        });
+
+        test("Independent expiry correction rejects weak or unrelated evidence", new TestCase() {
+            public void run() {
+                DateOcrParser.Result mlKit = DateOcrParser.parse("20260612/20270612");
+
+                DateOcrParser.Result weak =
+                        DateEvidencePolicy.reconcileIndependentExpiryEvidence(
+                                mlKit,
+                                "270611",
+                                0.74d
+                        );
+                assertEquals("2027-06-12", weak.expiryDates.get(0).normalized);
+
+                DateOcrParser.Result unrelated =
+                        DateEvidencePolicy.reconcileIndependentExpiryEvidence(
+                                mlKit,
+                                "270511",
+                                0.92d
+                        );
+                assertEquals("2027-06-12", unrelated.expiryDates.get(0).normalized);
+
+                DateOcrParser.Result pastSingleDate =
+                        DateEvidencePolicy.reconcileIndependentExpiryEvidence(
+                                mlKit,
+                                "260611",
+                                0.92d
+                        );
+                assertEquals("2027-06-12", pastSingleDate.expiryDates.get(0).normalized);
+            }
+        });
+
         test("Video date evidence keeps competing expiry readings for temporal voting", new TestCase() {
             public void run() {
                 List<DateOcrParser.DateCandidate> production = Arrays.asList(
@@ -2171,6 +2787,42 @@ public final class LocalLogicTest {
                 );
                 assertEquals("2026-01-20", shelfOnly.productionDates.get(0).normalized);
                 assertEquals(9, shelfOnly.shelfLives.get(0).value);
+            }
+        });
+
+        test("Video completion merges cross-frame July 15 laser production and labeled expiry", new TestCase() {
+            public void run() {
+                String transcript = "20260608084650\n"
+                        + "2026060808461S3\n"
+                        + "保质期至 20270307\n"
+                        + "保质期至 20270307";
+
+                DateOcrParser.Result selected = DateEvidencePolicy.chooseVideoCompletionEvidence(
+                        transcript,
+                        null
+                );
+                DateOcrFrameVoter.VoteResult vote = DateOcrFrameVoter.vote(
+                        java.util.Collections.singletonList(selected),
+                        1
+                );
+
+                assertEquals("2026-06-08", vote.productionDate.value);
+                assertEquals("2027-03-07", vote.expiryDate.value);
+                assertFalse(vote.hasConflict, "cross-frame transcript should keep the labeled expiry");
+
+                String recordedTranscript = "最终可食用日期:2020-06-02 20200602 20200602 "
+                        + "保质期：9个月 026060810845183 保质期120270887 "
+                        + "2026060810848183 2026060810845183 202606080845.53";
+                DateOcrParser.Result recorded = DateEvidencePolicy.chooseVideoCompletionEvidence(
+                        recordedTranscript,
+                        DateOcrParser.parse("生产日期20260608 保质期9个月")
+                );
+                DateOcrFrameVoter.VoteResult recordedVote = DateOcrFrameVoter.vote(
+                        java.util.Collections.singletonList(recorded),
+                        1
+                );
+                assertEquals("2026-06-08", recordedVote.productionDate.value);
+                assertEquals("2027-03-07", recordedVote.expiryDate.value);
             }
         });
 
@@ -2316,6 +2968,37 @@ public final class LocalLogicTest {
     }
 
     private void runUnifiedRecognitionStabilizerTests() {
+        test("UnifiedRecognitionStabilizer retains earlier stable fields at completion", new TestCase() {
+            public void run() {
+                UnifiedRecognitionStabilizer.Snapshot earlier = new UnifiedRecognitionStabilizer.Snapshot(
+                        5,
+                        "4006381333931",
+                        2,
+                        "测试牛奶",
+                        2,
+                        null,
+                        null,
+                        "测试牛奶"
+                );
+                UnifiedRecognitionStabilizer.Snapshot emptyCompletion = new UnifiedRecognitionStabilizer.Snapshot(
+                        11,
+                        "",
+                        0,
+                        "",
+                        0,
+                        null,
+                        null,
+                        ""
+                );
+                UnifiedRecognitionStabilizer.Snapshot retained =
+                        UnifiedRecognitionStabilizer.retainStableEvidence(earlier, emptyCompletion);
+                assertEquals("4006381333931", retained.stableBarcode);
+                assertEquals("测试牛奶", retained.stablePackagingName);
+                assertTrue(retained.hasFillableCandidate(), "completion must not clear stable earlier evidence");
+                assertEquals(11, retained.frameCount);
+            }
+        });
+
         test("RecognitionTextCleaner removes screen-recorded app UI but keeps label candidates", new TestCase() {
             public void run() {
                 String cleaned = RecognitionTextCleaner.cleanForPackagingOcr(
@@ -2408,6 +3091,35 @@ public final class LocalLogicTest {
                         "the analyzer should retain the food candidate");
                 assertFalse(candidates.get(0).text.contains("糖尿病"),
                         "the analyzer must discard the medical explanation even when it is visually larger");
+
+                String packageTranscript = "COMPOUND DANSHEN DRIPPING PILLS 复方丹参酒丸 "
+                        + "本品为橙色的薄衣滴丸 除去包装后显黄棕色 "
+                        + "抵准文号 国药准 复方丹参滴丸 COMPOUND DANSHEN DRIPPING PILLS";
+                assertEquals(
+                        "复方丹参滴丸",
+                        RecognitionTextCleaner.extractProductNameFromOcr(packageTranscript)
+                );
+                assertTrue(
+                        RecognitionTextCleaner.isHighConfidenceFoodProductName("复方丹参滴丸"),
+                        "a clearly printed packaged dosage name should be eligible for confirmation"
+                );
+                assertEquals(
+                        "复方丹参滴丸",
+                        RecognitionTextCleaner.intelligentProductNameCandidate("产品批号复方丹参滴丸")
+                );
+                assertEquals(
+                        "",
+                        RecognitionTextCleaner.extractProductCodeFromOcr(
+                                "药品标识码-序列号8364642-5998472184149"
+                        )
+                );
+                assertTrue(
+                        RecognitionTextCleaner.isNonProductTraceabilityCode(
+                                "药品标识码-序列号8364642-5998472184149",
+                                "599847218414"
+                        ),
+                        "a checksum-valid substring of a drug serial must not be stored as a retail barcode"
+                );
             }
         });
 
@@ -2538,8 +3250,40 @@ public final class LocalLogicTest {
             public void run() {
                 assertEquals("喝开水", RecognitionTextCleaner.extractFoodNameFragments("遇开水").get(0));
                 assertEquals("喝开水", RecognitionTextCleaner.extractFoodNameFragments("倜开水").get(0));
+                assertEquals("薯条", RecognitionTextCleaner.intelligentProductNameCandidate("暑条"));
                 assertEquals("纯牛奶", RecognitionTextCleaner.intelligentProductNameCandidate("純牛如"));
                 assertEquals("去壳清水鹌鹑蛋", RecognitionTextCleaner.intelligentProductNameCandidate("去売清水鹌鹑蛋"));
+                assertEquals("大董老北京炸酱面", RecognitionTextCleaner.intelligentProductNameCandidate("大董老北京炸著面"));
+                assertEquals("大董老北京炸酱面", RecognitionTextCleaner.intelligentProductNameCandidate("大重老北京炸酱面"));
+                assertEquals("大董老北京炸酱面", RecognitionTextCleaner.intelligentProductNameCandidate("大疆老北京炸酱面"));
+                assertEquals(
+                        "董到家大董老北京炸酱面",
+                        RecognitionTextCleaner.intelligentProductNameCandidate("董到家大董老北京炸酱面230克")
+                );
+                assertEquals(
+                        "大董老北京炸酱面",
+                        RecognitionTextCleaner.preferredRecognizedProductName(
+                                "大董老北京炸酱面",
+                                "董到家大董老北京炸酱面230克"
+                        )
+                );
+                assertEquals(
+                        "康师傅喝开水",
+                        RecognitionTextCleaner.preferredRecognizedProductName(
+                                "饮用水",
+                                "康师傅喝开水"
+                        )
+                );
+                assertEquals(
+                        "康师傅喝开水",
+                        RecognitionTextCleaner.preferredRecognizedProductName(
+                                "喝开水",
+                                "康师傅喝开水"
+                        )
+                );
+                assertEquals("去壳清水鹌鹑蛋", RecognitionTextCleaner.intelligentProductNameCandidate("去酒鹌鹑蛋"));
+                assertEquals("果汁茶饮料", RecognitionTextCleaner.intelligentProductNameCandidate("粿汁茶饮E"));
+                assertEquals("果汁", RecognitionTextCleaner.intelligentProductNameCandidate("動ue粿汁"));
                 assertEquals("天然水", RecognitionTextCleaner.intelligentProductNameCandidate("文用天然水 1.31魚天繁水"));
                 assertTrue(RecognitionTextCleaner.extractFoodNameFragments("饮用纯净水").contains("饮用纯净水"),
                         "Chinese water categories should remain available without inventing a brand");
@@ -2751,6 +3495,53 @@ public final class LocalLogicTest {
             }
         });
 
+        test("PackagingTextAnalyzer rejects a short OCR label residue as a brand", new TestCase() {
+            @Override
+            public void run() {
+                List<PackagingTextAnalyzer.Candidate> candidates = PackagingTextAnalyzer.analyze(Arrays.asList(
+                        new PackagingTextAnalyzer.Observation(
+                                "品名幕：去", 0.16d, 0.40d, 0.50d, 0.45d, 0.90d
+                        )
+                ));
+                assertEquals(0, candidates.size());
+            }
+        });
+
+        test("PackagingTextAnalyzer fuses split quail egg package text from one frame", new TestCase() {
+            @Override
+            public void run() {
+                List<PackagingTextAnalyzer.Candidate> candidates = PackagingTextAnalyzer.analyze(Arrays.asList(
+                        new PackagingTextAnalyzer.Observation(
+                                "去鹤蛋", 0.09d, 0.30d, 0.50d, 0.35d, 0.90d
+                        ),
+                        new PackagingTextAnalyzer.Observation(
+                                "去壳清水", 0.10d, 0.42d, 0.50d, 0.45d, 0.94d
+                        )
+                ));
+                assertTrue(!candidates.isEmpty(), "split package evidence should form one candidate");
+                assertEquals("去壳清水鹌鹑蛋", candidates.get(0).text);
+            }
+        });
+
+        test("PackagingTextAnalyzer fuses the electric lemon guava package", new TestCase() {
+            @Override
+            public void run() {
+                List<PackagingTextAnalyzer.Candidate> candidates = PackagingTextAnalyzer.analyze(Arrays.asList(
+                        new PackagingTextAnalyzer.Observation(
+                                "电汽柠", 0.18d, 0.42d, 0.32d, 0.12d, 0.92d
+                        ),
+                        new PackagingTextAnalyzer.Observation(
+                                "青柑亲莉 blue", 0.18d, 0.52d, 0.42d, 0.12d, 0.88d
+                        ),
+                        new PackagingTextAnalyzer.Observation(
+                                "气泡果汁茶果汁茶饮", 0.18d, 0.62d, 0.58d, 0.12d, 0.90d
+                        )
+                ));
+                assertTrue(!candidates.isEmpty(), "split drink evidence should form one candidate");
+                assertEquals("柠檬芭乐气泡果汁饮料", candidates.get(0).text);
+            }
+        });
+
         test("RecognitionTextCleaner rejects garbled labels and reduces duplicate food names", new TestCase() {
             public void run() {
                 assertEquals("炸酱面", RecognitionTextCleaner.intelligentProductNameCandidate(
@@ -2761,6 +3552,15 @@ public final class LocalLogicTest {
                 ));
                 assertEquals("酸菜", RecognitionTextCleaner.intelligentProductNameCandidate(
                         "发醇酸菜 區酸菜"
+                ));
+                assertEquals("酸菜", RecognitionTextCleaner.intelligentProductNameCandidate(
+                        "医酸发酵酸菜"
+                ));
+                assertEquals("酸菜", RecognitionTextCleaner.intelligentProductNameCandidate(
+                        "酸萊酸菜"
+                ));
+                assertEquals("酸菜", RecognitionTextCleaner.intelligentProductNameCandidate(
+                        "酸酸爽區酸菜"
                 ));
                 assertEquals("去壳清水鹌鹑蛋", RecognitionTextCleaner.intelligentProductNameCandidate(
                         "去壳清水鹌鹑蛋"
@@ -2935,6 +3735,48 @@ public final class LocalLogicTest {
 
                 assertEquals("冷萃乌龙茶", snapshot.stablePackagingName);
                 assertTrue(snapshot.hasFillableCandidate(), "single selected image candidate should be fillable");
+            }
+        });
+
+        test("UnifiedRecognitionStabilizer promotes one strong canonical video name for confirmation", new TestCase() {
+            public void run() {
+                UnifiedRecognitionStabilizer stabilizer = new UnifiedRecognitionStabilizer(8, 3);
+                UnifiedRecognitionStabilizer.Snapshot beforeCompletion = stabilizer.addFrame(
+                        "",
+                        DateOcrParser.parse(""),
+                        "维C水",
+                        Arrays.asList(new PackagingTextAnalyzer.Candidate("维C水", 78d)),
+                        false
+                );
+
+                assertFalse(beforeCompletion.hasStablePackagingName(),
+                        "one video frame must not lock while capture is still running");
+                UnifiedRecognitionStabilizer.Snapshot completed =
+                        stabilizer.promoteStrongPackagingCandidateForConfirmation();
+                assertEquals("维C水", completed.stablePackagingName);
+                assertTrue(completed.hasFillableCandidate(),
+                        "a canonical high-confidence model result should reach user confirmation");
+            }
+        });
+
+        test("UnifiedRecognitionStabilizer does not promote an ambiguous final name", new TestCase() {
+            public void run() {
+                UnifiedRecognitionStabilizer stabilizer = new UnifiedRecognitionStabilizer(8, 3);
+                stabilizer.addFrame(
+                        "",
+                        DateOcrParser.parse(""),
+                        "",
+                        Arrays.asList(
+                                new PackagingTextAnalyzer.Candidate("维C水", 78d),
+                                new PackagingTextAnalyzer.Candidate("酸菜", 78d)
+                        ),
+                        false
+                );
+
+                UnifiedRecognitionStabilizer.Snapshot completed =
+                        stabilizer.promoteStrongPackagingCandidateForConfirmation();
+                assertFalse(completed.hasStablePackagingName(),
+                        "near-tied product names must remain for explicit user choice");
             }
         });
 
@@ -3152,6 +3994,38 @@ public final class LocalLogicTest {
             }
         });
 
+        test("UnifiedRecognitionStabilizer rejects an implausible OCR date span before final confirmation", new TestCase() {
+            public void run() {
+                UnifiedRecognitionStabilizer stabilizer = new UnifiedRecognitionStabilizer(12, 3);
+                UnifiedRecognitionStabilizer.Snapshot wrong = stabilizer.addFrame(
+                        "",
+                        DateOcrParser.parse("20040509/20260509"),
+                        "20040509/20260509",
+                        true
+                );
+                assertFalse(wrong.hasStableDateCandidate(),
+                        "a 22-year food date span must never become fillable");
+
+                UnifiedRecognitionStabilizer.Snapshot corrected =
+                        stabilizer.promoteDirectDatePairForConfirmation(
+                                DateOcrParser.parse(
+                                        "20260608/20270307\n20260608/20270307"
+                                )
+                        );
+                assertEquals("2026-06-08", corrected.stableDateVote.productionDate.value);
+                assertEquals("2027-03-07", corrected.stableDateVote.expiryDate.value);
+            }
+        });
+
+        test("UnifiedRecognitionStabilizer can restore a strong product name from session evidence", new TestCase() {
+            public void run() {
+                UnifiedRecognitionStabilizer stabilizer = new UnifiedRecognitionStabilizer(12, 3);
+                UnifiedRecognitionStabilizer.Snapshot snapshot =
+                        stabilizer.promotePackagingCandidateForConfirmation("维C水");
+                assertEquals("维C水", snapshot.stablePackagingName);
+            }
+        });
+
         test("UnifiedRecognitionStabilizer requires stable date votes and keeps them through noise", new TestCase() {
             public void run() {
                 UnifiedRecognitionStabilizer stabilizer = new UnifiedRecognitionStabilizer(8, 3);
@@ -3210,6 +4084,7 @@ public final class LocalLogicTest {
                 );
 
                 assertEquals("测试牛奶", draft.name);
+                assertEquals("4006381333931", draft.barcode);
                 assertEquals("dairy", draft.category);
                 assertEquals("件", draft.unit);
                 assertEquals("2026-07-01", draft.productionDate);
@@ -3237,6 +4112,7 @@ public final class LocalLogicTest {
                 assertEquals("条码商品 036000291452", draft.name);
                 assertEquals("unknown", draft.dateSource);
                 assertTrue(draft.notes.contains("036000291452"), "barcode-only result should be preserved in notes");
+                assertEquals("036000291452", draft.barcode);
                 assertTrue(UnifiedRecognitionPayload.hasUsableDraft(draft), "barcode-only draft should be editable");
             }
         });
@@ -3285,7 +4161,7 @@ public final class LocalLogicTest {
                 items.add(item);
                 String raw = serializeBarcodeHistory(itemClass, items);
 
-                assertTrue(raw.contains("\"schemaVersion\":1"), "history JSON should include schemaVersion");
+                assertTrue(raw.contains("\"schemaVersion\":2"), "history JSON should include schemaVersion");
                 assertTrue(raw.contains("\\\"cold\\\""), "history JSON should escape quotes");
 
                 List<?> parsed = parseBarcodeHistory(itemClass, raw);
@@ -3329,6 +4205,9 @@ public final class LocalLogicTest {
                         "confirmed by user",
                         ""
                 );
+                setFieldText(oldItem, "productProfileId", "profile-milk");
+                setFieldText(editedItem, "productProfileId", "profile-milk");
+                setFieldText(otherItem, "productProfileId", "profile-other");
 
                 List<Object> current = new ArrayList<Object>();
                 current.add(oldItem);
@@ -3347,6 +4226,21 @@ public final class LocalLogicTest {
                 assertEquals("bottle", fieldText(result.get(0), "unit"));
                 assertEquals("2026-07-05T08:00:00+0800", fieldText(result.get(0), "updatedAt"));
                 assertEquals("96385074", fieldText(result.get(1), "barcode"));
+            }
+        });
+
+        test("BarcodeHistoryItem preserves multiple profiles for one barcode", new TestCase() {
+            public void run() {
+                Object first = newBarcodeHistoryItem(itemClass, "4006381333931", "Milk", "dairy", "box", "", "");
+                Object second = newBarcodeHistoryItem(itemClass, "4006381333931", "Gift milk", "dairy", "box", "", "");
+                setFieldText(first, "productProfileId", "profile-a");
+                setFieldText(second, "productProfileId", "profile-b");
+                List<Object> current = new ArrayList<Object>();
+                current.add(first);
+                List<?> result = upsertBarcodeHistory(itemClass, current, second, "2026-07-17T08:00:00+0800", 1);
+                assertEquals(2, result.size());
+                assertEquals("profile-b", fieldText(result.get(0), "productProfileId"));
+                assertEquals("profile-a", fieldText(result.get(1), "productProfileId"));
             }
         });
 

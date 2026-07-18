@@ -18,6 +18,7 @@ final class DateEvidencePolicy {
                 "",
                 false
         );
+        latest = retainDominantProductionDate(latest);
         DateOcrFrameVoter.VoteResult direct = DateOcrFrameVoter.vote(
                 Collections.singletonList(latest),
                 1
@@ -27,11 +28,64 @@ final class DateEvidencePolicy {
                     direct.productionDate.value,
                     direct.expiryDate.value
             );
-            if (spanDays > 0 && spanDays <= (366 * 5)) {
+            if (spanDays >= 0 && spanDays <= (366 * 5)) {
                 return latest;
             }
         }
+        if (isReliableCalculatedDate(direct)) {
+            return latest;
+        }
         return earlierFallback == null ? latest : earlierFallback;
+    }
+
+    private static DateOcrParser.Result retainDominantProductionDate(
+            DateOcrParser.Result parsed
+    ) {
+        if (parsed == null || parsed.productionDates.size() <= 1) {
+            return parsed;
+        }
+        DateOcrParser.DateCandidate best = null;
+        int bestCount = 0;
+        int runnerUpCount = 0;
+        for (DateOcrParser.DateCandidate candidate : parsed.productionDates) {
+            int count = parsed.productionDateEvidenceCount(candidate.normalized);
+            if (best == null
+                    || count > bestCount
+                    || (count == bestCount && candidate.confidence > best.confidence)) {
+                runnerUpCount = bestCount;
+                best = candidate;
+                bestCount = count;
+            } else {
+                runnerUpCount = Math.max(runnerUpCount, count);
+            }
+        }
+        if (best == null || bestCount < 2 || bestCount <= runnerUpCount) {
+            return parsed;
+        }
+        List<DateOcrParser.DateCandidate> productionDates =
+                Collections.singletonList(best);
+        List<DateOcrParser.DateCandidate> calculatedExpiryDates =
+                validatedCalculatedExpiryDates(
+                        parsed.calculatedExpiryDates,
+                        productionDates,
+                        parsed.shelfLives
+                );
+        return new DateOcrParser.Result(
+                parsed.rawText,
+                parsed.normalizedText,
+                productionDates,
+                parsed.expiryDates,
+                parsed.shelfLives,
+                calculatedExpiryDates
+        );
+    }
+
+    private static boolean isReliableCalculatedDate(DateOcrFrameVoter.VoteResult vote) {
+        return vote != null
+                && !vote.hasConflict
+                && vote.productionDate != null
+                && vote.shelfLife != null
+                && vote.calculatedExpiryDate != null;
     }
 
     static DateOcrParser.Result apply(
@@ -70,6 +124,7 @@ final class DateEvidencePolicy {
         removeWeakMonthOnlyDuplicates(productionDates, expiryDates);
         removeCrossFieldDuplicates(productionDates, expiryDates, preferred, today);
         removeWeakContradictions(productionDates, expiryDates);
+        removeImplausibleFoodExpiryDates(productionDates, expiryDates);
 
         List<DateOcrParser.DateCandidate> calculatedExpiryDates =
                 validatedCalculatedExpiryDates(
@@ -85,6 +140,121 @@ final class DateEvidencePolicy {
                 parsed.shelfLives,
                 calculatedExpiryDates
         );
+    }
+
+    static DateOcrParser.Result reconcileIndependentExpiryEvidence(
+            DateOcrParser.Result parsed,
+            String independentOriginalText,
+            double independentConfidence
+    ) {
+        if (parsed == null
+                || independentConfidence < 0.75d
+                || FoodItem.cleanText(independentOriginalText).length() == 0
+                || parsed.productionDates.isEmpty()
+                || parsed.expiryDates.isEmpty()) {
+            return parsed;
+        }
+
+        DateOcrParser.Result independent = DateOcrParser.parse(independentOriginalText);
+        DateOcrParser.DateCandidate independentExpiry = onlyDistinctFutureExpiry(
+                independent.expiryDates,
+                DateRules.getTodayString()
+        );
+        if (independentExpiry == null
+                || !hasEarlierProduction(parsed.productionDates, independentExpiry.normalized)) {
+            return parsed;
+        }
+
+        List<DateOcrParser.DateCandidate> expiryDates =
+                new ArrayList<DateOcrParser.DateCandidate>();
+        DateOcrParser.DateCandidate semanticTemplate = null;
+        boolean foundNearMiss = false;
+        for (DateOcrParser.DateCandidate candidate : parsed.expiryDates) {
+            if (candidate.normalized.equals(independentExpiry.normalized)) {
+                semanticTemplate = strongerCandidate(semanticTemplate, candidate);
+                continue;
+            }
+            int difference = Math.abs(DateRules.daysBetween(
+                    candidate.normalized,
+                    independentExpiry.normalized
+            ));
+            if (difference > 0 && difference <= 2) {
+                foundNearMiss = true;
+                semanticTemplate = strongerCandidate(semanticTemplate, candidate);
+                continue;
+            }
+            expiryDates.add(candidate);
+        }
+        if (!foundNearMiss) {
+            return parsed;
+        }
+
+        double confidence = Math.min(
+                0.94d,
+                Math.max(independentConfidence,
+                        semanticTemplate == null ? 0d : semanticTemplate.confidence)
+        );
+        expiryDates.add(new DateOcrParser.DateCandidate(
+                "expiryDate",
+                independentExpiry.raw,
+                independentExpiry.normalized,
+                semanticTemplate == null
+                        ? independentExpiry.context
+                        : semanticTemplate.context,
+                confidence,
+                semanticTemplate == null || semanticTemplate.weakHint,
+                false
+        ));
+
+        return new DateOcrParser.Result(
+                parsed.rawText,
+                parsed.normalizedText,
+                parsed.productionDates,
+                expiryDates,
+                parsed.shelfLives,
+                parsed.calculatedExpiryDates
+        );
+    }
+
+    private static DateOcrParser.DateCandidate onlyDistinctFutureExpiry(
+            List<DateOcrParser.DateCandidate> candidates,
+            String today
+    ) {
+        DateOcrParser.DateCandidate selected = null;
+        for (DateOcrParser.DateCandidate candidate : candidates) {
+            if (!DateRules.isValidDateString(candidate.normalized)
+                    || candidate.normalized.compareTo(today) <= 0) {
+                continue;
+            }
+            if (selected != null && !selected.normalized.equals(candidate.normalized)) {
+                return null;
+            }
+            selected = strongerCandidate(selected, candidate);
+        }
+        return selected;
+    }
+
+    private static boolean hasEarlierProduction(
+            List<DateOcrParser.DateCandidate> productionDates,
+            String expiryDate
+    ) {
+        for (DateOcrParser.DateCandidate production : productionDates) {
+            if (DateRules.isValidDateString(production.normalized)
+                    && production.normalized.compareTo(expiryDate) < 0) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private static DateOcrParser.DateCandidate strongerCandidate(
+            DateOcrParser.DateCandidate left,
+            DateOcrParser.DateCandidate right
+    ) {
+        if (left == null) {
+            return right;
+        }
+        return right != null && right.confidence > left.confidence ? right : left;
     }
 
     private static List<DateOcrParser.DateCandidate> preferredExpiryCandidates(
@@ -143,6 +313,29 @@ final class DateEvidencePolicy {
         for (int expiryIndex = expiryDates.size() - 1; expiryIndex >= 0; expiryIndex--) {
             DateOcrParser.DateCandidate expiry = expiryDates.get(expiryIndex);
             if (expiry.weakHint && expiry.normalized.compareTo(earliestProduction) < 0) {
+                expiryDates.remove(expiryIndex);
+            }
+        }
+    }
+
+    private static void removeImplausibleFoodExpiryDates(
+            List<DateOcrParser.DateCandidate> productionDates,
+            List<DateOcrParser.DateCandidate> expiryDates
+    ) {
+        if (productionDates.isEmpty() || expiryDates.isEmpty()) {
+            return;
+        }
+        for (int expiryIndex = expiryDates.size() - 1; expiryIndex >= 0; expiryIndex--) {
+            String expiry = expiryDates.get(expiryIndex).normalized;
+            boolean plausible = false;
+            for (DateOcrParser.DateCandidate production : productionDates) {
+                int spanDays = DateRules.daysBetween(production.normalized, expiry);
+                if (spanDays >= 0 && spanDays <= (366 * 5)) {
+                    plausible = true;
+                    break;
+                }
+            }
+            if (!plausible) {
                 expiryDates.remove(expiryIndex);
             }
         }

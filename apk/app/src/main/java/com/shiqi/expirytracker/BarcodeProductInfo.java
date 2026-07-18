@@ -130,13 +130,16 @@ final class BarcodeProductInfo {
     }
 
     String displayName() {
+        String raw;
         if (name.length() > 0) {
-            return name;
+            raw = name;
+        } else if (brand.length() > 0 && generalName.length() > 0) {
+            raw = brand + generalName;
+        } else {
+            raw = generalName;
         }
-        if (brand.length() > 0 && generalName.length() > 0) {
-            return brand + generalName;
-        }
-        return generalName;
+        String cleaned = RecognitionTextCleaner.intelligentProductNameCandidate(raw);
+        return cleaned.length() > 0 ? cleaned : RecognitionTextCleaner.cleanProductNameLine(raw);
     }
 
     String notes() {

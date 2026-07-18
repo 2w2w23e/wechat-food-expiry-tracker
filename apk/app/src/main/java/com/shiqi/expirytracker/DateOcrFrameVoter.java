@@ -51,10 +51,19 @@ final class DateOcrFrameVoter {
         StableDate expiryDate = strongPair == null
                 ? stableDate(expiryDates, requiredVotes)
                 : strongPair.expiryDate;
+        boolean implausibleDateSpan = false;
+        if (productionDate != null
+                && expiryDate != null
+                && !isPlausibleFoodDatePair(productionDate.value, expiryDate.value)) {
+            expiryDate = null;
+            implausibleDateSpan = true;
+        }
         int shelfLifeRequiredVotes = requiredVotes;
         StableShelfLife shelfLife = stableShelfLife(shelfLives, shelfLifeRequiredVotes);
-        StableDate calculatedExpiryDate = stableDate(calculatedExpiryDates, requiredVotes);
-        if (calculatedExpiryDate == null && productionDate != null && shelfLife != null) {
+        StableDate calculatedExpiryDate = requiredVotes == 1
+                ? stableDate(calculatedExpiryDates, 1)
+                : null;
+        if (productionDate != null && shelfLife != null) {
             String calculated = DateRules.addShelfLife(
                     productionDate.value,
                     Integer.valueOf(shelfLife.value),
@@ -78,12 +87,19 @@ final class DateOcrFrameVoter {
         boolean chronologyConflict = productionDate != null
                 && selectedExpiryDate != null
                 && selectedExpiryDate.value.compareTo(productionDate.value) < 0;
+        boolean shelfLifeExpiryConflict = hasShelfLifeExpiryConflict(
+                productionDate,
+                expiryDate,
+                shelfLife
+        );
         boolean conflict = (strongPair == null
                 && (hasDateConflict(productionDates, requiredVotes)
                 || hasDateConflict(expiryDates, requiredVotes)))
-                || hasDateConflict(calculatedExpiryDates, requiredVotes)
+                || (requiredVotes == 1 && hasDateConflict(calculatedExpiryDates, 1))
                 || hasShelfLifeConflict(shelfLives, shelfLifeRequiredVotes)
-                || chronologyConflict;
+                || shelfLifeExpiryConflict
+                || chronologyConflict
+                || implausibleDateSpan;
 
         return new VoteResult(
                 safeFrames.size(),
@@ -240,7 +256,24 @@ final class DateOcrFrameVoter {
 
     private static boolean isPlausibleFoodDatePair(String productionDate, String expiryDate) {
         int days = DateRules.daysBetween(productionDate, expiryDate);
-        return days > 0 && days <= (366 * 5);
+        return days >= 0 && days <= (366 * 5);
+    }
+
+    private static boolean hasShelfLifeExpiryConflict(
+            StableDate productionDate,
+            StableDate expiryDate,
+            StableShelfLife shelfLife
+    ) {
+        if (productionDate == null || expiryDate == null || shelfLife == null) {
+            return false;
+        }
+        String calculated = DateRules.addShelfLife(
+                productionDate.value,
+                Integer.valueOf(shelfLife.value),
+                shelfLife.unit
+        );
+        return DateRules.isValidDateString(calculated)
+                && Math.abs(DateRules.daysBetween(calculated, expiryDate.value)) > 1;
     }
 
     private static StableDate stableDate(Map<String, DateAccumulator> accumulators, int minVotes) {
@@ -255,6 +288,9 @@ final class DateOcrFrameVoter {
         int strongMinVotes = Math.min(2, minVotes);
         ShelfLifeAccumulator best = bestShelfLife(accumulators, strongMinVotes);
         if (best == null) {
+            return null;
+        }
+        if (minVotes > 1 && best.strongVotes < strongMinVotes) {
             return null;
         }
         if (best.strongVotes >= strongMinVotes) {

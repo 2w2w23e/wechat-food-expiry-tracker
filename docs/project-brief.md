@@ -98,7 +98,7 @@ Android APK 本地版优先；微信小程序端封存在 `miniprogram/`
 - debug APK
 - ML Kit 中文/拉丁文字与条码识别
 - OpenCV 低对比增强
-- ONNX Runtime Android + `PP-OCRv6_rec_small` 日期行复识
+- ONNX Runtime Android + `PP-OCRv6_small_det` 文字区域定位 + `PP-OCRv6_rec_small` 裁剪行复识
 - EXIF 方向校正、关键帧和字段区域证据、日期门禁与跨帧候选稳定
 
 封存的小程序端保留：

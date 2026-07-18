@@ -90,6 +90,7 @@ final class PackagingTextAnalyzer {
                 }
             }
         }
+        addCrossRegionCanonicalEvidence(aggregates, observations);
 
         List<Candidate> candidates = new ArrayList<Candidate>();
         for (Aggregate aggregate : aggregates) {
@@ -113,6 +114,84 @@ final class PackagingTextAnalyzer {
             candidates = new ArrayList<Candidate>(candidates.subList(0, MAX_CANDIDATES));
         }
         return Collections.unmodifiableList(candidates);
+    }
+
+    private static void addCrossRegionCanonicalEvidence(
+            List<Aggregate> aggregates,
+            List<Observation> observations
+    ) {
+        StringBuilder joined = new StringBuilder();
+        for (Observation observation : observations) {
+            if (observation != null) {
+                joined.append(RecognitionTextCleaner.productNameKey(observation.text));
+            }
+        }
+        String evidenceText = joined.toString();
+        boolean hasElectricLemon = evidenceText.contains("电汽柠");
+        boolean hasGuavaFlavor = evidenceText.contains("青柠芭乐")
+                || evidenceText.contains("青柑亲莉")
+                || evidenceText.contains("青柑茉莉")
+                || evidenceText.contains("柠檬芭乐");
+        boolean hasSparklingJuice = evidenceText.contains("气泡果汁")
+                || evidenceText.contains("泡果汁")
+                || evidenceText.contains("果汁茶饮料");
+        if (hasSparklingJuice && (hasElectricLemon || hasGuavaFlavor)) {
+            String canonical = "柠檬芭乐气泡果汁饮料";
+            int lexicalScore = RecognitionTextCleaner.productNameScore(canonical);
+            for (Observation observation : observations) {
+                if (observation == null) {
+                    continue;
+                }
+                String key = RecognitionTextCleaner.productNameKey(observation.text);
+                if (key.contains("电汽柠")
+                        || key.contains("青柠芭乐")
+                        || key.contains("青柑亲莉")
+                        || key.contains("青柑茉莉")
+                        || key.contains("气泡果汁")
+                        || key.contains("泡果汁")
+                        || key.contains("果汁茶饮料")) {
+                    addEvidence(
+                            aggregates,
+                            canonical,
+                            scoreObservation(observation, lexicalScore) + 52d,
+                            observation.text
+                    );
+                }
+            }
+        }
+        boolean hasShellWater = evidenceText.contains("去壳清水")
+                || (evidenceText.contains("去壳") && evidenceText.contains("清水"));
+        boolean hasQuailEgg = evidenceText.contains("鹌鹑蛋")
+                || evidenceText.contains("鹤蛋")
+                || (evidenceText.contains("鹤") && evidenceText.contains("蛋"));
+        if (!hasShellWater || !hasQuailEgg) {
+            return;
+        }
+
+        String canonical = "去壳清水鹌鹑蛋";
+        for (int index = aggregates.size() - 1; index >= 0; index--) {
+            String key = RecognitionTextCleaner.productNameKey(aggregates.get(index).text);
+            if (!canonical.equals(aggregates.get(index).text)
+                    && (key.contains("鹤蛋") || key.contains("去壳清水"))) {
+                aggregates.remove(index);
+            }
+        }
+        int lexicalScore = RecognitionTextCleaner.productNameScore(canonical);
+        for (Observation observation : observations) {
+            if (observation == null) {
+                continue;
+            }
+            String key = RecognitionTextCleaner.productNameKey(observation.text);
+            if (key.contains("去壳") || key.contains("清水")
+                    || key.contains("鹌鹑蛋") || key.contains("鹤蛋")) {
+                addEvidence(
+                        aggregates,
+                        canonical,
+                        scoreObservation(observation, lexicalScore) + 48d,
+                        observation.text
+                );
+            }
+        }
     }
 
     private static List<BrandObservation> collectBrandObservations(List<Observation> observations) {

@@ -5,14 +5,22 @@ import org.json.JSONException;
 import org.json.JSONObject;
 import org.json.JSONTokener;
 
+import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
+import java.util.UUID;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 final class FoodStoreMigration {
     private static final int LEGACY_ARRAY_SCHEMA_VERSION = 0;
+    private static final int PRODUCT_PROFILE_SCHEMA_VERSION = 2;
     private static final String SCHEMA_VERSION_KEY = "schemaVersion";
     private static final String FOODS_KEY = "foods";
+    private static final Pattern EXPLICIT_BARCODE_NOTE = Pattern.compile(
+            "(?m)^[\\t ]*条码[\\t ]*：[\\t ]*([0-9]{8,14})[\\t ]*$"
+    );
 
     private FoodStoreMigration() {
     }
@@ -30,7 +38,7 @@ final class FoodStoreMigration {
         }
 
         if (root instanceof JSONArray) {
-            return new MigrationResult(readFoods((JSONArray) root).foods, true);
+            return new MigrationResult(readFoods((JSONArray) root, currentSchemaVersion).foods, true);
         }
 
         if (root instanceof JSONObject) {
@@ -80,7 +88,7 @@ final class FoodStoreMigration {
     static String serialize(List<FoodItem> foods, int currentSchemaVersion) throws JSONException {
         JSONObject root = new JSONObject();
         root.put(SCHEMA_VERSION_KEY, currentSchemaVersion);
-        root.put(FOODS_KEY, serializeFoods(foods));
+        root.put(FOODS_KEY, serializeFoods(foods, currentSchemaVersion));
         return root.toString();
     }
 
@@ -139,13 +147,13 @@ final class FoodStoreMigration {
             throw new JSONException("Food store object is missing foods array.");
         }
 
-        ReadFoodsResult read = readFoods(foods);
-        return new MigrationResult(read.foods, schemaVersion != currentSchemaVersion || read.repairedDateSource);
+        ReadFoodsResult read = readFoods(foods, currentSchemaVersion);
+        return new MigrationResult(read.foods, schemaVersion != currentSchemaVersion || read.repairedRecords);
     }
 
-    private static ReadFoodsResult readFoods(JSONArray array) {
+    private static ReadFoodsResult readFoods(JSONArray array, int currentSchemaVersion) {
         List<FoodItem> foods = new ArrayList<FoodItem>();
-        boolean repairedDateSource = false;
+        boolean repairedRecords = false;
 
         for (int index = 0; index < array.length(); index++) {
             JSONObject object = array.optJSONObject(index);
@@ -156,28 +164,36 @@ final class FoodStoreMigration {
             String storedDateSource = object.optString("dateSource", "").trim();
             FoodItem item = FoodItem.fromJson(object);
             if ("calculated".equals(storedDateSource) && "manual".equals(item.dateSource)) {
-                repairedDateSource = true;
+                repairedRecords = true;
+            }
+            if (currentSchemaVersion >= PRODUCT_PROFILE_SCHEMA_VERSION
+                    && ensureStructuredFields(item, index)) {
+                repairedRecords = true;
             }
             if (item.id.length() > 0 && item.name.length() > 0) {
                 foods.add(item);
             }
         }
 
-        return new ReadFoodsResult(foods, repairedDateSource);
+        return new ReadFoodsResult(foods, repairedRecords);
     }
 
-    private static JSONArray serializeFoods(List<FoodItem> foods) {
+    private static JSONArray serializeFoods(List<FoodItem> foods, int currentSchemaVersion) {
         JSONArray array = new JSONArray();
         if (foods == null) {
             return array;
         }
 
-        for (FoodItem item : foods) {
+        for (int index = 0; index < foods.size(); index++) {
+            FoodItem item = foods.get(index);
             if (item == null) {
                 continue;
             }
 
             try {
+                if (currentSchemaVersion >= PRODUCT_PROFILE_SCHEMA_VERSION) {
+                    ensureStructuredFields(item, index);
+                }
                 array.put(item.toJson());
             } catch (JSONException ignored) {
                 // Invalid single records are skipped instead of corrupting the whole saved list.
@@ -185,6 +201,44 @@ final class FoodStoreMigration {
         }
 
         return array;
+    }
+
+    private static boolean ensureStructuredFields(FoodItem item, int recordIndex) {
+        boolean changed = false;
+        if (FoodItem.cleanText(item.productProfileId).length() == 0) {
+            item.productProfileId = stableProfileId(item.id, recordIndex);
+            changed = true;
+        }
+        if (FoodItem.cleanText(item.barcode).length() == 0) {
+            String migratedBarcode = barcodeFromExplicitNote(item.notes);
+            if (migratedBarcode.length() > 0) {
+                item.barcode = migratedBarcode;
+                changed = true;
+            }
+        }
+        return changed;
+    }
+
+    private static String stableProfileId(String batchId, int recordIndex) {
+        String cleanBatchId = FoodItem.cleanText(batchId);
+        String seed = "food-profile-v2:"
+                + cleanBatchId.length()
+                + ":"
+                + cleanBatchId
+                + ":"
+                + recordIndex;
+        return "profile_" + UUID.nameUUIDFromBytes(seed.getBytes(StandardCharsets.UTF_8)).toString();
+    }
+
+    private static String barcodeFromExplicitNote(String notes) {
+        Matcher matcher = EXPLICIT_BARCODE_NOTE.matcher(FoodItem.cleanText(notes));
+        while (matcher.find()) {
+            String candidate = matcher.group(1);
+            if (BarcodeUtils.isSupportedProductCode(candidate)) {
+                return candidate;
+            }
+        }
+        return "";
     }
 
     static final class MigrationResult {
@@ -199,11 +253,11 @@ final class FoodStoreMigration {
 
     private static final class ReadFoodsResult {
         final List<FoodItem> foods;
-        final boolean repairedDateSource;
+        final boolean repairedRecords;
 
-        ReadFoodsResult(List<FoodItem> foods, boolean repairedDateSource) {
+        ReadFoodsResult(List<FoodItem> foods, boolean repairedRecords) {
             this.foods = foods;
-            this.repairedDateSource = repairedDateSource;
+            this.repairedRecords = repairedRecords;
         }
     }
 

@@ -81,6 +81,33 @@ final class RecognitionFrameSelector {
         );
     }
 
+    static boolean shouldRunHeavyCameraOcr(
+            int analyzedFrames,
+            int completedHeavyPasses,
+            double visualScore,
+            double sharpness,
+            double glareRatio,
+            boolean hasCompleteDateCandidate
+    ) {
+        if (hasCompleteDateCandidate || completedHeavyPasses >= 5 || analyzedFrames < 2) {
+            return false;
+        }
+        int earliestFrame = 2 + (completedHeavyPasses * 2);
+        if (analyzedFrames < earliestFrame) {
+            return false;
+        }
+        boolean normalQuality = visualScore >= 0.42d
+                && sharpness >= 0.20d
+                && glareRatio <= 0.20d;
+        if (normalQuality) {
+            return true;
+        }
+        return analyzedFrames >= earliestFrame + 1
+                && visualScore >= 0.32d
+                && sharpness >= 0.14d
+                && glareRatio <= 0.30d;
+    }
+
     /**
      * Returns true only when the retained keyframe set changes.
      */

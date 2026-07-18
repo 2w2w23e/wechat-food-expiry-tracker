@@ -38,7 +38,9 @@ final class FoodExcelExporter {
             "isFinished",
             "finishedAt",
             "createdAt",
-            "updatedAt"
+            "updatedAt",
+            "productProfileId",
+            "barcode"
     };
 
     private FoodExcelExporter() {
@@ -67,7 +69,7 @@ final class FoodExcelExporter {
     }
 
     private static String foodSheetXml(List<FoodItem> foods) {
-        StringBuilder builder = worksheetStart("A1:Y" + Math.max(1, (foods == null ? 0 : foods.size()) + 1));
+        StringBuilder builder = worksheetStart("A1:AA" + Math.max(1, (foods == null ? 0 : foods.size()) + 1));
         appendRow(builder, 1, FOOD_HEADERS);
         if (foods != null) {
             for (int index = 0; index < foods.size(); index++) {
@@ -107,7 +109,9 @@ final class FoodExcelExporter {
                 Boolean.toString(food.isFinished),
                 food.finishedAt,
                 food.createdAt,
-                food.updatedAt
+                food.updatedAt,
+                food.productProfileId,
+                food.barcode
         };
     }
 

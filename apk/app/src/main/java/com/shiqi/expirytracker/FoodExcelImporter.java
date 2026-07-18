@@ -14,11 +14,14 @@ import java.util.ArrayList;
 import java.util.Calendar;
 import java.util.GregorianCalendar;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Set;
 import java.util.TimeZone;
+import java.util.UUID;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipInputStream;
 
@@ -103,6 +106,7 @@ final class FoodExcelImporter {
             results.add(parseFoodRow(rowNumber, values));
         }
 
+        validateProfileBarcodeRelationships(results);
         return new ImportPreview(results);
     }
 
@@ -112,6 +116,14 @@ final class FoodExcelImporter {
         FoodItem item = new FoodItem();
 
         item.id = clean(value(values, "id"));
+        item.productProfileId = clean(value(values, "productprofileid"));
+        if (item.productProfileId.length() == 0) {
+            item.productProfileId = newProductProfileId(null);
+        }
+        item.barcode = BarcodeUtils.digitsOnly(value(values, "barcode"));
+        if (item.barcode.length() > 0 && !BarcodeUtils.isSupportedProductCode(item.barcode)) {
+            errors.add("商品条码格式或校验位不正确");
+        }
         item.name = clean(value(values, "name"));
         if (item.name.length() == 0) {
             errors.add("食品名称不能为空");
@@ -199,6 +211,61 @@ final class FoodExcelImporter {
         item.updatedAt = clean(value(values, "updatedat"));
 
         return new RowResult(rowNumber, values, item, errors, warnings);
+    }
+
+    private static void validateProfileBarcodeRelationships(List<RowResult> rows) {
+        Map<String, List<RowResult>> rowsByProfile = new LinkedHashMap<String, List<RowResult>>();
+        for (RowResult row : rows) {
+            String profileId = clean(row.food.productProfileId);
+            if (profileId.length() == 0) {
+                continue;
+            }
+            List<RowResult> profileRows = rowsByProfile.get(profileId);
+            if (profileRows == null) {
+                profileRows = new ArrayList<RowResult>();
+                rowsByProfile.put(profileId, profileRows);
+            }
+            profileRows.add(row);
+        }
+
+        for (List<RowResult> profileRows : rowsByProfile.values()) {
+            FoodItem representative = profileRows.get(0).food;
+            String representativeBarcode = BarcodeUtils.toGtin14(representative.barcode);
+            boolean barcodeConflict = false;
+            boolean stableIdentityConflict = false;
+            for (int index = 1; index < profileRows.size(); index++) {
+                FoodItem candidate = profileRows.get(index).food;
+                if (!representativeBarcode.equals(BarcodeUtils.toGtin14(candidate.barcode))) {
+                    barcodeConflict = true;
+                }
+                if (ReplenishmentDraftFactory.hasReusableIdentityFieldsChanged(representative, candidate)) {
+                    stableIdentityConflict = true;
+                }
+            }
+
+            for (RowResult row : profileRows) {
+                if (barcodeConflict) {
+                    addError(row, "同一 productProfileId 对应多个条码，无法导入");
+                }
+                if (stableIdentityConflict) {
+                    addError(row, "同一 productProfileId 的商品名称、分类、单位、保存方式或位置不一致，无法导入");
+                }
+            }
+        }
+    }
+
+    private static void addError(RowResult row, String message) {
+        if (!row.errors.contains(message)) {
+            row.errors.add(message);
+        }
+    }
+
+    private static String newProductProfileId(Set<String> reservedProfileIds) {
+        String profileId;
+        do {
+            profileId = UUID.randomUUID().toString();
+        } while (reservedProfileIds != null && reservedProfileIds.contains(profileId));
+        return profileId;
     }
 
     private static Map<Integer, CellValue> readRowCells(Element row, List<String> sharedStrings, ExcelStyles styles) {
@@ -677,10 +744,91 @@ final class FoodExcelImporter {
             List<FoodItem> foods = new ArrayList<FoodItem>();
             for (RowResult row : rows) {
                 if (row.canImport()) {
-                    foods.add(row.food.copy());
+                    FoodItem food = row.food.copy();
+                    food.productProfileId = row.food.productProfileId;
+                    food.barcode = row.food.barcode;
+                    foods.add(food);
                 }
             }
             return foods;
+        }
+
+        List<FoodItem> importableFoods(boolean replaceExisting, List<FoodItem> existingFoods) {
+            return replaceExisting ? importableFoods() : importableFoodsForAppend(existingFoods);
+        }
+
+        List<FoodItem> importableFoods(boolean replaceExisting) {
+            return importableFoods(replaceExisting, null);
+        }
+
+        List<FoodItem> importableFoodsForAppend() {
+            return importableFoodsForAppend(null);
+        }
+
+        List<FoodItem> importableFoodsForAppend(List<FoodItem> existingFoods) {
+            Set<String> reservedProfileIds = new HashSet<String>();
+            Map<String, ExistingProfileState> existingProfiles = new LinkedHashMap<String, ExistingProfileState>();
+            if (existingFoods != null) {
+                for (FoodItem food : existingFoods) {
+                    if (food != null) {
+                        String profileId = clean(food.productProfileId);
+                        if (profileId.length() > 0) {
+                            reservedProfileIds.add(profileId);
+                            ExistingProfileState state = existingProfiles.get(profileId);
+                            if (state == null) {
+                                existingProfiles.put(profileId, new ExistingProfileState(food));
+                            } else if (ReplenishmentDraftFactory.hasReusableIdentityChanged(
+                                    state.representative,
+                                    food
+                            )) {
+                                state.conflicting = true;
+                            }
+                        }
+                    }
+                }
+            }
+
+            Map<String, String> remappedProfileIds = new LinkedHashMap<String, String>();
+            List<FoodItem> foods = new ArrayList<FoodItem>();
+            for (RowResult row : rows) {
+                if (!row.canImport()) {
+                    continue;
+                }
+
+                String sourceProfileId = clean(row.food.productProfileId);
+                String remappedProfileId = remappedProfileIds.get(sourceProfileId);
+                if (remappedProfileId == null) {
+                    ExistingProfileState existing = existingProfiles.get(sourceProfileId);
+                    if (existing == null) {
+                        remappedProfileId = sourceProfileId;
+                    } else if (!existing.conflicting
+                            && !ReplenishmentDraftFactory.hasReusableIdentityChanged(
+                            existing.representative,
+                            row.food
+                    )) {
+                        remappedProfileId = sourceProfileId;
+                    } else {
+                        remappedProfileId = newProductProfileId(reservedProfileIds);
+                    }
+                    remappedProfileIds.put(sourceProfileId, remappedProfileId);
+                    reservedProfileIds.add(remappedProfileId);
+                }
+
+                FoodItem food = row.food.copy();
+                food.productProfileId = remappedProfileId;
+                food.barcode = row.food.barcode;
+                foods.add(food);
+            }
+            return foods;
+        }
+    }
+
+    private static final class ExistingProfileState {
+        final FoodItem representative;
+        boolean conflicting;
+
+        ExistingProfileState(FoodItem representative) {
+            this.representative = representative.copy();
         }
     }
 

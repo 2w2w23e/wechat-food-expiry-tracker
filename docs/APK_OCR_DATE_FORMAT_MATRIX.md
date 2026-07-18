@@ -2,7 +2,7 @@
 
 ## 目的与边界
 
-本文记录 Android APK V0.3.10 的本地多模型 OCR 分工、常见包装日期写法、无标签日期推断规则和真实样本验收状态。
+本文记录 Android APK V0.3.11 的本地多模型 OCR 分工、常见包装日期写法、无标签日期推断规则和真实样本验收状态。
 
 识别结果是“待用户核对的录入候选”，不是食品安全结论。任何条码、OCR、日期推断或模型融合结果都只能进入确认页和新增表单，绝不自动保存到食品列表。`expiryDate` 仍是最终可食用日期、排序和提醒的唯一规范字段。
 
@@ -13,7 +13,8 @@
   -> 原图 + 日期 ROI + 放大裁剪
   -> OpenCV 低对比增强变体
   -> ML Kit Chinese / Latin 通用包装文字 + ML Kit 条码
-  -> ONNX Runtime + PP-OCRv6_rec_small 日期行补充
+  -> ONNX Runtime + PP-OCRv6_small_det 文字区域定位
+  -> PP-OCRv6_rec_small 对检测区域与日期带复识
   -> 条码与商品信息补充
   -> 商品名门槛 + 日期标签、格式与上下文规则
   -> 字段级跨帧融合、冲突与锁定
@@ -29,15 +30,16 @@
 | ML Kit Text Recognition v2 Chinese | 中文包装正文、字段标签、品牌和说明文字的通用召回 | 不单独决定生产日期或有效期 |
 | ML Kit Text Recognition v2 Latin | 数字、拉丁品牌、MFG/MFD/EXP/BBE 等混合文本补充 | 不绕过日期规则和确认页 |
 | ML Kit Barcode Scanning | 本地条码检测，为商品库查询和商品名优先级提供稳定商品码 | 不把查询结果直接保存 |
-| ONNX Runtime Android 1.27.0 | 执行打包在 APK 内的 ONNX 行识别模型 | 不提供文字检测、字段解析或商品名决策 |
+| ONNX Runtime Android 1.27.0 | 执行打包在 APK 内的 ONNX 检测和行识别模型 | 不负责字段语义、跨帧投票或保存 |
+| `PP-OCRv6_small_det` | 在关键帧中定位中文包装文字、日期喷码和低对比文字区域 | 不直接输出最终字段，不替代用户确认 |
 | `PP-OCRv6_rec_small` | 识别已由代码裁剪、缩放和增强的日期文字行，补充点阵字、喷码和同色压印 | 不扫描整幅包装，不承担方向分类或自动保存 |
 | OpenCV | CLAHE 局部对比增强、背景差分和裁剪放大，为各 OCR 模型提供互补图像变体 | 增强结果不能作为唯一可信证据 |
 | 日期解析器 | 标签关联、日期归一化、保质期换算和受控无标签推断 | 不从任意数字猜测日期 |
 | 跨帧投票 | 合并不同模型、不同图像变体和不同视频帧的重复证据，抑制候选跳变 | 不把模型一致误当成用户确认 |
 
-`PP-OCRv6_rec_small` 是“日期行补充识别器”，不是第二套完整 OCR 框架。文字区域仍由 ML Kit 结果和固定日期 ROI 提供；OpenCV 生成增强行后才交给 ONNX 模型。最终 APK 不包含 RapidOCR Android AAR、Kotlin 标准库、PaddleOCR 检测模型或方向分类模型。后续若更换识别模型，必须用同一批样本重新比较准确率、耗时、发热和 APK 体积，不能只因模型版本更新就直接替换。
+`PP-OCRv6_small_det` 是本地文字区域定位器，`PP-OCRv6_rec_small` 是裁剪文字行复识器；两者与 ML Kit、固定日期 ROI 和 OpenCV 低对比变体互补。最终 APK 不包含 RapidOCR Android AAR、Kotlin 标准库或方向分类模型。后续若更换识别模型，必须用同一批样本重新比较准确率、耗时、发热和 APK 体积，不能只因模型版本更新就直接替换。
 
-当前 `minSdk` 为 24。最终 debug APK 为 212,506,173 字节，约 212 MB；模型只保留当前链路需要的关键文件，并设置可交付 APK 必须小于 1 GB 的硬门槛。
+当前 `minSdk` 为 24。当前 debug APK 约 220 MB；模型只保留当前链路需要的检测和识别文件，并设置可交付 APK 必须小于 1 GB 的硬门槛。
 
 ### 证据优先级
 
@@ -181,4 +183,4 @@
 - 食品安全国家标准 GB 7718-2011：https://www.nhc.gov.cn/zwgkzt/cybz/201106/a054a6affd0e489da150cf2b51a971a7/files/e84256474d1445919246b4a41a87f172.pdf
 - 药品标签有效期格式参考：https://english.nmpa.gov.cn/2019-07/25/c_390614.htm
 
-Microsoft ONNX Runtime Android 1.27.0 使用 MIT License；PaddleOCR 和 `PP-OCRv6_rec_small` 模型使用 Apache License 2.0。最终架构不再打包 RapidOCR Android AAR、Kotlin 标准库、PaddleOCR 检测/方向分类模型或旧 PP-OCRv3 模型。当前 debug APK 约 212 MB，低于 1 GB 门槛；本项目选择“离线与效果优先”，但仍需持续记录首帧耗时、整段视频耗时、内存、发热和低端设备稳定性。
+Microsoft ONNX Runtime Android 1.27.0 使用 MIT License；PaddleOCR、`PP-OCRv6_small_det` 和 `PP-OCRv6_rec_small` 模型使用 Apache License 2.0。最终架构不再打包 RapidOCR Android AAR、Kotlin 标准库、方向分类模型、旧 PP-OCRv3 模型或本地研究用 server 模型。当前 debug APK 约 220 MB，低于 1 GB 门槛；本项目选择“离线与效果优先”，但仍需持续记录首帧耗时、整段视频耗时、内存、发热和低端设备稳定性。

@@ -1,13 +1,17 @@
 package com.shiqi.expirytracker;
 
 import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
+import java.util.UUID;
 
 final class BarcodeHistoryItem {
-    static final int CURRENT_SCHEMA_VERSION = 1;
+    static final int CURRENT_SCHEMA_VERSION = 2;
 
+    String productProfileId = "";
     String barcode = "";
     String name = "";
     String category = "other";
@@ -20,6 +24,7 @@ final class BarcodeHistoryItem {
 
     BarcodeHistoryItem copy() {
         BarcodeHistoryItem item = new BarcodeHistoryItem();
+        item.productProfileId = productProfileId;
         item.barcode = barcode;
         item.name = name;
         item.category = category;
@@ -35,6 +40,10 @@ final class BarcodeHistoryItem {
 
     BarcodeHistoryItem normalizedForStorage(String nextUpdatedAt) {
         BarcodeHistoryItem item = copy();
+        item.productProfileId = cleanText(item.productProfileId);
+        if (item.productProfileId.length() == 0) {
+            item.productProfileId = newProductProfileId();
+        }
         item.barcode = digitsOnly(item.barcode);
         item.name = cleanText(item.name);
         item.category = fallback(cleanText(item.category), "other");
@@ -47,23 +56,19 @@ final class BarcodeHistoryItem {
     static List<BarcodeHistoryItem> upsertConfirmedTemplate(
             List<BarcodeHistoryItem> current,
             BarcodeHistoryItem draft,
-            String updatedAt,
-            int maxItems
+            String updatedAt
     ) {
-        int limit = Math.max(maxItems, 1);
         List<BarcodeHistoryItem> result = new ArrayList<BarcodeHistoryItem>();
+        Set<String> addedProfileIds = new HashSet<String>();
         BarcodeHistoryItem confirmed = draft == null ? null : draft.normalizedForStorage(updatedAt);
 
         if (confirmed != null && confirmed.isReusableTemplate()) {
             result.add(confirmed);
+            addedProfileIds.add(confirmed.productProfileId);
         }
 
         if (current != null) {
             for (BarcodeHistoryItem item : current) {
-                if (result.size() >= limit) {
-                    break;
-                }
-
                 if (item == null) {
                     continue;
                 }
@@ -73,15 +78,25 @@ final class BarcodeHistoryItem {
                     continue;
                 }
 
-                if (confirmed != null && confirmed.barcode.equals(normalized.barcode)) {
+                if (addedProfileIds.contains(normalized.productProfileId)) {
                     continue;
                 }
 
                 result.add(normalized);
+                addedProfileIds.add(normalized.productProfileId);
             }
         }
 
         return result;
+    }
+
+    static List<BarcodeHistoryItem> upsertConfirmedTemplate(
+            List<BarcodeHistoryItem> current,
+            BarcodeHistoryItem draft,
+            String updatedAt,
+            int ignoredMaxItems
+    ) {
+        return upsertConfirmedTemplate(current, draft, updatedAt);
     }
 
     static String serializeList(List<BarcodeHistoryItem> items) {
@@ -156,7 +171,8 @@ final class BarcodeHistoryItem {
 
     private void appendJson(StringBuilder builder) {
         builder.append('{');
-        appendJsonField(builder, "barcode", barcode, true);
+        appendJsonField(builder, "productProfileId", productProfileId, true);
+        appendJsonField(builder, "barcode", barcode, false);
         appendJsonField(builder, "name", name, false);
         appendJsonField(builder, "category", category, false);
         appendJsonField(builder, "unit", unit, false);
@@ -167,6 +183,10 @@ final class BarcodeHistoryItem {
 
     private static BarcodeHistoryItem fromMap(Map<String, Object> map) {
         BarcodeHistoryItem item = new BarcodeHistoryItem();
+        item.productProfileId = cleanText(asText(map.get("productProfileId")));
+        if (item.productProfileId.length() == 0) {
+            item.productProfileId = newProductProfileId();
+        }
         item.barcode = digitsOnly(asText(map.get("barcode")));
         item.name = cleanText(asText(map.get("name")));
         item.category = fallback(cleanText(asText(map.get("category"))), "other");
@@ -174,6 +194,10 @@ final class BarcodeHistoryItem {
         item.notes = cleanText(asText(map.get("notes")));
         item.updatedAt = cleanText(asText(map.get("updatedAt")));
         return item;
+    }
+
+    private static String newProductProfileId() {
+        return UUID.randomUUID().toString();
     }
 
     private static void appendJsonField(StringBuilder builder, String key, String value, boolean first) {

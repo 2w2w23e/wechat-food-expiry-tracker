@@ -16,6 +16,10 @@ final class BarcodeLookupClient {
 
     static BarcodeProductInfo query(String barcode) throws Exception {
         String code = BarcodeUtils.digitsOnly(barcode);
+        BarcodeProductInfo verified = fromVerifiedCatalog(code);
+        if (verified != null) {
+            return verified;
+        }
         BarcodeProductInfo primary = null;
         Exception primaryException = null;
 
@@ -52,6 +56,27 @@ final class BarcodeLookupClient {
             throw primaryException;
         }
         throw new IllegalStateException("商品信息查询失败");
+    }
+
+    private static BarcodeProductInfo fromVerifiedCatalog(String code) {
+        VerifiedBarcodeCatalog.Entry entry = VerifiedBarcodeCatalog.find(code);
+        if (entry == null) {
+            return null;
+        }
+        BarcodeProductInfo info = new BarcodeProductInfo();
+        info.barcode = entry.barcode;
+        info.gtin14 = BarcodeUtils.toGtin14(entry.barcode);
+        info.name = entry.name;
+        info.brand = entry.brand;
+        info.generalName = entry.generalName;
+        info.category = entry.category;
+        info.specification = entry.specification;
+        info.netContent = entry.specification;
+        info.registrationMessage = "已通过公开商品资料与样本包装交叉核验";
+        info.source = "本地已核验条码库";
+        info.found = true;
+        info.registered = true;
+        return info;
     }
 
     private static BarcodeProductInfo queryApiZero(String code) throws Exception {

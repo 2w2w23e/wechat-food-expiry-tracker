@@ -9,6 +9,8 @@ import java.util.List;
 
 final class FoodItem {
     String id = "";
+    String productProfileId = "";
+    String barcode = "";
     String name = "";
     String category = "other";
     String productionDate = "";
@@ -37,6 +39,8 @@ final class FoodItem {
     static FoodItem fromJson(JSONObject json) {
         FoodItem item = new FoodItem();
         item.id = json.optString("id", "");
+        item.productProfileId = optCleanString(json, "productProfileId");
+        item.barcode = optCleanString(json, "barcode");
         item.name = json.optString("name", "");
         item.category = FoodData.normalizeCategoryValue(json.optString("category", "other"));
         item.productionDate = optCleanString(json, "productionDate");
@@ -128,6 +132,8 @@ final class FoodItem {
     JSONObject toJson() throws JSONException {
         JSONObject json = new JSONObject();
         json.put("id", id);
+        putNullableString(json, "productProfileId", productProfileId);
+        putNullableString(json, "barcode", barcode);
         json.put("name", name);
         json.put("category", category);
         putNullableString(json, "productionDate", productionDate);
@@ -176,6 +182,8 @@ final class FoodItem {
     FoodItem copy() {
         FoodItem item = new FoodItem();
         item.id = id;
+        item.productProfileId = productProfileId;
+        item.barcode = barcode;
         item.name = name;
         item.category = category;
         item.productionDate = productionDate;

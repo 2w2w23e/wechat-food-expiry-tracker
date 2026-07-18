@@ -39,6 +39,11 @@ final class DateOcrParser {
     private static final Pattern COMPACT_DATE = Pattern.compile("(?<!\\d)((?:20\\d{6})|(?:\\d{6}))(?!\\d)");
     private static final Pattern COMPACT_DAY_MONTH_YEAR = Pattern.compile("(?<!\\d)(\\d{4}20\\d{2})(?!\\d)");
     private static final Pattern PACKED_PRODUCTION_CODE = Pattern.compile("(?<!\\d)(20\\d{6})\\d{1,8}(?!\\d)");
+    private static final Pattern NOISY_LASER_DIGIT_RUN = Pattern.compile("(?<!\\d)(\\d{10,18})(?!\\d)");
+    private static final Pattern NOISY_LABELED_EXPIRY = Pattern.compile(
+            "保\\s*质\\s*期[^\\n\\r\\d]{0,4}(\\d{8,12})",
+            Pattern.CASE_INSENSITIVE
+    );
     private static final Pattern COMPACT_DATE_RANGE = Pattern.compile(
             "(?<!\\d)(20\\d{6})\\s*(?:(?:[/|~～]|至)\\s*)?(20\\d{6})(?!\\d)"
     );
@@ -72,12 +77,25 @@ final class DateOcrParser {
             Pattern.CASE_INSENSITIVE
     );
     private static final Pattern OCR_DAMAGED_MONTH_SHELF_LIFE = Pattern.compile(
-            "保[^\\s\\d]{1,3}\\s*(\\d{1,3})\\s*个(?:月|日|1)?(?!\\d)",
+            "(?:保[^\\s\\d]{1,3}|质\\s*期|(?<![用动验])期)\\s*(\\d{1,3})\\s*个"
+                    + "([月日天门曰目冃节1])?(?![\\p{IsHan}\\d])",
+            Pattern.CASE_INSENSITIVE
+    );
+    private static final Pattern OCR_MISSING_MONTH_CLASSIFIER = Pattern.compile(
+            "(?<!\\d)((?:1[0-9]|2[0-4]|[1-9]))\\s*[1Il|]\\s*月(?!\\d)",
             Pattern.CASE_INSENSITIVE
     );
     private static final Pattern AGE_CONTEXT = Pattern.compile(
             "(月龄|年龄|适用.*月|婴幼儿|宝宝|儿童|周岁|岁以上|岁以下)",
             Pattern.CASE_INSENSITIVE
+    );
+    private static final Pattern NON_SHELF_PERIOD_CONTEXT = Pattern.compile(
+            "(儿童|适用期|活动期|试用期|账期|疗程|治疗周期|生理周期)",
+            Pattern.CASE_INSENSITIVE
+    );
+
+    private static final Pattern DAILY_FREQUENCY_CONTEXT = Pattern.compile(
+            "(?:一|1)\\s*日\\s*三\\s*餐|\\d+\\s*日\\s*(?:三餐|一次|两次|多次)"
     );
 
     private DateOcrParser() {}
@@ -105,11 +123,19 @@ final class DateOcrParser {
         reconcileChronologicalDatePair(productionDates, expiryDates, text);
         promoteCompactDateRange(text, productionDates, expiryDates);
         promoteOcrDamagedCompactDateRange(text, productionDates, expiryDates);
+        recoverNoisyLaserProduction(text, productionDates, referenceDate);
         collectShelfLives(text, shelfLives);
-        collectOcrDamagedMonthShelfLives(text, shelfLives);
+        collectOcrDamagedMonthShelfLives(
+                text,
+                shelfLives,
+                productionDates,
+                expiryDates
+        );
+        collectMissingMonthClassifierShelfLives(text, shelfLives, productionDates);
         if (shelfLives.isEmpty() && expiryDates.isEmpty()) {
             collectUnhintedShelfLives(text, shelfLives);
         }
+        recoverNoisyLabeledExpiry(text, productionDates, shelfLives, expiryDates);
 
         dedupeDateCandidates(productionDates);
         dedupeDateCandidates(expiryDates);
@@ -533,7 +559,10 @@ final class DateOcrParser {
             int value = parsePositiveInt(matcher.group(1));
             String unit = normalizeShelfLifeUnit(matcher.group(2));
             String context = nearbyText(text, matcher.start(), matcher.end(), 18);
-            if (!isPlausibleShelfLife(value, unit) || AGE_CONTEXT.matcher(context).find()) {
+            if (!isPlausibleShelfLife(value, unit)
+                    || AGE_CONTEXT.matcher(context).find()
+                    || NON_SHELF_PERIOD_CONTEXT.matcher(context).find()
+                    || DAILY_FREQUENCY_CONTEXT.matcher(context).find()) {
                 continue;
             }
             shelfLives.add(new ShelfLifeCandidate(
@@ -580,22 +609,283 @@ final class DateOcrParser {
 
     private static void collectOcrDamagedMonthShelfLives(
             String text,
-            List<ShelfLifeCandidate> shelfLives
+            List<ShelfLifeCandidate> shelfLives,
+            List<DateCandidate> productionDates,
+            List<DateCandidate> expiryDates
     ) {
         Matcher matcher = OCR_DAMAGED_MONTH_SHELF_LIFE.matcher(text);
         while (matcher.find()) {
             int value = parsePositiveInt(matcher.group(1));
-            if (!isPlausibleShelfLife(value, "month")) {
+            String context = nearbyText(text, matcher.start(), matcher.end(), 18);
+            if (AGE_CONTEXT.matcher(context).find()
+                    || NON_SHELF_PERIOD_CONTEXT.matcher(context).find()) {
+                continue;
+            }
+            String unit = resolveDamagedClassifierUnit(
+                    value,
+                    matcher.group(2),
+                    productionDates,
+                    expiryDates
+            );
+            if (!isPlausibleShelfLife(value, unit)) {
+                continue;
+            }
+            shelfLives.add(new ShelfLifeCandidate(
+                    matcher.group(0),
+                    value,
+                    unit,
+                    context,
+                    hasDateSpanSupport(value, unit, productionDates, expiryDates)
+                            ? 0.88d
+                            : 0.74d
+            ));
+        }
+    }
+
+    private static void collectMissingMonthClassifierShelfLives(
+            String text,
+            List<ShelfLifeCandidate> shelfLives,
+            List<DateCandidate> productionDates
+    ) {
+        Matcher matcher = OCR_MISSING_MONTH_CLASSIFIER.matcher(text);
+        while (matcher.find()) {
+            int value = parsePositiveInt(matcher.group(1));
+            String context = nearbyText(text, matcher.start(), matcher.end(), 48);
+            String lowerContext = context.toLowerCase(Locale.US);
+            boolean packagingDateContext = !productionDates.isEmpty()
+                    || PRODUCTION_HINT.matcher(context).find()
+                    || lowerContext.contains("y.m.d")
+                    || lowerContext.contains("ymd");
+            if (!packagingDateContext
+                    || AGE_CONTEXT.matcher(context).find()
+                    || NON_SHELF_PERIOD_CONTEXT.matcher(context).find()
+                    || !isPlausibleShelfLife(value, "month")) {
                 continue;
             }
             shelfLives.add(new ShelfLifeCandidate(
                     matcher.group(0),
                     value,
                     "month",
-                    nearbyText(text, matcher.start(), matcher.end(), 18),
-                    0.74d
+                    context,
+                    0.70d
             ));
         }
+    }
+
+    private static void recoverNoisyLaserProduction(
+            String text,
+            List<DateCandidate> productionDates,
+            String referenceDate
+    ) {
+        if (hasStrongDateCandidate(productionDates)
+                || !DateRules.isValidDateString(referenceDate)) {
+            return;
+        }
+        String earliest = DateRules.addDaysString(referenceDate, -(366 * 5));
+        Matcher matcher = NOISY_LASER_DIGIT_RUN.matcher(text);
+        String bestDate = "";
+        String bestRaw = "";
+        String bestContext = "";
+        while (matcher.find()) {
+            String digits = matcher.group(1);
+            String context = nearbyText(text, matcher.start(1), matcher.end(1), 28);
+            if (BARCODE_HINT.matcher(context).find()
+                    || BarcodeUtils.isSupportedProductCode(digits)) {
+                continue;
+            }
+            for (int index = 0; index + 6 <= digits.length(); index++) {
+                String raw = digits.substring(index, index + 6);
+                String normalized = normalizeDate(raw);
+                if (!DateRules.isValidDateString(normalized)
+                        || normalized.compareTo(earliest) < 0
+                        || normalized.compareTo(referenceDate) > 0) {
+                    continue;
+                }
+                if (bestDate.length() == 0 || normalized.compareTo(bestDate) > 0) {
+                    bestDate = normalized;
+                    bestRaw = raw;
+                    bestContext = context;
+                }
+            }
+        }
+        if (bestDate.length() > 0) {
+            productionDates.add(new DateCandidate(
+                    "productionDate",
+                    bestRaw,
+                    bestDate,
+                    bestContext + " noisy laser code",
+                    0.68d,
+                    false,
+                    false
+            ));
+        }
+    }
+
+    private static void recoverNoisyLabeledExpiry(
+            String text,
+            List<DateCandidate> productionDates,
+            List<ShelfLifeCandidate> shelfLives,
+            List<DateCandidate> expiryDates
+    ) {
+        if (productionDates.isEmpty()
+                || shelfLives.isEmpty()
+                || hasPlausibleStrongExpiry(productionDates, expiryDates)) {
+            return;
+        }
+        Matcher matcher = NOISY_LABELED_EXPIRY.matcher(text);
+        int bestMismatch = Integer.MAX_VALUE;
+        String bestDate = "";
+        String bestRaw = "";
+        String bestContext = "";
+        while (matcher.find()) {
+            String noisyDigits = matcher.group(1);
+            for (DateCandidate production : productionDates) {
+                for (ShelfLifeCandidate shelfLife : shelfLives) {
+                    String calculated = DateRules.addShelfLife(
+                            production.normalized,
+                            Integer.valueOf(shelfLife.value),
+                            shelfLife.unit
+                    );
+                    if (!DateRules.isValidDateString(calculated)) {
+                        continue;
+                    }
+                    String[] constrained = new String[] {
+                            calculated,
+                            DateRules.addDaysString(calculated, -1)
+                    };
+                    for (String candidate : constrained) {
+                        int mismatch = bestDigitWindowMismatch(
+                                noisyDigits,
+                                candidate.replace("-", "")
+                        );
+                        if (mismatch < bestMismatch) {
+                            bestMismatch = mismatch;
+                            bestDate = candidate;
+                            bestRaw = noisyDigits;
+                            bestContext = nearbyText(text, matcher.start(), matcher.end(), 30);
+                        }
+                    }
+                }
+            }
+        }
+        if (bestMismatch <= 3 && DateRules.isValidDateString(bestDate)) {
+            expiryDates.add(new DateCandidate(
+                    "expiryDate",
+                    bestRaw,
+                    bestDate,
+                    bestContext + " shelf-life constrained OCR repair",
+                    Math.max(0.66d, 0.78d - (bestMismatch * 0.04d)),
+                    false,
+                    false
+            ));
+        }
+    }
+
+    private static boolean hasPlausibleStrongExpiry(
+            List<DateCandidate> productionDates,
+            List<DateCandidate> expiryDates
+    ) {
+        for (DateCandidate expiry : expiryDates) {
+            if (expiry.weakHint) {
+                continue;
+            }
+            for (DateCandidate production : productionDates) {
+                if (production.weakHint) {
+                    continue;
+                }
+                int spanDays = DateRules.daysBetween(
+                        production.normalized,
+                        expiry.normalized
+                );
+                if (spanDays >= 0 && spanDays <= (366 * 5)) {
+                    return true;
+                }
+            }
+        }
+        return false;
+    }
+
+    private static int bestDigitWindowMismatch(String noisyDigits, String expectedDigits) {
+        if (noisyDigits == null || expectedDigits == null
+                || expectedDigits.length() == 0
+                || noisyDigits.length() < expectedDigits.length()) {
+            return Integer.MAX_VALUE;
+        }
+        int best = Integer.MAX_VALUE;
+        for (int start = 0; start + expectedDigits.length() <= noisyDigits.length(); start++) {
+            int mismatch = 0;
+            for (int index = 0; index < expectedDigits.length(); index++) {
+                if (noisyDigits.charAt(start + index) != expectedDigits.charAt(index)) {
+                    mismatch++;
+                }
+            }
+            best = Math.min(best, mismatch);
+        }
+        return best;
+    }
+
+    private static String resolveDamagedClassifierUnit(
+            int value,
+            String damagedUnitGlyph,
+            List<DateCandidate> productionDates,
+            List<DateCandidate> expiryDates
+    ) {
+        if ("月".equals(damagedUnitGlyph)) {
+            return "month";
+        }
+        if ("天".equals(damagedUnitGlyph)) {
+            return "day";
+        }
+        boolean dayMatches = hasDateSpanSupport(
+                value,
+                "day",
+                productionDates,
+                expiryDates
+        );
+        boolean monthMatches = hasDateSpanSupport(
+                value,
+                "month",
+                productionDates,
+                expiryDates
+        );
+        if (dayMatches && !monthMatches) {
+            return "day";
+        }
+        return "month";
+    }
+
+    private static boolean hasDateSpanSupport(
+            int value,
+            String unit,
+            List<DateCandidate> productionDates,
+            List<DateCandidate> expiryDates
+    ) {
+        for (DateCandidate productionDate : productionDates) {
+            if (productionDate.weakHint) {
+                continue;
+            }
+            String calculated = DateRules.addShelfLife(
+                    productionDate.normalized,
+                    Integer.valueOf(value),
+                    unit
+            );
+            if (!DateRules.isValidDateString(calculated)) {
+                continue;
+            }
+            for (DateCandidate expiryDate : expiryDates) {
+                if (expiryDate.weakHint) {
+                    continue;
+                }
+                int difference = Math.abs(DateRules.daysBetween(
+                        calculated,
+                        expiryDate.normalized
+                ));
+                if (difference <= 1) {
+                    return true;
+                }
+            }
+        }
+        return false;
     }
 
     private static boolean isPlausibleShelfLife(int value, String unit) {
