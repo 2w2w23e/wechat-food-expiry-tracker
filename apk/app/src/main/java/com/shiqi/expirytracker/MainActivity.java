@@ -19,6 +19,7 @@ import android.text.Editable;
 import android.text.InputType;
 import android.text.TextUtils;
 import android.text.TextWatcher;
+import android.view.Gravity;
 import android.view.MotionEvent;
 import android.view.View;
 import android.view.ViewGroup;
@@ -53,6 +54,7 @@ import java.util.HashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Set;
+import java.util.UUID;
 
 public final class MainActivity extends Activity {
     private static final int REQUEST_NOTIFICATION_PERMISSION = 4301;
@@ -251,40 +253,40 @@ public final class MainActivity extends Activity {
         actionRow.setGravity(android.view.Gravity.CENTER_VERTICAL);
         content.addView(actionRow, matchWrap());
 
-        Button scanButton = button("智能识别", COLOR_PRIMARY);
+        Button scanButton = button("拍照识别标签", COLOR_PRIMARY);
         scanButton.setOnClickListener(new View.OnClickListener() {
             @Override public void onClick(View view) { startDateOcrScanner(); }
         });
         actionRow.addView(scanButton, withMargins(weightWrap(1), 0, 0, dp(8), 0));
 
-        Button addButton = outlineButton("手动新增");
-        addButton.setOnClickListener(new View.OnClickListener() {
-            @Override public void onClick(View view) { showFoodForm(null); }
+        Button findByBarcodeButton = outlineButton("扫描商品条码");
+        findByBarcodeButton.setOnClickListener(new View.OnClickListener() {
+            @Override public void onClick(View view) { startBarcodeScanner(); }
         });
-        actionRow.addView(addButton, weightWrap(1));
+        actionRow.addView(findByBarcodeButton, weightWrap(1));
 
         LinearLayout utilityRow = new LinearLayout(this);
         utilityRow.setOrientation(LinearLayout.HORIZONTAL);
         utilityRow.setGravity(android.view.Gravity.CENTER_VERTICAL);
         content.addView(utilityRow, withMargins(matchWrap(), 0, dp(8), 0, 0));
 
-        Button importButton = utilityButton("导入");
+        Button addButton = utilityButton("手动记录");
+        addButton.setOnClickListener(new View.OnClickListener() {
+            @Override public void onClick(View view) { showFoodForm(null); }
+        });
+        utilityRow.addView(addButton, withMargins(weightWrap(1), 0, 0, dp(8), 0));
+
+        Button importButton = utilityButton("导入 Excel");
         importButton.setOnClickListener(new View.OnClickListener() {
             @Override public void onClick(View view) { startExcelImport(); }
         });
         utilityRow.addView(importButton, withMargins(weightWrap(1), 0, 0, dp(8), 0));
 
-        Button exportButton = utilityButton("导出");
+        Button exportButton = utilityButton("导出 Excel");
         exportButton.setOnClickListener(new View.OnClickListener() {
             @Override public void onClick(View view) { startExcelExport(); }
         });
-        utilityRow.addView(exportButton, withMargins(weightWrap(1), 0, 0, dp(8), 0));
-
-        Button reminderUtilityButton = utilityButton("提醒设置");
-        reminderUtilityButton.setOnClickListener(new View.OnClickListener() {
-            @Override public void onClick(View view) { showReminderSettingsDialog(); }
-        });
-        utilityRow.addView(reminderUtilityButton, weightWrap(1));
+        utilityRow.addView(exportButton, weightWrap(1));
 
         content.addView(reminderCard(), withMargins(matchWrap(), 0, 0, 0, dp(10)));
 
@@ -393,6 +395,9 @@ public final class MainActivity extends Activity {
             }
         });
         row.addView(reminderPermissionButton, withMargins(wrapWrap(), 0, 0, dp(6), 0));
+
+        TextView settingsHint = text("设置 ›", 12, COLOR_PRIMARY, Typeface.BOLD);
+        row.addView(settingsHint, wrapWrap());
 
         updateReminderStatus();
         return row;
@@ -619,7 +624,8 @@ public final class MainActivity extends Activity {
     }
 
     private void startBarcodeScanner() {
-        Intent intent = new Intent(this, BarcodeScanActivity.class);
+        Intent intent = new Intent(this, DateOcrScanActivity.class);
+        intent.putExtra(DateOcrScanActivity.EXTRA_BARCODE_LOOKUP_ONLY, true);
         startActivityForResult(intent, REQUEST_BARCODE_SCAN);
     }
 
@@ -859,7 +865,7 @@ public final class MainActivity extends Activity {
     }
 
     private void applyExcelImport(FoodExcelImporter.ImportPreview preview, boolean replaceExisting) {
-        List<FoodItem> imported = preview.importableFoods();
+        List<FoodItem> imported = preview.importableFoods(replaceExisting, foods);
         if (imported.isEmpty()) {
             toast("没有可导入的食品");
             return;
@@ -920,7 +926,160 @@ public final class MainActivity extends Activity {
             return;
         }
 
-        queryBarcodeProduct(barcode);
+        if (!showKnownBarcodeAction(barcode, null)) {
+            queryBarcodeProduct(barcode);
+        }
+    }
+
+    private boolean showKnownBarcodeAction(final String barcode, final FoodItem recognizedDraft) {
+        final List<FoodItem> profiles = ProductProfileIndex.fromFoods(foods).findByBarcode(barcode);
+        if (profiles.isEmpty()) {
+            return false;
+        }
+
+        if (profiles.size() == 1) {
+            final FoodItem profile = profiles.get(0);
+            new AlertDialog.Builder(this)
+                    .setTitle("这个条码已经入过库")
+                    .setMessage("已找到“" + profile.name + "”。补货会建立一个独立批次，"
+                            + "本次生产日期、保质期和数量不会覆盖旧批次。")
+                    .setNegativeButton("取消", null)
+                    .setNeutralButton("作为新商品", new DialogInterface.OnClickListener() {
+                        @Override
+                        public void onClick(DialogInterface dialogInterface, int which) {
+                            showNewProductForBarcode(barcode, recognizedDraft);
+                        }
+                    })
+                    .setPositiveButton("补货新批次", new DialogInterface.OnClickListener() {
+                        @Override
+                        public void onClick(DialogInterface dialogInterface, int which) {
+                            showReplenishmentForm(profile, recognizedDraft);
+                        }
+                    })
+                    .show();
+            return true;
+        }
+
+        final RadioGroup choiceGroup = new RadioGroup(this);
+        choiceGroup.setOrientation(RadioGroup.VERTICAL);
+        choiceGroup.setPadding(0, dp(4), 0, dp(4));
+        for (int index = 0; index < profiles.size(); index++) {
+            FoodItem profile = profiles.get(index);
+            String dateHint = DateRules.isValidDateString(profile.expiryDate)
+                    ? "到期 " + profile.expiryDate
+                    : "未记录到期日";
+            RadioButton option = barcodeProfileChoice(
+                    profile.name + "\n"
+                            + FoodData.categoryLabel(profile.category) + " · "
+                            + FoodData.storageLabel(profile.storageMethod) + " · "
+                            + dateHint,
+                    index
+            );
+            choiceGroup.addView(option, matchWrap());
+        }
+        choiceGroup.addView(
+                barcodeProfileChoice("新建其他商品", profiles.size()),
+                matchWrap()
+        );
+
+        ScrollView choiceScroll = new ScrollView(this);
+        choiceScroll.setFillViewport(true);
+        choiceScroll.setVerticalScrollBarEnabled(profiles.size() > 3);
+        choiceScroll.addView(choiceGroup, new ScrollView.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT
+        ));
+
+        LinearLayout choiceContent = new LinearLayout(this);
+        choiceContent.setOrientation(LinearLayout.VERTICAL);
+        choiceContent.setPadding(dp(8), 0, dp(8), 0);
+        int choiceHeight = Math.min(dp(280), dp(68 * (profiles.size() + 1)));
+        choiceContent.addView(choiceScroll, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                choiceHeight
+        ));
+
+        final int[] selectedChoice = new int[] { -1 };
+        final AlertDialog chooser = new AlertDialog.Builder(this)
+                .setTitle("同一条码有多个商品，请选择")
+                .setView(choiceContent)
+                .setNegativeButton("取消", null)
+                .setPositiveButton("继续", null)
+                .create();
+        chooser.setOnShowListener(new DialogInterface.OnShowListener() {
+            @Override
+            public void onShow(DialogInterface dialogInterface) {
+                final Button continueButton = chooser.getButton(AlertDialog.BUTTON_POSITIVE);
+                continueButton.setEnabled(false);
+                choiceGroup.setOnCheckedChangeListener(new RadioGroup.OnCheckedChangeListener() {
+                    @Override
+                    public void onCheckedChanged(RadioGroup group, int checkedId) {
+                        View checked = group.findViewById(checkedId);
+                        Object tag = checked == null ? null : checked.getTag();
+                        selectedChoice[0] = tag instanceof Integer
+                                ? ((Integer) tag).intValue()
+                                : -1;
+                        continueButton.setEnabled(selectedChoice[0] >= 0);
+                    }
+                });
+                continueButton.setOnClickListener(new View.OnClickListener() {
+                    @Override
+                    public void onClick(View view) {
+                        int which = selectedChoice[0];
+                        if (which < 0) {
+                            toast("请先选择一个商品");
+                            return;
+                        }
+                        chooser.dismiss();
+                        if (which >= profiles.size()) {
+                            showNewProductForBarcode(barcode, recognizedDraft);
+                        } else {
+                            showReplenishmentForm(profiles.get(which), recognizedDraft);
+                        }
+                    }
+                });
+            }
+        });
+        chooser.show();
+        return true;
+    }
+
+    private RadioButton barcodeProfileChoice(String label, int index) {
+        RadioButton option = new RadioButton(this);
+        option.setId(View.generateViewId());
+        option.setTag(Integer.valueOf(index));
+        option.setText(label);
+        option.setTextColor(COLOR_TEXT);
+        option.setTextSize(14);
+        option.setGravity(Gravity.CENTER_VERTICAL);
+        option.setMinHeight(dp(64));
+        option.setMaxLines(3);
+        option.setLineSpacing(dp(2), 1.0f);
+        option.setPadding(dp(4), dp(7), dp(8), dp(7));
+        return option;
+    }
+
+    private void showNewProductForBarcode(String barcode, FoodItem recognizedDraft) {
+        FoodItem draft = recognizedDraft == null ? new FoodItem() : recognizedDraft.copy();
+        draft.productProfileId = "";
+        draft.barcode = BarcodeUtils.digitsOnly(barcode);
+        showFoodForm(draft, false, "新增其他商品");
+    }
+
+    private void showReplenishmentForm(FoodItem profile, FoodItem recognizedDraft) {
+        FoodItem draft = ReplenishmentDraftFactory.createDraft(profile);
+        if (recognizedDraft != null) {
+            draft.productionDate = recognizedDraft.productionDate;
+            draft.shelfLifeValue = recognizedDraft.shelfLifeValue;
+            draft.shelfLifeUnit = recognizedDraft.shelfLifeUnit;
+            draft.expiryDate = recognizedDraft.expiryDate;
+            draft.dateSource = recognizedDraft.dateSource;
+        }
+        String title = "补货新批次\n" + profile.name;
+        if (BarcodeUtils.isSupportedProductCode(profile.barcode)) {
+            title = title + " · " + BarcodeUtils.digitsOnly(profile.barcode);
+        }
+        showFoodForm(draft, false, title);
     }
 
     private void queryBarcodeProduct(final String barcode) {
@@ -963,7 +1122,7 @@ public final class MainActivity extends Activity {
                         @Override
                         public void onClick(DialogInterface dialogInterface, int which) {
                             FoodItem draft = new FoodItem();
-                            draft.notes = "条码：" + barcode;
+                            draft.barcode = barcode;
                             showFoodForm(draft, false);
                         }
                     })
@@ -987,6 +1146,7 @@ public final class MainActivity extends Activity {
                         draft.name = info.displayName();
                         draft.category = category;
                         draft.unit = "件";
+                        draft.barcode = barcode;
                         draft.notes = info.notes();
                         showFoodForm(draft, false);
                     }
@@ -1008,7 +1168,7 @@ public final class MainActivity extends Activity {
                     @Override
                     public void onClick(DialogInterface dialogInterface, int which) {
                         FoodItem draft = new FoodItem();
-                        draft.notes = "条码：" + barcode;
+                        draft.barcode = barcode;
                         showFoodForm(draft, false);
                     }
                 })
@@ -1046,8 +1206,11 @@ public final class MainActivity extends Activity {
             return;
         }
 
-        showFoodForm(draft, false);
-        toast("已填入识别候选，请检查后保存");
+        if (!BarcodeUtils.isSupportedProductCode(draft.barcode)
+                || !showKnownBarcodeAction(draft.barcode, draft)) {
+            showFoodForm(draft, false);
+            toast("已填入识别候选，请检查后保存");
+        }
     }
 
     private String dateOcrDraftSummary(FoodItem draft) {
@@ -2226,10 +2389,8 @@ public final class MainActivity extends Activity {
             }
         }
 
-        return "在库 " + active + " 件 · 今日到期 " + today
-                + " · 临期 " + soon
-                + " · 已过期 " + expired
-                + " · 已用完 " + finished;
+        return "在库 " + active + " 件 · 临期 " + soon + " · 已过期 " + expired
+                + "\n今日到期 " + today + " · 已用完 " + finished;
     }
 
     private interface FilterButtonBinder {
@@ -2478,15 +2639,10 @@ public final class MainActivity extends Activity {
 
         LinearLayout quickActions = new LinearLayout(this);
         quickActions.setOrientation(LinearLayout.HORIZONTAL);
-        if (food.isFinished) {
-            Button restore = outlineButton("恢复提醒");
-            restore.setOnClickListener(new FoodActionClickListener(food, FOOD_ACTION_RESTORE));
-            quickActions.addView(restore, withMargins(weightWrap(1), 0, 0, dp(8), 0));
-        } else {
-            Button decrease = outlineButton("减少 1");
-            decrease.setOnClickListener(new FoodActionClickListener(food, FOOD_ACTION_DECREASE_ONE));
-            quickActions.addView(decrease, withMargins(weightWrap(1), 0, 0, dp(8), 0));
-        }
+
+        Button replenish = outlineButton("补货");
+        replenish.setOnClickListener(new FoodActionClickListener(food, FOOD_ACTION_REPLENISH));
+        quickActions.addView(replenish, withMargins(weightWrap(1), 0, 0, dp(8), 0));
 
         Button more = utilityButton("更多操作");
         more.setOnClickListener(new FoodActionClickListener(food, FOOD_ACTION_MORE));
@@ -2676,19 +2832,48 @@ public final class MainActivity extends Activity {
         return "手动填写";
     }
 
+    private static String compactDateTime(String value) {
+        String cleaned = FoodItem.cleanText(value);
+        if (cleaned.length() >= 16 && cleaned.charAt(10) == 'T') {
+            return cleaned.substring(0, 10) + " " + cleaned.substring(11, 16);
+        }
+        if (cleaned.length() >= 10) {
+            return cleaned.substring(0, 10);
+        }
+        return "时间未知";
+    }
+
     private void showFoodForm(final FoodItem editingFood) {
         showFoodForm(editingFood, editingFood != null);
     }
 
     private void showFoodForm(final FoodItem sourceFood, final boolean isEdit) {
+        showFoodForm(sourceFood, isEdit, isEdit ? "编辑食品" : "新增食品");
+    }
+
+    private void showFoodForm(final FoodItem sourceFood, final boolean isEdit, String formTitle) {
         final FoodItem draft = sourceFood == null ? new FoodItem() : sourceFood.copy();
 
         final EditText nameInput = input(draft.name, "食品名称", InputType.TYPE_CLASS_TEXT);
         final Spinner categoryInput = spinner(FoodData.CATEGORIES);
         categoryInput.setSelection(indexOf(FoodData.CATEGORIES, draft.category, "other"));
+        final EditText barcodeInput = input(
+                BarcodeUtils.digitsOnly(draft.barcode),
+                "商品条码（可选）",
+                InputType.TYPE_CLASS_NUMBER
+        );
 
-        final EditText quantityInput = input(isEdit ? formatNumber(draft.quantity) : "", "数量", InputType.TYPE_CLASS_NUMBER | InputType.TYPE_NUMBER_FLAG_DECIMAL);
-        final EditText remainingInput = input(isEdit ? formatNumber(draft.remainingQuantity) : "", "剩余数量", InputType.TYPE_CLASS_NUMBER | InputType.TYPE_NUMBER_FLAG_DECIMAL);
+        final boolean isReplenishment = FoodItem.cleanText(formTitle).startsWith("补货新批次");
+        final EditText quantityInput = input(
+                isEdit ? formatNumber(draft.quantity) : "",
+                isReplenishment ? "本批次入库数量" : "数量",
+                InputType.TYPE_CLASS_NUMBER | InputType.TYPE_NUMBER_FLAG_DECIMAL
+        );
+        final EditText remainingInput = input(
+                isEdit ? formatNumber(draft.remainingQuantity) : "",
+                isReplenishment ? "默认同入库数量" : "剩余数量",
+                InputType.TYPE_CLASS_NUMBER | InputType.TYPE_NUMBER_FLAG_DECIMAL
+        );
         final EditText unitInput = input(displayUnit(draft.unit), "单位，例如 盒、瓶、袋", InputType.TYPE_CLASS_TEXT);
 
         final Spinner storageInput = spinner(FoodData.STORAGE_METHODS);
@@ -2745,10 +2930,17 @@ public final class MainActivity extends Activity {
         LinearLayout basicSection = formSection("基本信息");
         addFormField(basicSection, "食品名称", nameInput);
         addFormField(basicSection, "分类", categoryInput);
+        addFormField(basicSection, "商品条码（可选，可修改）", barcodeInput);
 
         LinearLayout amountRow = formRow();
-        amountRow.addView(formField("数量", quantityInput), withMargins(weightWrap(1), 0, 0, dp(8), 0));
-        amountRow.addView(formField("剩余数量", remainingInput), weightWrap(1));
+        amountRow.addView(formField(
+                isReplenishment ? "本批次入库数量" : "数量",
+                quantityInput
+        ), withMargins(weightWrap(1), 0, 0, dp(8), 0));
+        amountRow.addView(formField(
+                isReplenishment ? "当前剩余数量" : "剩余数量",
+                remainingInput
+        ), weightWrap(1));
         basicSection.addView(amountRow, matchWrap());
 
         addFormField(basicSection, "单位", unitInput);
@@ -2989,7 +3181,7 @@ public final class MainActivity extends Activity {
         scrollView.addView(form);
 
         final AlertDialog dialog = new AlertDialog.Builder(this)
-                .setTitle(isEdit ? "编辑食品" : "新增食品")
+                .setTitle(formTitle)
                 .setView(scrollView)
                 .setNegativeButton("取消", null)
                 .setPositiveButton("保存", null)
@@ -3002,9 +3194,11 @@ public final class MainActivity extends Activity {
                     @Override
                     public void onClick(View view) {
                         FoodItem saved = buildFoodFromForm(
-                                isEdit ? sourceFood : null,
+                                sourceFood,
+                                isEdit,
                                 nameInput,
                                 categoryInput,
+                                barcodeInput,
                                 quantityInput,
                                 remainingInput,
                                 unitInput,
@@ -3050,8 +3244,10 @@ public final class MainActivity extends Activity {
 
     private FoodItem buildFoodFromForm(
             FoodItem original,
+            boolean isEdit,
             EditText nameInput,
             Spinner categoryInput,
+            EditText barcodeInput,
             EditText quantityInput,
             EditText remainingInput,
             EditText unitInput,
@@ -3072,6 +3268,12 @@ public final class MainActivity extends Activity {
         String name = clean(nameInput);
         if (name.length() == 0) {
             toast("请填写食品名称");
+            return null;
+        }
+
+        String barcode = BarcodeUtils.digitsOnly(clean(barcodeInput));
+        if (barcode.length() > 0 && !BarcodeUtils.isSupportedProductCode(barcode)) {
+            toast("商品条码格式或校验位不正确");
             return null;
         }
 
@@ -3161,7 +3363,8 @@ public final class MainActivity extends Activity {
 
         String now = DateRules.nowIsoLike();
         FoodItem item = original == null ? new FoodItem() : original.copy();
-        item.id = original == null ? "food_" + System.currentTimeMillis() : original.id;
+        item.id = isEdit && original != null ? original.id : newFoodId();
+        item.barcode = barcode;
         item.name = name;
         item.category = selectedOption(FoodData.CATEGORIES, categoryInput);
         item.quantity = quantity.doubleValue();
@@ -3181,8 +3384,21 @@ public final class MainActivity extends Activity {
         item.afterOpenShelfLifeValue = afterOpenShelfLifeValue;
         item.afterOpenShelfLifeUnit = afterOpenShelfLifeValue == null ? "" : afterOpenShelfLifeUnit;
         item.notes = clean(notesInput);
-        item.createdAt = original == null ? now : original.createdAt;
+        item.createdAt = isEdit && original != null ? original.createdAt : now;
         item.updatedAt = now;
+        item.productProfileId = ReplenishmentDraftFactory.resolveProductProfileId(
+                original,
+                item,
+                "profile_" + UUID.randomUUID().toString()
+        );
+        if (!isEdit) {
+            item.isFinished = false;
+            item.finishedAt = "";
+            item.smartReminderOffsets.clear();
+            item.smartReminderFingerprint = "";
+            item.smartReminderPlannedDaysLeft = Integer.MIN_VALUE;
+            item.smartReminderPlannedOn = "";
+        }
         item.normalizeQuantityBounds();
         return item;
     }
@@ -3201,10 +3417,10 @@ public final class MainActivity extends Activity {
         final String[] labels;
         final String[] actions;
         if (food.isFinished) {
-            labels = new String[] { "复制食品", "恢复提醒", "删除" };
-            actions = new String[] { FOOD_ACTION_COPY, FOOD_ACTION_RESTORE, FOOD_ACTION_DELETE_CONFIRM };
+            labels = new String[] { "补货", "复制当前批次", "恢复在库", "删除" };
+            actions = new String[] { FOOD_ACTION_REPLENISH, FOOD_ACTION_COPY, FOOD_ACTION_RESTORE, FOOD_ACTION_DELETE_CONFIRM };
         } else {
-            labels = new String[] { "减少 1", "剩余归 0", "补货", "复制食品", "编辑", "标记已用完", "删除" };
+            labels = new String[] { "减少 1", "剩余归 0", "补货", "复制当前批次", "编辑", "标记已用完", "删除" };
             actions = new String[] {
                     FOOD_ACTION_DECREASE_ONE,
                     FOOD_ACTION_ZERO_REMAINING,
@@ -3283,66 +3499,7 @@ public final class MainActivity extends Activity {
     }
 
     private void showReplenishDialog(final FoodItem food) {
-        FoodItem current = food.copy();
-        current.normalizeQuantityBounds();
-
-        LinearLayout form = new LinearLayout(this);
-        form.setOrientation(LinearLayout.VERTICAL);
-        form.setPadding(dp(16), dp(6), dp(16), 0);
-
-        TextView currentText = text(
-                "当前剩余 " + formatNumber(current.remainingQuantity)
-                        + "/" + formatNumber(current.quantity)
-                        + " " + displayUnit(current.unit),
-                13,
-                COLOR_MUTED,
-                Typeface.NORMAL
-        );
-        currentText.setPadding(0, 0, 0, dp(8));
-        form.addView(currentText, matchWrap());
-
-        final EditText amountInput = input("", "输入本次补货数量", InputType.TYPE_CLASS_NUMBER | InputType.TYPE_NUMBER_FLAG_DECIMAL);
-        addFormField(form, "补货数量", amountInput);
-
-        final AlertDialog dialog = new AlertDialog.Builder(this)
-                .setTitle("补货")
-                .setView(form)
-                .setNegativeButton("取消", null)
-                .setPositiveButton("保存", null)
-                .create();
-
-        dialog.setOnShowListener(new DialogInterface.OnShowListener() {
-            @Override
-            public void onShow(DialogInterface dialogInterface) {
-                dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener(new View.OnClickListener() {
-                    @Override
-                    public void onClick(View view) {
-                        Double amount = parseNumber(clean(amountInput), null);
-                        if (amount == null || amount.doubleValue() <= 0) {
-                            toast("补货数量必须大于 0");
-                            return;
-                        }
-
-                        FoodItem updated = food.copy();
-                        updated.normalizeQuantityBounds();
-                        updated.quantity += amount.doubleValue();
-                        updated.remainingQuantity += amount.doubleValue();
-                        updated.isFinished = false;
-                        updated.finishedAt = "";
-                        updated.updatedAt = DateRules.nowIsoLike();
-                        updated.normalizeQuantityBounds();
-                        replaceFood(updated);
-                        if (!saveFoodsRefreshReminders()) {
-                            return;
-                        }
-                        dialog.dismiss();
-                        toast("已补货 +" + formatNumber(amount.doubleValue()) + " " + displayUnit(updated.unit));
-                    }
-                });
-            }
-        });
-
-        dialog.show();
+        showReplenishmentForm(food, null);
     }
 
     private void copyFood(FoodItem food) {
@@ -3419,10 +3576,10 @@ public final class MainActivity extends Activity {
 
     private void confirmRestoreFood(final FoodItem food) {
         new AlertDialog.Builder(this)
-                .setTitle("恢复提醒")
-                .setMessage("“" + food.name + "”会回到在库食品，重新参与到期提醒。")
+                .setTitle("恢复在库")
+                .setMessage("“" + food.name + "”会回到在库食品；若剩余数量为 0，将恢复为 1，并重新参与到期提醒。")
                 .setNegativeButton("取消", null)
-                .setPositiveButton("恢复提醒", new FoodDialogActionListener(food, FOOD_ACTION_RESTORE))
+                .setPositiveButton("恢复在库", new FoodDialogActionListener(food, FOOD_ACTION_RESTORE))
                 .show();
     }
 
@@ -3443,7 +3600,7 @@ public final class MainActivity extends Activity {
         if (!saveFoodsRefreshReminders()) {
             return;
         }
-        toast("已恢复提醒");
+        toast("已恢复在库");
     }
 
     private void confirmDelete(final FoodItem food) {

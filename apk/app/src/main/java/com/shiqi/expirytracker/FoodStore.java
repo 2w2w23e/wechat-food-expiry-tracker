@@ -14,7 +14,7 @@ import java.util.Set;
 
 final class FoodStore {
     private static final String PREFS_NAME = "shiqi_android_v0";
-    static final int CURRENT_SCHEMA_VERSION = 1;
+    static final int CURRENT_SCHEMA_VERSION = 2;
     static final String STORAGE_KEY = "food_expiry_tracker_foods_v0";
     static final String MIGRATION_BACKUP_KEY = STORAGE_KEY + "_pre_schema_migration_backup";
     static final String RECENT_BACKUP_KEY_0 = STORAGE_KEY + "_recent_backup_0";
@@ -55,6 +55,10 @@ final class FoodStore {
             }
         }
         return result.foods;
+    }
+
+    ProductProfileIndex loadProductProfileIndex() {
+        return ProductProfileIndex.fromFoods(loadFoods());
     }
 
     boolean saveFoods(List<FoodItem> foods) {

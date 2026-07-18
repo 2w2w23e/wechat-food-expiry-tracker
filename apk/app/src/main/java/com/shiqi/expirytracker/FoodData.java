@@ -278,6 +278,11 @@ final class FoodData {
             return -1;
         }
 
+        String barcode = BarcodeUtils.digitsOnly(food.barcode);
+        if (barcode.length() > 0 && barcode.contains(query)) {
+            return 5;
+        }
+
         String name = normalizeSearchText(food.name);
         int nameIndex = name.indexOf(query);
         if (nameIndex >= 0) {

@@ -34,6 +34,10 @@ final class UnifiedRecognitionPayload {
         String cleanCategory = FoodItem.cleanText(productCategory);
         String cleanNotes = FoodItem.cleanText(productNotes);
 
+        if (BarcodeUtils.isSupportedProductCode(cleanBarcode)) {
+            draft.barcode = cleanBarcode;
+        }
+
         if (cleanName.length() > 0) {
             draft.name = cleanName;
         } else if (BarcodeUtils.isSupportedProductCode(cleanBarcode)) {

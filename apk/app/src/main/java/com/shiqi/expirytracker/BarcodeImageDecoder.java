@@ -1,6 +1,7 @@
 package com.shiqi.expirytracker;
 
 import android.graphics.Bitmap;
+import android.graphics.Matrix;
 
 import com.google.zxing.BarcodeFormat;
 import com.google.zxing.BinaryBitmap;
@@ -63,7 +64,27 @@ final class BarcodeImageDecoder {
             }
         }
 
+        Bitmap upsideDown = rotate(bitmap, 180f);
+        if (upsideDown != bitmap) {
+            try {
+                decoded = decodeBitmap(upsideDown);
+                if (decoded.length() > 0) {
+                    return decoded;
+                }
+            } finally {
+                upsideDown.recycle();
+            }
+        }
+
         return "";
+    }
+
+    static String decodeProductBarcodeFast(Bitmap bitmap) {
+        if (bitmap == null || bitmap.getWidth() <= 0 || bitmap.getHeight() <= 0) {
+            return "";
+        }
+
+        return decodeBitmap(bitmap);
     }
 
     static String decodePreviewFrame(byte[] data, int width, int height) {
@@ -198,34 +219,21 @@ final class BarcodeImageDecoder {
     }
 
     private static Bitmap rotateRight(Bitmap bitmap) {
-        int width = bitmap.getWidth();
-        int height = bitmap.getHeight();
-        if (width <= 0 || height <= 0) {
-            return bitmap;
-        }
-
-        Bitmap rotated = Bitmap.createBitmap(height, width, Bitmap.Config.ARGB_8888);
-        for (int y = 0; y < height; y++) {
-            for (int x = 0; x < width; x++) {
-                rotated.setPixel(height - 1 - y, x, bitmap.getPixel(x, y));
-            }
-        }
-        return rotated;
+        return rotate(bitmap, 90f);
     }
 
     private static Bitmap rotateLeft(Bitmap bitmap) {
+        return rotate(bitmap, -90f);
+    }
+
+    private static Bitmap rotate(Bitmap bitmap, float degrees) {
         int width = bitmap.getWidth();
         int height = bitmap.getHeight();
         if (width <= 0 || height <= 0) {
             return bitmap;
         }
-
-        Bitmap rotated = Bitmap.createBitmap(height, width, Bitmap.Config.ARGB_8888);
-        for (int y = 0; y < height; y++) {
-            for (int x = 0; x < width; x++) {
-                rotated.setPixel(y, width - 1 - x, bitmap.getPixel(x, y));
-            }
-        }
-        return rotated;
+        Matrix matrix = new Matrix();
+        matrix.postRotate(degrees);
+        return Bitmap.createBitmap(bitmap, 0, 0, width, height, matrix, true);
     }
 }

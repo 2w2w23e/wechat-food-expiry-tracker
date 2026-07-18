@@ -76,6 +76,43 @@ final class BarcodeUtils {
         return (length == 8 || length == 12 || length == 13 || length == 14) && hasValidCheckDigit(code);
     }
 
+    static String productCodeFromScannerValue(String value, boolean retailSymbology) {
+        String code = extractProductCode(value);
+        if (!isSupportedProductCode(code)) {
+            return "";
+        }
+        if (retailSymbology || code.length() == 13 || code.length() == 14) {
+            return code;
+        }
+
+        String payload = FoodItem.cleanText(value).toLowerCase(Locale.US);
+        boolean explicitlyIdentified = payload.contains("gtin")
+                || payload.contains("ean")
+                || payload.contains("upc")
+                || payload.contains("barcode")
+                || payload.contains("bar_code")
+                || payload.contains("/01/")
+                || payload.contains("(01)");
+        return explicitlyIdentified ? code : "";
+    }
+
+    static String recoverEan13FromPrintedDigits(String value) {
+        String text = FoodItem.cleanText(value);
+        if (text.length() == 0 || !text.matches("[0-9\\s-]+")) {
+            return "";
+        }
+        String digits = digitsOnly(text);
+        if (digits.length() != 12 && digits.length() != 13) {
+            return "";
+        }
+        String prefix = digits.substring(0, 12);
+        if (prefix.startsWith("19") || prefix.startsWith("20")) {
+            return "";
+        }
+        String recovered = prefix + checkDigitForPrefix(prefix);
+        return isSupportedProductCode(recovered) ? recovered : "";
+    }
+
     static String toGtin14(String value) {
         String code = digitsOnly(value);
         if (!isSupportedProductCode(code) || code.length() > 14) {
@@ -238,5 +275,16 @@ final class BarcodeUtils {
         int expected = (10 - (sum % 10)) % 10;
         int actual = code.charAt(code.length() - 1) - '0';
         return expected == actual;
+    }
+
+    private static int checkDigitForPrefix(String prefix) {
+        int sum = 0;
+        boolean triple = true;
+        for (int index = prefix.length() - 1; index >= 0; index--) {
+            int digit = prefix.charAt(index) - '0';
+            sum += triple ? digit * 3 : digit;
+            triple = !triple;
+        }
+        return (10 - (sum % 10)) % 10;
     }
 }

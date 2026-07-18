@@ -3,13 +3,12 @@ package com.shiqi.expirytracker;
 import android.content.Context;
 import android.content.SharedPreferences;
 
+import java.util.ArrayList;
 import java.util.List;
 
 final class BarcodeHistoryStore {
     private static final String PREFS_NAME = "shiqi_barcode_history_v0";
     static final String STORAGE_KEY = "barcode_history_templates_v0";
-    private static final int MAX_HISTORY_ITEMS = 50;
-
     private final SharedPreferences preferences;
 
     BarcodeHistoryStore(Context context) {
@@ -22,18 +21,24 @@ final class BarcodeHistoryStore {
     }
 
     BarcodeHistoryItem findByBarcode(String barcode) {
+        List<BarcodeHistoryItem> matches = findAllByBarcode(barcode);
+        return matches.isEmpty() ? null : matches.get(0);
+    }
+
+    List<BarcodeHistoryItem> findAllByBarcode(String barcode) {
         String normalizedBarcode = BarcodeUtils.digitsOnly(barcode);
+        List<BarcodeHistoryItem> matches = new ArrayList<BarcodeHistoryItem>();
         if (normalizedBarcode.length() == 0) {
-            return null;
+            return matches;
         }
 
         List<BarcodeHistoryItem> items = loadHistory();
         for (BarcodeHistoryItem item : items) {
             if (normalizedBarcode.equals(item.barcode)) {
-                return item.copy();
+                matches.add(item.copy());
             }
         }
-        return null;
+        return matches;
     }
 
     void saveConfirmedDraft(BarcodeHistoryItem draft) {
@@ -48,8 +53,7 @@ final class BarcodeHistoryStore {
         List<BarcodeHistoryItem> next = BarcodeHistoryItem.upsertConfirmedTemplate(
                 loadHistory(),
                 confirmed,
-                updatedAt,
-                MAX_HISTORY_ITEMS
+                updatedAt
         );
         preferences.edit()
                 .putString(STORAGE_KEY, BarcodeHistoryItem.serializeList(next))
@@ -57,7 +61,19 @@ final class BarcodeHistoryStore {
     }
 
     void saveConfirmedDraft(String barcode, String name, String category, String unit, String notes) {
+        saveConfirmedDraft("", barcode, name, category, unit, notes);
+    }
+
+    void saveConfirmedDraft(
+            String productProfileId,
+            String barcode,
+            String name,
+            String category,
+            String unit,
+            String notes
+    ) {
         BarcodeHistoryItem draft = new BarcodeHistoryItem();
+        draft.productProfileId = productProfileId;
         draft.barcode = barcode;
         draft.name = name;
         draft.category = category;

@@ -21,12 +21,22 @@ final class DateOcrResultPayload {
             String shelfLifeUnit
     ) {
         FoodItem draft = new FoodItem();
-        draft.productionDate = DateRules.isValidDateString(FoodItem.cleanText(productionDate))
-                ? FoodItem.cleanText(productionDate)
+        String cleanedProductionDate = FoodItem.cleanText(productionDate);
+        draft.productionDate = DateRules.isValidDateString(cleanedProductionDate)
+                && cleanedProductionDate.compareTo(DateRules.getTodayString()) <= 0
+                ? cleanedProductionDate
                 : "";
         draft.expiryDate = DateRules.isValidDateString(FoodItem.cleanText(expiryDate))
                 ? FoodItem.cleanText(expiryDate)
                 : "";
+        if (expiryCalculated && draft.productionDate.length() == 0) {
+            draft.expiryDate = "";
+        }
+        if (draft.productionDate.length() > 0
+                && draft.expiryDate.length() > 0
+                && draft.expiryDate.compareTo(draft.productionDate) < 0) {
+            draft.expiryDate = "";
+        }
         draft.shelfLifeValue = shelfLifeValue != null && shelfLifeValue.intValue() > 0 ? shelfLifeValue : null;
         draft.shelfLifeUnit = draft.shelfLifeValue != null && DateRules.isShelfLifeUnit(FoodItem.cleanText(shelfLifeUnit))
                 ? FoodItem.cleanText(shelfLifeUnit)
@@ -42,8 +52,20 @@ final class DateOcrResultPayload {
             return new FoodItem();
         }
 
-        String productionDate = vote.productionDate == null ? "" : vote.productionDate.value;
+        DateOcrFrameVoter.StableDate production = vote.productionDate;
         DateOcrFrameVoter.StableDate expiry = bestExpiryDate(vote);
+        if (production != null && expiry != null
+                && expiry.value.compareTo(production.value) < 0) {
+            if (production.weakHint && !expiry.weakHint) {
+                production = null;
+            } else if (!production.weakHint && expiry.weakHint) {
+                expiry = null;
+            } else {
+                production = null;
+                expiry = null;
+            }
+        }
+        String productionDate = production == null ? "" : production.value;
         String expiryDate = expiry == null ? "" : expiry.value;
         boolean expiryCalculated = expiry != null && expiry.calculated;
         Integer shelfLifeValue = vote.shelfLife == null ? null : Integer.valueOf(vote.shelfLife.value);
@@ -66,6 +88,12 @@ final class DateOcrResultPayload {
         }
         if (vote.expiryDate != null) {
             return vote.expiryDate;
+        }
+        if (vote.calculatedExpiryDate == null
+                || vote.productionDate == null
+                || vote.productionDate.value.compareTo(DateRules.getTodayString()) > 0
+                || vote.calculatedExpiryDate.value.compareTo(vote.productionDate.value) < 0) {
+            return null;
         }
         return vote.calculatedExpiryDate;
     }
