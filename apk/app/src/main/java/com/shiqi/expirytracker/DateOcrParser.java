@@ -187,6 +187,57 @@ final class DateOcrParser {
         );
     }
 
+    static String dominantRepeatedPastCompactDate(String rawText, String referenceDate) {
+        String text = normalizeText(rawText);
+        String today = DateRules.isValidDateString(referenceDate)
+                ? referenceDate
+                : DateRules.getTodayString();
+        Map<String, Integer> counts = new LinkedHashMap<String, Integer>();
+        countPastCompactDates(text, COMPACT_DATE, today, counts);
+        countPastCompactDates(text, PACKED_PRODUCTION_CODE, today, counts);
+
+        String best = "";
+        int bestCount = 0;
+        int runnerUpCount = 0;
+        for (Map.Entry<String, Integer> entry : counts.entrySet()) {
+            int count = entry.getValue().intValue();
+            if (count > bestCount) {
+                runnerUpCount = bestCount;
+                best = entry.getKey();
+                bestCount = count;
+            } else {
+                runnerUpCount = Math.max(runnerUpCount, count);
+            }
+        }
+        return bestCount >= 2 && bestCount > runnerUpCount ? best : "";
+    }
+
+    private static void countPastCompactDates(
+            String text,
+            Pattern pattern,
+            String today,
+            Map<String, Integer> counts
+    ) {
+        Matcher matcher = pattern.matcher(text);
+        while (matcher.find()) {
+            if (pattern == PACKED_PRODUCTION_CODE
+                    && BarcodeUtils.isSupportedProductCode(matcher.group())) {
+                continue;
+            }
+            String normalized = normalizeDate(matcher.group(1));
+            if (!DateRules.isValidDateString(normalized)
+                    || normalized.compareTo(today) > 0) {
+                continue;
+            }
+            int ageDays = DateRules.daysBetween(normalized, today);
+            if (ageDays < 0 || ageDays > (366 * 10)) {
+                continue;
+            }
+            Integer previous = counts.get(normalized);
+            counts.put(normalized, Integer.valueOf(previous == null ? 1 : previous.intValue() + 1));
+        }
+    }
+
     private static void collectPackedProductionCodes(String text, List<DateCandidate> productionDates) {
         Matcher matcher = PACKED_PRODUCTION_CODE.matcher(text);
         while (matcher.find()) {

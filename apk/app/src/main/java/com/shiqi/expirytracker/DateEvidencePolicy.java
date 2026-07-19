@@ -19,6 +19,22 @@ final class DateEvidencePolicy {
                 false
         );
         latest = retainDominantProductionDate(latest);
+        if (latest.productionDates.isEmpty() && !latest.shelfLives.isEmpty()) {
+            String dominantPastDate = DateOcrParser.dominantRepeatedPastCompactDate(
+                    latestFrameText,
+                    DateRules.getTodayString()
+            );
+            if (dominantPastDate.length() > 0) {
+                latest = apply(
+                        DateOcrParser.parse(
+                                "生产日期 " + dominantPastDate + "\n" + FoodItem.cleanText(latestFrameText)
+                        ),
+                        "",
+                        false
+                );
+                latest = retainDominantProductionDate(latest);
+            }
+        }
         DateOcrFrameVoter.VoteResult direct = DateOcrFrameVoter.vote(
                 Collections.singletonList(latest),
                 1
