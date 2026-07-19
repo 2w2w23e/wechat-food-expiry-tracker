@@ -750,7 +750,7 @@ public final class DateOcrScanActivity extends ComponentActivity {
                 currentVideoFrameRatio = frameRatio;
                 currentFrameTimestampUs = frameUs;
                 videoDetailFrame = longVideoProfile || frameUs >= Math.round(durationUs * 0.58d);
-                Bitmap frame = retriever.getFrameAtTime(frameUs, MediaMetadataRetriever.OPTION_CLOSEST);
+                Bitmap frame = retrieveReplayFrame(retriever, frameUs);
                 scannedFrames++;
                 if (frame == null) {
                     updateHighFrameVideoReplayProgress(
@@ -3142,6 +3142,45 @@ public final class DateOcrScanActivity extends ComponentActivity {
 
     private int clamp(int value, int min, int max) {
         return Math.max(min, Math.min(max, value));
+    }
+
+    private Bitmap retrieveReplayFrame(MediaMetadataRetriever retriever, long frameUs) {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O_MR1) {
+            int sourceWidth = videoMetadataInt(
+                    retriever,
+                    MediaMetadataRetriever.METADATA_KEY_VIDEO_WIDTH
+            );
+            int sourceHeight = videoMetadataInt(
+                    retriever,
+                    MediaMetadataRetriever.METADATA_KEY_VIDEO_HEIGHT
+            );
+            int largestSide = Math.max(sourceWidth, sourceHeight);
+            if (sourceWidth > 0 && sourceHeight > 0 && largestSide > 0) {
+                double scale = Math.min(1d, VIDEO_MAX_FRAME_SIDE / (double) largestSide);
+                int targetWidth = Math.max(1, (int) Math.round(sourceWidth * scale));
+                int targetHeight = Math.max(1, (int) Math.round(sourceHeight * scale));
+                try {
+                    return retriever.getScaledFrameAtTime(
+                            frameUs,
+                            MediaMetadataRetriever.OPTION_CLOSEST,
+                            targetWidth,
+                            targetHeight
+                    );
+                } catch (RuntimeException error) {
+                    Log.d("ShiqiRecognition", "Scaled video frame unavailable; using full frame", error);
+                }
+            }
+        }
+        return retriever.getFrameAtTime(frameUs, MediaMetadataRetriever.OPTION_CLOSEST);
+    }
+
+    private int videoMetadataInt(MediaMetadataRetriever retriever, int key) {
+        try {
+            String value = retriever.extractMetadata(key);
+            return value == null ? 0 : Math.max(0, Integer.parseInt(value));
+        } catch (Exception ignored) {
+            return 0;
+        }
     }
 
     private long videoDurationUs(MediaMetadataRetriever retriever) {
