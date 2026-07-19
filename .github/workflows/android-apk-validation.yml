@@ -71,6 +71,8 @@ jobs:
 
       - name: Create moving Chinese packaging video
         run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq ffmpeg fonts-noto-cjk
           FONT="$(fc-match -f '%{file}' 'Noto Sans CJK SC' | head -n 1)"
           ffmpeg -hide_banner -loglevel error             -f lavfi -i color=c=0xc8c9bd:s=720x1280:r=30:d=6             -vf "drawtext=fontfile='${FONT}':text='酸菜':fontcolor=0x303229:fontsize=96:x='(w-text_w)/2+18*sin(t*2)':y=220,drawtext=fontfile='${FONT}':text='生产日期 2026-06-12':fontcolor=0x3b3d35:fontsize=48:x='(w-text_w)/2+12*sin(t*2)':y=610,drawtext=fontfile='${FONT}':text='保质期 12 个月':fontcolor=0x3b3d35:fontsize=48:x='(w-text_w)/2+12*sin(t*2)':y=690"             -c:v libx264 -pix_fmt yuv420p -movflags +faststart qa-chinese-package.mp4
 
