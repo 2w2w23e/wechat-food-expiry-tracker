@@ -89,8 +89,7 @@ public final class DateOcrScanActivity extends ComponentActivity {
     private static final int REQUEST_CAMERA_PERMISSION = 6201;
     private static final int REQUEST_VIDEO_REPLAY = 6202;
     private static final int REQUEST_IMAGE_RECOGNITION = 6203;
-    private static final long ANALYZE_INTERVAL_MS = 260L;
-    private static final long VIDEO_FRAME_INTERVAL_US = 300000L;
+    private static final long CAMERA_CAPTURE_INTERVAL_MS = 66L;
     private static final int VIDEO_MAX_FRAME_SIDE = 1280;
     private static final int STILL_IMAGE_MAX_SIDE = 2048;
     private static final int STILL_IMAGE_MIN_SIDE = 1400;
@@ -720,6 +719,12 @@ public final class DateOcrScanActivity extends ComponentActivity {
     private void replayVideoFrames(Uri uri, String path) {
         MediaMetadataRetriever retriever = new MediaMetadataRetriever();
         int analyzedFrames = 0;
+        int scannedFrames = 0;
+        Bitmap selectedFrame = null;
+        long selectedFrameUs = 0L;
+        double selectedFrameRatio = 0d;
+        double selectedFrameScore = -1d;
+        boolean selectedDetailFrame = false;
         final int replayGeneration = recognitionGeneration;
         try {
             if (path != null && path.length() > 0) {
@@ -734,16 +739,31 @@ public final class DateOcrScanActivity extends ComponentActivity {
 
             longVideoProfile = durationUs > 20000000L;
             List<Long> frameTimesUs = videoFrameTimes(durationUs, longVideoProfile);
-            final int expectedFrames = frameTimesUs.size();
+            int selectionWindow = RecognitionFrameSelector.highRateVideoSelectionWindow(
+                    frameTimesUs.size(),
+                    longVideoProfile
+            );
+            final int expectedFrames = Math.max(
+                    1,
+                    (frameTimesUs.size() + selectionWindow - 1) / selectionWindow
+            );
             for (int frameIndex = 0; videoReplayActive && frameIndex < frameTimesUs.size(); frameIndex++) {
                 long frameUs = frameTimesUs.get(frameIndex).longValue();
-                currentVideoFrameRatio = durationUs <= 0L
+                double frameRatio = durationUs <= 0L
                         ? 0d
                         : Math.max(0d, Math.min(1d, frameUs / (double) durationUs));
+                currentVideoFrameRatio = frameRatio;
                 currentFrameTimestampUs = frameUs;
                 videoDetailFrame = longVideoProfile || frameUs >= Math.round(durationUs * 0.58d);
                 Bitmap frame = retriever.getFrameAtTime(frameUs, MediaMetadataRetriever.OPTION_CLOSEST);
+                scannedFrames++;
                 if (frame == null) {
+                    updateHighFrameVideoReplayProgress(
+                            scannedFrames,
+                            frameTimesUs.size(),
+                            analyzedFrames,
+                            expectedFrames
+                    );
                     continue;
                 }
                 if (frameIndex == 0 && isLikelyPhoneScreenRecording(frame, durationUs)) {
@@ -768,30 +788,77 @@ public final class DateOcrScanActivity extends ComponentActivity {
                 }
                 if (appScreenRecordingDetected
                         && longVideoProfile
-                        && (currentVideoFrameRatio < 0.06d || currentVideoFrameRatio > 0.89d)) {
+                        && (frameRatio < 0.06d || frameRatio > 0.89d)) {
                     scaled.recycle();
-                    analyzedFrames++;
-                    updateVideoReplayProgress(analyzedFrames, expectedFrames);
+                    updateHighFrameVideoReplayProgress(
+                            scannedFrames,
+                            frameTimesUs.size(),
+                            analyzedFrames,
+                            expectedFrames
+                    );
                     continue;
                 }
 
-                showReplayFrame(scaled);
-                if (cameraSimulationActive) {
-                    analyzeBitmapFrame(scaled, false, true, replayGeneration);
+                LowContrastTextPreprocessor.FrameMetrics metrics =
+                        LowContrastTextPreprocessor.measureFrame(scaled);
+                double candidateScore = RecognitionFrameSelector.highRateVideoFrameScore(
+                        metrics.visualScore,
+                        metrics.sharpness,
+                        metrics.glareRatio
+                );
+                if (selectedFrame == null || candidateScore > selectedFrameScore) {
+                    recycleBitmap(selectedFrame);
+                    selectedFrame = scaled;
+                    selectedFrameUs = frameUs;
+                    selectedFrameRatio = frameRatio;
+                    selectedFrameScore = candidateScore;
+                    selectedDetailFrame = videoDetailFrame;
                 } else {
-                    analyzeBitmapFrame(scaled, false);
+                    scaled.recycle();
+                }
+
+                boolean windowComplete = scannedFrames % selectionWindow == 0
+                        || frameIndex == frameTimesUs.size() - 1;
+                if (!windowComplete) {
+                    updateHighFrameVideoReplayProgress(
+                            scannedFrames,
+                            frameTimesUs.size(),
+                            analyzedFrames,
+                            expectedFrames
+                    );
+                    continue;
+                }
+                if (selectedFrame == null) {
+                    continue;
+                }
+
+                currentFrameTimestampUs = selectedFrameUs;
+                currentVideoFrameRatio = selectedFrameRatio;
+                videoDetailFrame = selectedDetailFrame;
+                Bitmap frameForRecognition = selectedFrame;
+                selectedFrame = null;
+                selectedFrameScore = -1d;
+                showReplayFrame(frameForRecognition);
+                if (cameraSimulationActive) {
+                    analyzeBitmapFrame(frameForRecognition, false, true, replayGeneration);
+                } else {
+                    analyzeBitmapFrame(frameForRecognition, false);
                 }
                 analyzedFrames++;
-                updateVideoReplayProgress(analyzedFrames, expectedFrames);
+                updateHighFrameVideoReplayProgress(
+                        scannedFrames,
+                        frameTimesUs.size(),
+                        analyzedFrames,
+                        expectedFrames
+                );
                 if (cameraSimulationActive
                         && analyzedFrames >= 5
                         && hasCompleteVideoLabelCandidate()) {
                     break;
                 }
-                if (currentVideoFrameRatio >= 0.90d && hasCompleteVideoLabelCandidate()) {
+                if (selectedFrameRatio >= 0.90d && hasCompleteVideoLabelCandidate()) {
                     break;
                 }
-                SystemClock.sleep(Math.max(110L, ANALYZE_INTERVAL_MS / 2L));
             }
 
             refineIncompleteVideoDateFromKeyframe(retriever, durationUs);
@@ -830,6 +897,7 @@ public final class DateOcrScanActivity extends ComponentActivity {
                 }
             });
         } finally {
+            recycleBitmap(selectedFrame);
             videoReplayActive = false;
             cameraSimulationActive = false;
             cameraSimulationScreenRecording = false;
@@ -841,6 +909,29 @@ public final class DateOcrScanActivity extends ComponentActivity {
             } catch (Exception ignored) {
             }
         }
+    }
+
+    private void updateHighFrameVideoReplayProgress(
+            final int scannedFrames,
+            final int candidateFrames,
+            final int analyzedFrames,
+            final int expectedAnalyzedFrames
+    ) {
+        videoAnalyzedFrames = analyzedFrames;
+        videoExpectedFrames = expectedAnalyzedFrames;
+        runOnUiThread(new Runnable() {
+            @Override
+            public void run() {
+                statusBadge.setText("高帧扫描");
+                statusText.setText(
+                        "已扫描 " + Math.min(scannedFrames, candidateFrames)
+                                + "/" + candidateFrames
+                                + " 帧，精选 " + analyzedFrames
+                                + "/" + expectedAnalyzedFrames
+                                + " 帧识别中文包装和日期。"
+                );
+            }
+        });
     }
 
     private void startImageRecognition(Uri uri) {
@@ -3102,27 +3193,7 @@ public final class DateOcrScanActivity extends ComponentActivity {
     }
 
     private List<Long> videoFrameTimes(long durationUs, boolean longVideo) {
-        List<Long> times = new ArrayList<Long>();
-        if (longVideo) {
-            double[] ratios = new double[] {
-                    0d, 0.12d, 0.25d, 0.38d, 0.52d,
-                    0.65d, 0.70d, 0.75d, 0.82d, 0.86d, 0.88d
-            };
-            for (double ratio : ratios) {
-                times.add(Long.valueOf(Math.min(durationUs, Math.round(durationUs * ratio))));
-            }
-        } else {
-            for (double ratio : SHORT_VIDEO_FRAME_RATIOS) {
-                long frameUs = Math.min(durationUs, Math.max(0L, Math.round(durationUs * ratio)));
-                if (times.isEmpty() || times.get(times.size() - 1).longValue() != frameUs) {
-                    times.add(Long.valueOf(frameUs));
-                }
-            }
-        }
-        if (times.isEmpty()) {
-            times.add(Long.valueOf(0L));
-        }
-        return times;
+        return RecognitionFrameSelector.highRateVideoFrameTimes(durationUs, longVideo);
     }
 
     private Bitmap scaleReplayFrame(Bitmap bitmap) {
@@ -3760,8 +3831,8 @@ public final class DateOcrScanActivity extends ComponentActivity {
                     statusText.setText(barcodeLookupOnly
                             ? "请对准商品条码，连续两帧一致后会自动查找。"
                             : dateOnlyMode
-                            ? "保持约 15–25 厘米，让日期小字清晰占满识别框；不清晰时轻点日期对焦。"
-                            : "正在寻找条码、中文商品名和日期，请让包装主体占满识别框。");
+                            ? "高帧扫描已启动。保持约 15–25 厘米，让日期小字清晰占满识别框。"
+                            : "高帧扫描已启动，正在优先识别中文商品名、条码和包装日期。");
                 } catch (Exception error) {
                     showCameraUnavailable("相机启动失败，请检查相机权限或重新打开应用。");
                     Toast.makeText(DateOcrScanActivity.this, "相机启动失败", Toast.LENGTH_SHORT).show();
@@ -3908,7 +3979,13 @@ public final class DateOcrScanActivity extends ComponentActivity {
 
     private void analyzeImage(final ImageProxy imageProxy) {
         long now = SystemClock.uptimeMillis();
-        if (!cameraBound || analysisInFlight || now - lastAnalyzeAt < ANALYZE_INTERVAL_MS) {
+        if (!RecognitionFrameSelector.shouldCaptureLatestCameraFrame(
+                cameraBound,
+                now,
+                lastAnalyzeAt,
+                CAMERA_CAPTURE_INTERVAL_MS,
+                analysisInFlight
+        )) {
             imageProxy.close();
             return;
         }
