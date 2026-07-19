@@ -93,11 +93,6 @@ public final class DateOcrScanActivity extends ComponentActivity {
     private static final int VIDEO_MAX_FRAME_SIDE = 1280;
     private static final int STILL_IMAGE_MAX_SIDE = 2048;
     private static final int STILL_IMAGE_MIN_SIDE = 1400;
-    private static final double[] SHORT_VIDEO_FRAME_RATIOS = new double[] {
-            0.00d, 0.10d, 0.20d, 0.30d, 0.40d, 0.50d, 0.60d, 0.70d,
-            0.80d, 0.85d, 0.90d, 0.95d, 0.99d
-    };
-
     private PreviewView previewView;
     private ImageView replayFrameView;
     private TextView statusBadge;
@@ -917,6 +912,13 @@ public final class DateOcrScanActivity extends ComponentActivity {
             final int analyzedFrames,
             final int expectedAnalyzedFrames
     ) {
+        boolean recognitionAdvanced = analyzedFrames > videoAnalyzedFrames;
+        int progressStep = Math.max(1, candidateFrames / 20);
+        if (!recognitionAdvanced
+                && scannedFrames < candidateFrames
+                && scannedFrames % progressStep != 0) {
+            return;
+        }
         videoAnalyzedFrames = analyzedFrames;
         videoExpectedFrames = expectedAnalyzedFrames;
         runOnUiThread(new Runnable() {
