@@ -120,6 +120,118 @@ final class LowContrastTextPreprocessor {
         }
     }
 
+    /**
+     * Recovers both dark laser marks and bright embossed highlights when the foreground
+     * differs only slightly from the package. Morphological black-hat and top-hat passes
+     * are fused before local thresholding so neither print polarity is assumed.
+     */
+    static Bitmap enhanceBidirectionalDateStrokes(Bitmap source) {
+        if (source == null || source.isRecycled() || !isAvailable()) {
+            return null;
+        }
+
+        Mat rgba = new Mat();
+        Mat gray = new Mat();
+        Mat blackHat = new Mat();
+        Mat topHat = new Mat();
+        Mat strokes = new Mat();
+        Mat normalized = new Mat();
+        Mat binary = new Mat();
+        Mat closed = new Mat();
+        Mat textKernel = null;
+        Mat joinKernel = null;
+        try {
+            Utils.bitmapToMat(source, rgba);
+            Imgproc.cvtColor(rgba, gray, Imgproc.COLOR_RGBA2GRAY);
+            int kernelWidth = Math.max(9, Math.min(31, ((gray.cols() / 45) | 1)));
+            int kernelHeight = Math.max(3, Math.min(9, ((gray.rows() / 120) | 1)));
+            textKernel = Imgproc.getStructuringElement(
+                    Imgproc.MORPH_RECT,
+                    new Size(kernelWidth, kernelHeight)
+            );
+            Imgproc.morphologyEx(gray, blackHat, Imgproc.MORPH_BLACKHAT, textKernel);
+            Imgproc.morphologyEx(gray, topHat, Imgproc.MORPH_TOPHAT, textKernel);
+            Core.max(blackHat, topHat, strokes);
+            Core.normalize(strokes, normalized, 0d, 255d, Core.NORM_MINMAX);
+
+            int blockSize = Math.max(15, Math.min(41, ((Math.min(gray.cols(), gray.rows()) / 18) | 1)));
+            Imgproc.adaptiveThreshold(
+                    normalized,
+                    binary,
+                    255d,
+                    Imgproc.ADAPTIVE_THRESH_GAUSSIAN_C,
+                    Imgproc.THRESH_BINARY,
+                    blockSize,
+                    3d
+            );
+            joinKernel = Imgproc.getStructuringElement(Imgproc.MORPH_RECT, new Size(2, 2));
+            Imgproc.morphologyEx(binary, closed, Imgproc.MORPH_CLOSE, joinKernel);
+
+            Bitmap bitmap = Bitmap.createBitmap(
+                    closed.cols(),
+                    closed.rows(),
+                    Bitmap.Config.ARGB_8888
+            );
+            Utils.matToBitmap(closed, bitmap);
+            return bitmap;
+        } catch (Throwable error) {
+            Log.w(TAG, "Bidirectional date-stroke enhancement failed for one frame", error);
+            return null;
+        } finally {
+            if (joinKernel != null) {
+                joinKernel.release();
+            }
+            if (textKernel != null) {
+                textKernel.release();
+            }
+            closed.release();
+            binary.release();
+            normalized.release();
+            strokes.release();
+            topHat.release();
+            blackHat.release();
+            gray.release();
+            rgba.release();
+        }
+    }
+
+    static Bitmap enhanceFaintDateText(Bitmap source, boolean invert) {
+        if (source == null || source.isRecycled() || !isAvailable()) {
+            return null;
+        }
+        Mat rgba = new Mat();
+        Mat gray = new Mat();
+        Mat enhanced = new Mat();
+        CLAHE clahe = null;
+        try {
+            Utils.bitmapToMat(source, rgba);
+            Imgproc.cvtColor(rgba, gray, Imgproc.COLOR_RGBA2GRAY);
+            clahe = Imgproc.createCLAHE(5.0d, new Size(8, 4));
+            clahe.apply(gray, enhanced);
+            if (invert) {
+                Core.bitwise_not(enhanced, enhanced);
+            }
+            Bitmap bitmap = Bitmap.createBitmap(
+                    enhanced.cols(),
+                    enhanced.rows(),
+                    Bitmap.Config.ARGB_8888
+            );
+            Utils.matToBitmap(enhanced, bitmap);
+            return bitmap;
+        } catch (Throwable error) {
+            Log.w(TAG, "Faint date-text enhancement failed for one frame", error);
+            return null;
+        } finally {
+            if (clahe != null) {
+                clahe.collectGarbage();
+                clahe.clear();
+            }
+            enhanced.release();
+            gray.release();
+            rgba.release();
+        }
+    }
+
     static Bitmap binarizeText(Bitmap source, boolean invert) {
         if (source == null || source.isRecycled() || !isAvailable()) {
             return null;

@@ -972,6 +972,7 @@ public final class LocalLogicTest {
         runFoodExcelImporterTests();
         runDateOcrParserTests();
         runRecognitionFrameSelectorTests();
+        runCameraOcrFeedbackTests();
         runDateOcrFrameVoterTests();
         runDateOcrResultPayloadTests();
         runUnifiedRecognitionStabilizerTests();
@@ -2692,6 +2693,58 @@ public final class LocalLogicTest {
         });
     }
 
+    private void runCameraOcrFeedbackTests() {
+        test("CameraOcrFeedback reports actionable live camera quality", new TestCase() {
+            public void run() {
+                assertEquals("反光较强，请稍微转动包装",
+                        CameraOcrFeedback.qualityLabel(0.8d, 0.5d, 0.6d, 0.20d));
+                assertEquals("画面偏暗，请增加光线",
+                        CameraOcrFeedback.qualityLabel(0.8d, 0.12d, 0.6d, 0.01d));
+                assertEquals("画面偏糊，请稍后退并轻点日期",
+                        CameraOcrFeedback.qualityLabel(0.08d, 0.5d, 0.6d, 0.01d));
+                assertEquals("低对比日期，正在增强笔画",
+                        CameraOcrFeedback.qualityLabel(0.6d, 0.5d, 0.12d, 0.01d));
+                assertEquals("画面清晰",
+                        CameraOcrFeedback.qualityLabel(0.7d, 0.5d, 0.6d, 0.01d));
+            }
+        });
+
+        test("CameraOcrFeedback bounds low-contrast recovery to useful frames", new TestCase() {
+            public void run() {
+                assertTrue(CameraOcrFeedback.shouldRunLowContrastRecovery(
+                        2, 0, 0.35d, 0.5d, 0.16d, 0.02d, false
+                ), "a sharp low-contrast second frame should trigger recovery");
+                assertFalse(CameraOcrFeedback.shouldRunLowContrastRecovery(
+                        2, 0, 0.08d, 0.5d, 0.16d, 0.02d, false
+                ), "blur must not consume low-contrast OCR work");
+                assertFalse(CameraOcrFeedback.shouldRunLowContrastRecovery(
+                        7, 3, 0.8d, 0.5d, 0.10d, 0.02d, false
+                ), "recovery must remain bounded");
+                assertFalse(CameraOcrFeedback.shouldRunLowContrastRecovery(
+                        3, 0, 0.8d, 0.5d, 0.10d, 0.02d, true
+                ), "a complete date must stop redundant recovery");
+                assertFalse(CameraOcrFeedback.isStrongCenteredDateRead("202509"),
+                        "an incomplete yyyyMM fragment must not become a production date");
+                assertTrue(CameraOcrFeedback.isStrongCenteredDateRead("250912"),
+                        "a valid compact yyMMdd laser date should remain supported");
+                assertTrue(CameraOcrFeedback.isStrongCenteredDateRead("2025.09.12"),
+                        "a complete eight-digit date should be accepted");
+                assertEquals("20250912", CameraOcrFeedback.dateSignature("2025.09.12"));
+            }
+        });
+
+        test("CameraOcrFeedback throttles only the visual status, never recognition", new TestCase() {
+            public void run() {
+                assertTrue(CameraOcrFeedback.shouldPublishFrameStatus(1000L, 0L),
+                        "the first status should publish immediately");
+                assertFalse(CameraOcrFeedback.shouldPublishFrameStatus(1100L, 1000L),
+                        "rapid status churn should be hidden");
+                assertTrue(CameraOcrFeedback.shouldPublishFrameStatus(1180L, 1000L),
+                        "a fresh status should publish after the throttle window");
+            }
+        });
+    }
+
     private void runDateOcrFrameVoterTests() {
         test("DateOcrFrameVoter promotes repeated candidates to confirmation", new TestCase() {
             public void run() {
@@ -3094,6 +3147,20 @@ public final class LocalLogicTest {
                 );
                 assertEquals("2026-01-20", shelfOnly.productionDates.get(0).normalized);
                 assertEquals(9, shelfOnly.shelfLives.get(0).value);
+
+                String runtimeTranscript = "692626531343 692626531343 碳水化合物 "
+                        + "00960120 2036012057420 20260120S7420 "
+                        + "保9个月月 生产(年月日/YMD) 保期：9个月 "
+                        + "20260120S7420 20260120S7420 保9个月日";
+                DateOcrParser.Result runtimeSelected =
+                        DateEvidencePolicy.chooseVideoCompletionEvidence(runtimeTranscript, null);
+                assertEquals("2026-01-20", runtimeSelected.productionDates.get(0).normalized);
+                assertEquals(9, runtimeSelected.shelfLives.get(0).value);
+                assertEquals("2026-10-20", runtimeSelected.calculatedExpiryDates.get(0).normalized);
+                assertEquals("", DateOcrParser.dominantRepeatedPastCompactDate(
+                        "保质期9个月 2026012057427 2026012057427",
+                        "2026-07-19"
+                ));
             }
         });
 
