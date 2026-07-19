@@ -181,6 +181,23 @@ final class RecognitionFrameSelector {
         return Math.max(1, (safeCount + maxOcrFrames - 1) / maxOcrFrames);
     }
 
+    static boolean shouldFinishCameraSimulation(
+            int analyzedFrames,
+            boolean hasCompleteStableCandidate
+    ) {
+        return hasCompleteStableCandidate && analyzedFrames >= 3;
+    }
+
+    static boolean needsIncompleteDateRefinement(
+            boolean hasProductionDate,
+            boolean hasDirectExpiryDate,
+            boolean hasCalculatedExpiryDate
+    ) {
+        return hasProductionDate
+                && !hasDirectExpiryDate
+                && !hasCalculatedExpiryDate;
+    }
+
     static double highRateVideoFrameScore(
             double visualScore,
             double sharpness,
