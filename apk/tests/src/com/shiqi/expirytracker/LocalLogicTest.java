@@ -2241,6 +2241,27 @@ public final class LocalLogicTest {
             }
         });
 
+        test("RecognitionFrameSelector completes stable camera simulation without redundant rescans", new TestCase() {
+            public void run() {
+                assertFalse(RecognitionFrameSelector.shouldFinishCameraSimulation(2, true),
+                        "two reads are not enough for the camera-like confirmation path");
+                assertTrue(RecognitionFrameSelector.shouldFinishCameraSimulation(3, true),
+                        "three stable reads should finish instead of forcing five heavy passes");
+                assertFalse(RecognitionFrameSelector.shouldFinishCameraSimulation(6, false),
+                        "frame count alone must never finish an unstable result");
+
+                assertTrue(RecognitionFrameSelector.needsIncompleteDateRefinement(
+                        true, false, false
+                ), "a production-only result still needs targeted expiry review");
+                assertFalse(RecognitionFrameSelector.needsIncompleteDateRefinement(
+                        true, true, false
+                ), "a direct expiry date must skip redundant static review");
+                assertFalse(RecognitionFrameSelector.needsIncompleteDateRefinement(
+                        true, false, true
+                ), "production plus shelf life already has a calculated expiry");
+            }
+        });
+
         test("RecognitionFrameSelector scans video densely and bounds expensive Chinese OCR", new TestCase() {
             public void run() {
                 List<Long> shortFrames = RecognitionFrameSelector.highRateVideoFrameTimes(
