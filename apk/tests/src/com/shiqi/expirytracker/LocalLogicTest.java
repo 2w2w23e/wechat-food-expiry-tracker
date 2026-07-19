@@ -2227,6 +2227,67 @@ public final class LocalLogicTest {
             }
         });
 
+        test("RecognitionFrameSelector keeps replacing the latest camera frame while OCR is busy", new TestCase() {
+            public void run() {
+                assertTrue(RecognitionFrameSelector.shouldCaptureLatestCameraFrame(
+                        true, 1066L, 1000L, 66L, true
+                ), "busy OCR must not stop high-frame latest-frame capture");
+                assertFalse(RecognitionFrameSelector.shouldCaptureLatestCameraFrame(
+                        true, 1065L, 1000L, 66L, true
+                ), "camera capture should still respect the frame interval");
+                assertFalse(RecognitionFrameSelector.shouldCaptureLatestCameraFrame(
+                        false, 1066L, 1000L, 66L, false
+                ), "an unbound camera must not retain frames");
+            }
+        });
+
+        test("RecognitionFrameSelector scans video densely and bounds expensive Chinese OCR", new TestCase() {
+            public void run() {
+                List<Long> shortFrames = RecognitionFrameSelector.highRateVideoFrameTimes(
+                        8000000L,
+                        false
+                );
+                assertTrue(shortFrames.size() >= 100,
+                        "an eight-second video should scan far more than the legacy thirteen frames");
+                assertEquals(Long.valueOf(0L), shortFrames.get(0));
+                assertEquals(Long.valueOf(8000000L), shortFrames.get(shortFrames.size() - 1));
+                int shortWindow = RecognitionFrameSelector.highRateVideoSelectionWindow(
+                        shortFrames.size(),
+                        false
+                );
+                int shortOcrFrames = (shortFrames.size() + shortWindow - 1) / shortWindow;
+                assertTrue(shortOcrFrames <= 16,
+                        "dense video decoding must not flood the expensive OCR models");
+
+                List<Long> longFrames = RecognitionFrameSelector.highRateVideoFrameTimes(
+                        30000000L,
+                        true
+                );
+                assertEquals(180, longFrames.size());
+                int longWindow = RecognitionFrameSelector.highRateVideoSelectionWindow(
+                        longFrames.size(),
+                        true
+                );
+                int longOcrFrames = (longFrames.size() + longWindow - 1) / longWindow;
+                assertTrue(longOcrFrames <= 18,
+                        "long videos must keep a bounded heavy OCR budget");
+
+                double clearFrame = RecognitionFrameSelector.highRateVideoFrameScore(
+                        0.85d, 0.90d, 0.02d
+                );
+                double blurredFrame = RecognitionFrameSelector.highRateVideoFrameScore(
+                        0.55d, 0.12d, 0.02d
+                );
+                double glareFrame = RecognitionFrameSelector.highRateVideoFrameScore(
+                        0.85d, 0.90d, 0.90d
+                );
+                assertTrue(clearFrame > blurredFrame,
+                        "sharp Chinese packaging text should win its time window");
+                assertTrue(clearFrame > glareFrame,
+                        "low-glare frames should win when other quality signals match");
+            }
+        });
+
         test("RecognitionFrameSelector normalizes quality score boundaries", new TestCase() {
             public void run() {
                 double ideal = RecognitionFrameSelector.qualityScore(
