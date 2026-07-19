@@ -3,6 +3,7 @@ package com.shiqi.expirytracker;
 import android.app.Activity;
 import android.app.AlertDialog;
 import android.content.ActivityNotFoundException;
+import android.content.ClipData;
 import android.content.Context;
 import android.content.DialogInterface;
 import android.content.Intent;
@@ -41,6 +42,10 @@ import android.widget.Spinner;
 import android.widget.TextView;
 import android.widget.Toast;
 
+import androidx.core.content.FileProvider;
+
+import java.io.File;
+import java.io.FileOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
@@ -63,6 +68,8 @@ public final class MainActivity extends Activity {
     private static final int REQUEST_EXCEL_IMPORT = 4304;
     private static final int REQUEST_DATE_OCR = 4305;
     private static final int REQUEST_REPLENISHMENT_OCR = 4306;
+    private static final int REQUEST_JSON_EXPORT = 4307;
+    private static final int REQUEST_JSON_IMPORT = 4308;
     private static final String PREFS_NAME = "shiqi_android_v0";
     private static final String PREF_NOTIFICATION_PERMISSION_PROMPTED = "notification_permission_prompted_v0";
     private static final String FOOD_ACTION_EDIT = "edit";
@@ -94,6 +101,7 @@ public final class MainActivity extends Activity {
     private FoodStore store;
     private List<FoodItem> foods = new ArrayList<FoodItem>();
     private List<FoodItem> lastPersistedFoods = new ArrayList<FoodItem>();
+    private FoodJsonTransfer.ExportFilter pendingJsonExportFilter;
     private ScrollView mainScrollView;
     private LinearLayout stickySearchBar;
     private EditText pinnedSearchInput;
@@ -291,6 +299,12 @@ public final class MainActivity extends Activity {
             @Override public void onClick(View view) { startExcelExport(); }
         });
         utilityRow.addView(exportButton, weightWrap(1));
+
+        Button jsonTransferButton = outlineButton("快速换机（JSON）");
+        jsonTransferButton.setOnClickListener(new View.OnClickListener() {
+            @Override public void onClick(View view) { showJsonTransferMenu(); }
+        });
+        content.addView(jsonTransferButton, withMargins(matchWrap(), 0, dp(8), 0, dp(2)));
 
         content.addView(reminderCard(), withMargins(matchWrap(), 0, 0, 0, dp(10)));
 
@@ -612,6 +626,9 @@ public final class MainActivity extends Activity {
     protected void onActivityResult(int requestCode, int resultCode, Intent data) {
         super.onActivityResult(requestCode, resultCode, data);
         if (resultCode != RESULT_OK) {
+            if (requestCode == REQUEST_JSON_EXPORT) {
+                pendingJsonExportFilter = null;
+            }
             if (requestCode == REQUEST_REPLENISHMENT_OCR) {
                 pendingReplenishmentRecognitionTarget = null;
             }
@@ -629,6 +646,12 @@ public final class MainActivity extends Activity {
             handleUnifiedRecognitionResult(data);
         } else if (requestCode == REQUEST_REPLENISHMENT_OCR) {
             handleReplenishmentRecognitionResult(data);
+        } else if (requestCode == REQUEST_JSON_EXPORT) {
+            FoodJsonTransfer.ExportFilter filter = pendingJsonExportFilter;
+            pendingJsonExportFilter = null;
+            writeJsonExport(data == null ? null : data.getData(), filter);
+        } else if (requestCode == REQUEST_JSON_IMPORT) {
+            readJsonImport(data == null ? null : data.getData());
         }
     }
 
@@ -918,6 +941,301 @@ public final class MainActivity extends Activity {
             return store.saveFoodsForQaForcedFailure(nextFoods);
         }
         return store.saveFoodsForImport(nextFoods);
+    }
+
+    private void showJsonTransferMenu() {
+        new AlertDialog.Builder(this)
+                .setTitle("快速换机")
+                .setMessage("用 JSON 在不同设备间迁移批次。相同批次编号不会重复新增；只有更新时间较新的数量和状态会覆盖本机。")
+                .setNegativeButton("取消", null)
+                .setNeutralButton("导入 JSON", new DialogInterface.OnClickListener() {
+                    @Override
+                    public void onClick(DialogInterface dialogInterface, int which) {
+                        startJsonImport();
+                    }
+                })
+                .setPositiveButton("筛选导出", new DialogInterface.OnClickListener() {
+                    @Override
+                    public void onClick(DialogInterface dialogInterface, int which) {
+                        showJsonExportFilter();
+                    }
+                })
+                .show();
+    }
+
+    private void showJsonExportFilter() {
+        final EditText createdFrom = dateInput("", "开始");
+        final EditText createdTo = dateInput("", "结束");
+        final EditText productionFrom = dateInput("", "开始");
+        final EditText productionTo = dateInput("", "结束");
+        final EditText expiryFrom = dateInput("", "开始");
+        final EditText expiryTo = dateInput("", "结束");
+
+        LinearLayout content = new LinearLayout(this);
+        content.setOrientation(LinearLayout.VERTICAL);
+        content.setPadding(dp(8), dp(4), dp(8), 0);
+        TextView hint = text("日期边界包含当天；留空表示不限。入库时间按批次首次保存日期筛选。", 13, COLOR_MUTED, Typeface.NORMAL);
+        hint.setPadding(0, 0, 0, dp(8));
+        content.addView(hint, matchWrap());
+        addJsonDateRange(content, "入库时间", createdFrom, createdTo);
+        addJsonDateRange(content, "生产日期", productionFrom, productionTo);
+        addJsonDateRange(content, "最终日期", expiryFrom, expiryTo);
+
+        ScrollView scroll = new ScrollView(this);
+        scroll.addView(content, matchWrap());
+        new AlertDialog.Builder(this)
+                .setTitle("筛选 JSON 导出")
+                .setView(scroll)
+                .setNegativeButton("取消", null)
+                .setNeutralButton("保存文件", new DialogInterface.OnClickListener() {
+                    @Override
+                    public void onClick(DialogInterface dialogInterface, int which) {
+                        FoodJsonTransfer.ExportFilter filter = jsonExportFilter(
+                                createdFrom, createdTo,
+                                productionFrom, productionTo,
+                                expiryFrom, expiryTo
+                        );
+                        if (validateJsonExportFilter(filter)) {
+                            startJsonExport(filter);
+                        }
+                    }
+                })
+                .setPositiveButton("直接分享", new DialogInterface.OnClickListener() {
+                    @Override
+                    public void onClick(DialogInterface dialogInterface, int which) {
+                        FoodJsonTransfer.ExportFilter filter = jsonExportFilter(
+                                createdFrom, createdTo,
+                                productionFrom, productionTo,
+                                expiryFrom, expiryTo
+                        );
+                        if (validateJsonExportFilter(filter)) {
+                            shareJsonExport(filter);
+                        }
+                    }
+                })
+                .show();
+    }
+
+    private void addJsonDateRange(
+            LinearLayout parent,
+            String label,
+            final EditText from,
+            final EditText to
+    ) {
+        LinearLayout titleRow = new LinearLayout(this);
+        titleRow.setOrientation(LinearLayout.HORIZONTAL);
+        titleRow.setGravity(Gravity.CENTER_VERTICAL);
+        TextView title = text(label, 14, COLOR_TEXT, Typeface.BOLD);
+        titleRow.addView(title, weightWrap(1));
+        Button clear = utilityButton("清空");
+        clear.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View view) {
+                from.setText("");
+                to.setText("");
+            }
+        });
+        titleRow.addView(clear, fixed(68, 40));
+        parent.addView(titleRow, matchWrap());
+
+        LinearLayout range = new LinearLayout(this);
+        range.setOrientation(LinearLayout.HORIZONTAL);
+        range.setGravity(Gravity.CENTER_VERTICAL);
+        range.addView(from, weightWrap(1));
+        TextView separator = text("至", 14, COLOR_MUTED, Typeface.NORMAL);
+        separator.setGravity(Gravity.CENTER);
+        range.addView(separator, fixed(40, 44));
+        range.addView(to, weightWrap(1));
+        parent.addView(range, withMargins(matchWrap(), 0, 0, 0, dp(8)));
+    }
+
+    private FoodJsonTransfer.ExportFilter jsonExportFilter(
+            EditText createdFrom,
+            EditText createdTo,
+            EditText productionFrom,
+            EditText productionTo,
+            EditText expiryFrom,
+            EditText expiryTo
+    ) {
+        return new FoodJsonTransfer.ExportFilter(
+                clean(createdFrom),
+                clean(createdTo),
+                clean(productionFrom),
+                clean(productionTo),
+                clean(expiryFrom),
+                clean(expiryTo)
+        );
+    }
+
+    private boolean validateJsonExportFilter(FoodJsonTransfer.ExportFilter filter) {
+        try {
+            filter.validate();
+            int count = 0;
+            for (FoodItem food : foods) {
+                if (filter.matches(food)) {
+                    count++;
+                }
+            }
+            if (count == 0) {
+                toast("筛选范围内没有可导出的批次");
+                return false;
+            }
+            return true;
+        } catch (IllegalArgumentException error) {
+            toast(FoodItem.cleanText(error.getMessage()));
+            return false;
+        }
+    }
+
+    private void startJsonExport(FoodJsonTransfer.ExportFilter filter) {
+        pendingJsonExportFilter = filter;
+        Intent intent = new Intent(Intent.ACTION_CREATE_DOCUMENT);
+        intent.addCategory(Intent.CATEGORY_OPENABLE);
+        intent.setType(FoodJsonTransfer.MIME_TYPE);
+        intent.putExtra(Intent.EXTRA_TITLE, FoodJsonTransfer.fileName(DateRules.nowIsoLike()));
+        try {
+            startActivityForResult(intent, REQUEST_JSON_EXPORT);
+        } catch (ActivityNotFoundException error) {
+            pendingJsonExportFilter = null;
+            toast("当前设备没有可用的文件保存器");
+        }
+    }
+
+    private void writeJsonExport(Uri uri, FoodJsonTransfer.ExportFilter filter) {
+        if (uri == null) {
+            toast("未选择导出位置");
+            return;
+        }
+        try (OutputStream outputStream = getContentResolver().openOutputStream(uri)) {
+            if (outputStream == null) {
+                toast("无法打开导出文件");
+                return;
+            }
+            FoodJsonTransfer.ExportResult result = FoodJsonTransfer.write(
+                    outputStream,
+                    foods,
+                    filter,
+                    DateRules.nowIsoLike()
+            );
+            toast("已导出 " + result.count + " 个批次");
+        } catch (IOException | IllegalArgumentException error) {
+            toast("JSON 导出失败：" + FoodItem.cleanText(error.getMessage()));
+        }
+    }
+
+    private void shareJsonExport(FoodJsonTransfer.ExportFilter filter) {
+        File directory = new File(getCacheDir(), "shared-transfers");
+        if (!directory.exists() && !directory.mkdirs()) {
+            toast("无法准备分享文件");
+            return;
+        }
+        File file = new File(directory, FoodJsonTransfer.fileName(DateRules.nowIsoLike()));
+        try (OutputStream outputStream = new FileOutputStream(file)) {
+            FoodJsonTransfer.ExportResult result = FoodJsonTransfer.write(
+                    outputStream,
+                    foods,
+                    filter,
+                    DateRules.nowIsoLike()
+            );
+            Uri contentUri = FileProvider.getUriForFile(
+                    this,
+                    getPackageName() + ".fileprovider",
+                    file
+            );
+            Intent share = new Intent(Intent.ACTION_SEND);
+            share.setType(FoodJsonTransfer.MIME_TYPE);
+            share.putExtra(Intent.EXTRA_STREAM, contentUri);
+            share.putExtra(Intent.EXTRA_SUBJECT, "食期管家批次数据");
+            share.setClipData(ClipData.newRawUri("食期管家 JSON", contentUri));
+            share.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
+            startActivity(Intent.createChooser(share, "分享 " + result.count + " 个批次"));
+        } catch (IOException | IllegalArgumentException | ActivityNotFoundException error) {
+            toast("JSON 分享失败：" + FoodItem.cleanText(error.getMessage()));
+        }
+    }
+
+    private void startJsonImport() {
+        Intent intent = new Intent(Intent.ACTION_OPEN_DOCUMENT);
+        intent.addCategory(Intent.CATEGORY_OPENABLE);
+        intent.setType(FoodJsonTransfer.MIME_TYPE);
+        try {
+            startActivityForResult(intent, REQUEST_JSON_IMPORT);
+        } catch (ActivityNotFoundException error) {
+            Intent fallback = new Intent(Intent.ACTION_GET_CONTENT);
+            fallback.addCategory(Intent.CATEGORY_OPENABLE);
+            fallback.setType("*/*");
+            try {
+                startActivityForResult(Intent.createChooser(fallback, "选择 JSON 文件"), REQUEST_JSON_IMPORT);
+            } catch (ActivityNotFoundException ignored) {
+                toast("当前设备没有可用的文件选择器");
+            }
+        }
+    }
+
+    private void readJsonImport(Uri uri) {
+        if (uri == null) {
+            toast("未选择导入文件");
+            return;
+        }
+        try (InputStream inputStream = getContentResolver().openInputStream(uri)) {
+            if (inputStream == null) {
+                toast("无法打开导入文件");
+                return;
+            }
+            showJsonImportPreview(FoodJsonTransfer.read(inputStream, foods));
+        } catch (IOException error) {
+            toast("JSON 导入失败：" + FoodItem.cleanText(error.getMessage()));
+        }
+    }
+
+    private void showJsonImportPreview(final FoodJsonTransfer.ImportPreview preview) {
+        StringBuilder message = new StringBuilder();
+        message.append("文件批次：").append(preview.total).append('\n');
+        message.append("新增：").append(preview.additions).append('\n');
+        message.append("更新数量/状态：").append(preview.updates).append('\n');
+        message.append("内容相同：").append(preview.unchanged).append('\n');
+        message.append("保留本机较新数据：").append(preview.conflicts).append('\n');
+        message.append("错误：").append(preview.errors.size());
+        if (!preview.errors.isEmpty()) {
+            message.append("\n\n文件有错误，为避免部分导入，本次不会写入：");
+            int limit = Math.min(8, preview.errors.size());
+            for (int index = 0; index < limit; index++) {
+                message.append("\n- ").append(preview.errors.get(index));
+            }
+        } else if (preview.conflicts > 0) {
+            message.append("\n\n较旧或时间相同但内容不同的批次不会覆盖本机，可继续同步其他批次。");
+        }
+        message.append("\n\n确认前不会写入；保存失败时本机数据不会改变。");
+
+        AlertDialog.Builder builder = new AlertDialog.Builder(this)
+                .setTitle("JSON 同步预览")
+                .setMessage(message.toString())
+                .setNegativeButton("取消", null);
+        if (preview.canApply()) {
+            builder.setPositiveButton("确认同步", new DialogInterface.OnClickListener() {
+                @Override
+                public void onClick(DialogInterface dialogInterface, int which) {
+                    applyJsonImport(preview);
+                }
+            });
+        } else {
+            builder.setPositiveButton("知道了", null);
+        }
+        builder.show();
+    }
+
+    private void applyJsonImport(FoodJsonTransfer.ImportPreview preview) {
+        List<FoodItem> nextFoods = copyFoods(preview.mergedFoods);
+        if (!saveFoodsForImport(nextFoods)) {
+            toast("同步失败，当前本地数据未改动");
+            return;
+        }
+        foods = nextFoods;
+        lastPersistedFoods = copyFoods(nextFoods);
+        ReminderScheduler.scheduleDaily(MainActivity.this, reminderSettings);
+        renderFilterControls();
+        renderFoods();
+        toast("同步完成：新增 " + preview.additions + "，更新 " + preview.updates);
     }
 
     private boolean isDebuggable() {
@@ -4173,6 +4491,10 @@ public final class MainActivity extends Activity {
 
     private LinearLayout.LayoutParams weightWrap(float weight) {
         return new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, weight);
+    }
+
+    private LinearLayout.LayoutParams fixed(int widthDp, int heightDp) {
+        return new LinearLayout.LayoutParams(dp(widthDp), dp(heightDp));
     }
 
     private LinearLayout.LayoutParams withMargins(LinearLayout.LayoutParams params, int left, int top, int right, int bottom) {

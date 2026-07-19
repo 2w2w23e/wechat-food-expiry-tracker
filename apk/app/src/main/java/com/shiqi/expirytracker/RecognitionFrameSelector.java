@@ -181,6 +181,30 @@ final class RecognitionFrameSelector {
         return Math.max(1, (safeCount + maxOcrFrames - 1) / maxOcrFrames);
     }
 
+    static int cameraScreenRecordingSelectionWindow(int candidateCount) {
+        int safeCount = Math.max(1, candidateCount);
+        int maxOcrFrames = 8;
+        return Math.max(1, (safeCount + maxOcrFrames - 1) / maxOcrFrames);
+    }
+
+    static List<Long> cameraScreenRecordingFrameTimes(long durationUs) {
+        long safeDuration = Math.max(1L, durationUs);
+        double[] ratios = new double[] {
+                0.03d, 0.09d,
+                0.16d, 0.25d,
+                0.34d, 0.44d,
+                0.52d, 0.60d,
+                0.66d, 0.71d,
+                0.75d, 0.79d,
+                0.84d, 0.88d
+        };
+        List<Long> times = new ArrayList<Long>();
+        for (double ratio : ratios) {
+            times.add(Long.valueOf(Math.min(safeDuration, Math.round(safeDuration * ratio))));
+        }
+        return times;
+    }
+
     static boolean shouldFinishCameraSimulation(
             int analyzedFrames,
             boolean hasCompleteStableCandidate

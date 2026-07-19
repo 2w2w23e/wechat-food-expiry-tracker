@@ -119,6 +119,20 @@ public final class LocalLogicTest {
                 assertEquals("上好佳薯条", chips.name);
                 assertEquals("原味 80克", chips.specification);
                 assertEquals(null, VerifiedBarcodeCatalog.find("4006381333931"));
+                assertEquals(
+                        "6926265313430",
+                        VerifiedBarcodeCatalog.preferCatalogBackedBarcode(
+                                "6926265313454",
+                                "6926265313430"
+                        )
+                );
+                assertEquals(
+                        "4006381333931",
+                        VerifiedBarcodeCatalog.preferCatalogBackedBarcode(
+                                "4006381333931",
+                                "6926265313454"
+                        )
+                );
             }
         });
 
@@ -1687,6 +1701,141 @@ public final class LocalLogicTest {
                 }
             }
         });
+
+        test("FoodJsonTransfer filters inclusively and preserves a Chinese batch", new TestCase() {
+            public void run() {
+                FoodItem selected = transferFood(
+                        "food_batch_selected", "上好佳薯条", "2026-01-05", "2026-10-05",
+                        "2026-01-10T08:00:00+0800", "2026-01-10T08:00:00+0800"
+                );
+                selected.productProfileId = "profile_chips";
+                selected.barcode = "6926265313430";
+                selected.shelfLifeValue = Integer.valueOf(9);
+                selected.shelfLifeUnit = "month";
+                selected.dateSource = "calculated";
+                selected.notes = "中文备注：避光保存";
+                FoodItem outside = transferFood(
+                        "food_batch_outside", "其他食品", "2025-12-01", "2026-03-01",
+                        "2025-12-02T08:00:00+0800", "2025-12-02T08:00:00+0800"
+                );
+                FoodJsonTransfer.ExportFilter filter = new FoodJsonTransfer.ExportFilter(
+                        "2026-01-10", "2026-01-10",
+                        "2026-01-05", "2026-01-05",
+                        "2026-10-05", "2026-10-05"
+                );
+                byte[] bytes = jsonTransferBytes(Arrays.asList(selected, outside), filter);
+                FoodJsonTransfer.ImportPreview preview = jsonTransferPreview(bytes, new ArrayList<FoodItem>());
+
+                assertEquals(1, preview.total);
+                assertEquals(1, preview.additions);
+                assertEquals(0, preview.errors.size());
+                assertEquals("food_batch_selected", preview.mergedFoods.get(0).id);
+                assertEquals("上好佳薯条", preview.mergedFoods.get(0).name);
+                assertEquals("中文备注：避光保存", preview.mergedFoods.get(0).notes);
+                assertEquals("6926265313430", preview.mergedFoods.get(0).barcode);
+            }
+        });
+
+        test("FoodJsonTransfer accepts null optional dates", new TestCase() {
+            public void run() {
+                FoodItem food = transferFood(
+                        "food_null_date", "空日期样本", "2026-07-01", "2026-08-01",
+                        "2026-07-01T08:00:00+0800", "2026-07-01T08:00:00+0800"
+                );
+                food.openedDate = "";
+                FoodJsonTransfer.ImportPreview preview = jsonTransferPreview(
+                        jsonTransferBytes(Arrays.asList(food), FoodJsonTransfer.ExportFilter.all()),
+                        new ArrayList<FoodItem>()
+                );
+                assertEquals(0, preview.errors.size());
+                assertEquals(1, preview.additions);
+            }
+        });
+
+        test("FoodJsonTransfer updates quantity and finished status only from a newer batch", new TestCase() {
+            public void run() {
+                FoodItem local = transferFood(
+                        "food_batch_sync", "牛奶", "2026-07-01", "2026-07-20",
+                        "2026-07-01T08:00:00+0800", "2026-07-19T09:00:00+0800"
+                );
+                local.quantity = 4d;
+                local.remainingQuantity = 3d;
+                FoodItem remote = local.copy();
+                remote.quantity = 8d;
+                remote.remainingQuantity = 1d;
+                remote.isFinished = true;
+                remote.finishedAt = "2026-07-19T10:00:00+0800";
+                remote.updatedAt = "2026-07-19T10:00:00+0800";
+
+                FoodJsonTransfer.ImportPreview preview = jsonTransferPreview(
+                        jsonTransferBytes(Arrays.asList(remote), FoodJsonTransfer.ExportFilter.all()),
+                        Arrays.asList(local)
+                );
+                assertEquals(1, preview.updates);
+                assertTrue(preview.canApply(), "newer batch should be applicable");
+                FoodItem merged = preview.mergedFoods.get(0);
+                assertNear(8d, merged.quantity);
+                assertNear(1d, merged.remainingQuantity);
+                assertTrue(merged.isFinished, "newer imported status should replace local status");
+                assertEquals("food_batch_sync", merged.id);
+            }
+        });
+
+        test("FoodJsonTransfer preserves newer local data and rejects duplicate file ids atomically", new TestCase() {
+            public void run() {
+                FoodItem local = transferFood(
+                        "food_batch_conflict", "酸奶", "2026-07-01", "2026-07-22",
+                        "2026-07-01T08:00:00+0800", "2026-07-19T12:00:00+0800"
+                );
+                local.remainingQuantity = 2d;
+                FoodItem older = local.copy();
+                older.remainingQuantity = 0d;
+                older.updatedAt = "2026-07-19T11:00:00+0800";
+
+                FoodJsonTransfer.ImportPreview conflict = jsonTransferPreview(
+                        jsonTransferBytes(Arrays.asList(older), FoodJsonTransfer.ExportFilter.all()),
+                        Arrays.asList(local)
+                );
+                assertEquals(1, conflict.conflicts);
+                assertEquals(0, conflict.updates);
+                assertNear(2d, conflict.mergedFoods.get(0).remainingQuantity);
+
+                String one = jsonObjectText(local);
+                String duplicatePayload = "{\"format\":\"" + FoodJsonTransfer.FORMAT
+                        + "\",\"schemaVersion\":1,\"batches\":[" + one + "," + one + "]}";
+                FoodJsonTransfer.ImportPreview duplicate = jsonTransferPreview(
+                        duplicatePayload.getBytes(StandardCharsets.UTF_8),
+                        new ArrayList<FoodItem>()
+                );
+                assertTrue(!duplicate.errors.isEmpty(), "duplicate batch ids should be reported");
+                assertFalse(duplicate.canApply(), "an invalid file must not be partly applicable");
+            }
+        });
+
+        test("FoodStoreMigration repairs missing and duplicate batch ids", new TestCase() {
+            public void run() {
+                FoodItem first = transferFood(
+                        "", "第一批", "2026-01-01", "2026-02-01",
+                        "2026-01-01T08:00:00+0800", "2026-01-01T08:00:00+0800"
+                );
+                FoodItem second = transferFood(
+                        "food_duplicate", "第二批", "2026-01-02", "2026-02-02",
+                        "2026-01-02T08:00:00+0800", "2026-01-02T08:00:00+0800"
+                );
+                FoodItem third = second.copy();
+                third.name = "第三批";
+                String raw = "{\"schemaVersion\":2,\"foods\":["
+                        + jsonObjectText(first) + "," + jsonObjectText(second) + ","
+                        + jsonObjectText(third) + "]}";
+                FoodStoreMigration.MigrationResult migrated = migrateStore(raw, 3);
+                assertEquals(3, migrated.foods.size());
+                Set<String> ids = new HashSet<String>();
+                for (FoodItem food : migrated.foods) {
+                    assertTrue(food.id.length() > 0, "every migrated batch needs an id");
+                    assertTrue(ids.add(food.id), "migrated batch ids must be unique");
+                }
+            }
+        });
     }
 
     private void runDateOcrParserTests() {
@@ -1705,6 +1854,23 @@ public final class LocalLogicTest {
                 assertTrue(result.productionDates.get(0).candidateOnly, "production candidate must not be saved directly");
                 assertTrue(result.shelfLives.get(0).candidateOnly, "shelf life candidate must not be saved directly");
                 assertTrue(result.calculatedExpiryDates.get(0).calculated, "calculated expiry should be marked");
+            }
+        });
+
+        test("DateOcrParser keeps labeled shelf life from a supplemental package region", new TestCase() {
+            public void run() {
+                DateOcrParser.Result parsed = DateOcrParser.parseFocusedWithDateOnlySupplement(
+                        "生产日期 2026.01.22",
+                        "产品标准号 GB/T\n保 质 期：9 个 月\n生产日期见喷码"
+                );
+
+                assertEquals(1, parsed.productionDates.size());
+                assertEquals("2026-01-22", parsed.productionDates.get(0).normalized);
+                assertEquals(1, parsed.shelfLives.size());
+                assertEquals(9, parsed.shelfLives.get(0).value);
+                assertEquals("month", parsed.shelfLives.get(0).unit);
+                assertEquals(1, parsed.calculatedExpiryDates.size());
+                assertEquals("2026-10-22", parsed.calculatedExpiryDates.get(0).normalized);
             }
         });
 
@@ -2292,6 +2458,20 @@ public final class LocalLogicTest {
                 int longOcrFrames = (longFrames.size() + longWindow - 1) / longWindow;
                 assertTrue(longOcrFrames <= 18,
                         "long videos must keep a bounded heavy OCR budget");
+                int recordedCameraWindow = RecognitionFrameSelector.cameraScreenRecordingSelectionWindow(
+                        longFrames.size()
+                );
+                int recordedCameraOcrFrames = (longFrames.size() + recordedCameraWindow - 1)
+                        / recordedCameraWindow;
+                assertTrue(recordedCameraOcrFrames <= 8,
+                        "recorded camera QA must not replay every generic long-video OCR pass");
+                List<Long> recordedCameraFrames =
+                        RecognitionFrameSelector.cameraScreenRecordingFrameTimes(30000000L);
+                assertEquals(14, recordedCameraFrames.size());
+                assertTrue(recordedCameraFrames.get(0).longValue() < 3000000L,
+                        "recorded camera replay should include the package front early");
+                assertTrue(recordedCameraFrames.get(10).longValue() >= 22000000L,
+                        "recorded camera replay should include repeated late date close-ups");
 
                 double clearFrame = RecognitionFrameSelector.highRateVideoFrameScore(
                         0.85d, 0.90d, 0.02d
@@ -3146,6 +3326,10 @@ public final class LocalLogicTest {
                                 "候选 可继续识别日期或直接慎入表单"
                         ),
                         "fuzzy OCR from the old result panel must not become a product name"
+                );
+                assertFalse(
+                        RecognitionTextCleaner.isHighConfidenceFoodProductName("请核对后便用"),
+                        "recorded confirmation copy must not become a product name"
                 );
             }
         });
@@ -4440,6 +4624,72 @@ public final class LocalLogicTest {
         } catch (Throwable error) {
             failed++;
             System.err.println("FAIL " + name + ": " + error.getMessage());
+        }
+    }
+
+    private static FoodItem transferFood(
+            String id,
+            String name,
+            String productionDate,
+            String expiryDate,
+            String createdAt,
+            String updatedAt
+    ) {
+        FoodItem item = new FoodItem();
+        item.id = id;
+        item.productProfileId = "profile_" + (id.length() == 0 ? "legacy" : id);
+        item.name = name;
+        item.category = "other";
+        item.productionDate = productionDate;
+        item.expiryDate = expiryDate;
+        item.dateSource = "manual";
+        item.quantity = 3d;
+        item.remainingQuantity = 3d;
+        item.unit = "袋";
+        item.storageMethod = "room_temp";
+        item.location = "厨房";
+        item.createdAt = createdAt;
+        item.updatedAt = updatedAt;
+        return item;
+    }
+
+    private static byte[] jsonTransferBytes(
+            List<FoodItem> foods,
+            FoodJsonTransfer.ExportFilter filter
+    ) {
+        try {
+            ByteArrayOutputStream output = new ByteArrayOutputStream();
+            FoodJsonTransfer.write(output, foods, filter, "2026-07-19T13:00:00+0800");
+            return output.toByteArray();
+        } catch (Exception error) {
+            throw new AssertionError("failed to write JSON transfer: " + error.getMessage());
+        }
+    }
+
+    private static FoodJsonTransfer.ImportPreview jsonTransferPreview(
+            byte[] bytes,
+            List<FoodItem> existing
+    ) {
+        try {
+            return FoodJsonTransfer.read(new ByteArrayInputStream(bytes), existing);
+        } catch (Exception error) {
+            throw new AssertionError("failed to read JSON transfer: " + error.getMessage());
+        }
+    }
+
+    private static String jsonObjectText(FoodItem food) {
+        try {
+            return food.toJson().toString();
+        } catch (Exception error) {
+            throw new AssertionError("failed to serialize food JSON: " + error.getMessage());
+        }
+    }
+
+    private static FoodStoreMigration.MigrationResult migrateStore(String raw, int version) {
+        try {
+            return FoodStoreMigration.migrate(raw, version);
+        } catch (Exception error) {
+            throw new AssertionError("failed to migrate store: " + error.getMessage());
         }
     }
 

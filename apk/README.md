@@ -6,7 +6,7 @@
 
 ## 构建
 
-当前 APK 版本号：`versionName 0.3.11`，`versionCode 14`。每次生成新的可交付 APK 时，都需要同步提升 `apk/app/build.gradle` 里的 `versionName` 和 `versionCode`。
+当前 APK 版本号：`versionName 0.3.14`，`versionCode 17`。每次生成新的可交付 APK 时，都需要同步提升 `apk/app/build.gradle` 和 `AndroidManifest.xml` 里的 `versionName` 和 `versionCode`。
 
 当前最低 Android 版本为 API 24（Android 7.0）。当前 debug APK 实测约 220 MB；离线模型只保留当前链路需要的关键文件，可交付 APK 的硬上限为 1 GB。
 
@@ -78,6 +78,7 @@ apk/build/outputs/apk/shiqi-android-release.apk
 - Android 本地系统通知
 - 已用完归档和恢复
 - Excel `.xlsx` 批量导入、预览校验、覆盖确认、错误行详情和导出；导出文件包含 `foods` 和 `README` 两个工作表，并保留商品档案 ID、条码和独立批次关系
+- JSON 快速换机：按入库时间、生产日期、最终日期筛选并导出 UTF-8 JSON，可保存到本机或调用系统分享面板；每个批次有唯一编号，相同编号不会重复新增，只有较新文件才更新数量和状态
 - 条码商品档案与库存批次：同一条码可对应多个商品档案；扫码命中本机档案时选择商品并建立补货新批次，复用名称、分类、单位和保存位置，但生产日期、保质期、最终日期、数量、开封和提醒独立填写，不覆盖旧批次
 - Android 本地存储
 
@@ -96,7 +97,7 @@ apk/build/outputs/apk/shiqi-android-release.apk
 
 - 云数据库
 - 账号体系
-- 多设备同步
+- 自动云同步（本地 JSON 文件手动换机已支持）
 - 应用商店发布流程
 - 需要密钥或云端服务的 OCR / AI 自动抽取
 - 识别结果自动保存到食品列表
@@ -109,4 +110,4 @@ apk/build/outputs/apk/shiqi-android-release.apk
 - 月级有效期（例如 `有效期至 2029.02`）归一化为该月最后一天的候选，并明确提示包装只标到月。
 - 低对比、反光、弧面、运动模糊和字符残缺仍可能导致误识别；真实样本必须通过截图或录屏做视觉 QA，不能只以单元测试或模型原文作为 PASS。
 - 当前多模型变更的规则、支持格式、样本状态和剩余风险见 `../docs/APK_OCR_DATE_FORMAT_MATRIX.md`。
-- V0.3.11 最终视频、条码、Excel、CRUD、升级保数和视觉证据见 `../docs/qa/2026-07-18-v0311-final-qa.md`。
+- V0.3.14 指定视频保质期、JSON 快速换机、Excel 回归、CRUD 和视觉证据见 `../docs/qa/2026-07-19-v0314-video-shelf-json-sync-qa.md`。

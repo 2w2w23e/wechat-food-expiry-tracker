@@ -733,12 +733,23 @@ public final class DateOcrScanActivity extends ComponentActivity {
             }
 
             longVideoProfile = durationUs > 20000000L;
-            List<Long> frameTimesUs = videoFrameTimes(durationUs, longVideoProfile);
-            int selectionWindow = RecognitionFrameSelector.highRateVideoSelectionWindow(
+            Bitmap recordingProbe = retrieveReplayFrame(retriever, 0L);
+            if (recordingProbe != null && isLikelyPhoneScreenRecording(recordingProbe, durationUs)) {
+                cameraSimulationScreenRecording = cameraSimulationActive;
+                appScreenRecordingDetected = !cameraSimulationActive;
+                Log.i("ShiqiRecognition", "Phone screen recording detected from video geometry");
+            }
+            recycleBitmap(recordingProbe);
+            List<Long> frameTimesUs = cameraSimulationScreenRecording
+                    ? RecognitionFrameSelector.cameraScreenRecordingFrameTimes(durationUs)
+                    : videoFrameTimes(durationUs, longVideoProfile);
+            int selectionWindow = cameraSimulationScreenRecording
+                    ? RecognitionFrameSelector.cameraScreenRecordingSelectionWindow(frameTimesUs.size())
+                    : RecognitionFrameSelector.highRateVideoSelectionWindow(
                     frameTimesUs.size(),
                     longVideoProfile
             );
-            final int expectedFrames = Math.max(
+            int expectedFrames = Math.max(
                     1,
                     (frameTimesUs.size() + selectionWindow - 1) / selectionWindow
             );
@@ -761,9 +772,21 @@ public final class DateOcrScanActivity extends ComponentActivity {
                     );
                     continue;
                 }
-                if (frameIndex == 0 && isLikelyPhoneScreenRecording(frame, durationUs)) {
+                if (frameIndex == 0
+                        && !cameraSimulationScreenRecording
+                        && !appScreenRecordingDetected
+                        && isLikelyPhoneScreenRecording(frame, durationUs)) {
                     cameraSimulationScreenRecording = cameraSimulationActive;
                     appScreenRecordingDetected = !cameraSimulationActive;
+                    if (cameraSimulationScreenRecording) {
+                        selectionWindow = RecognitionFrameSelector.cameraScreenRecordingSelectionWindow(
+                                frameTimesUs.size()
+                        );
+                        expectedFrames = Math.max(
+                                1,
+                                (frameTimesUs.size() + selectionWindow - 1) / selectionWindow
+                        );
+                    }
                     Log.i("ShiqiRecognition", "Phone screen recording detected from video geometry");
                 }
                 if (cameraSimulationActive && appScreenRecordingDetected) {
@@ -2086,6 +2109,12 @@ public final class DateOcrScanActivity extends ComponentActivity {
         }
         if (cameraLive && barcodeLookupOnly) {
             return false;
+        }
+        if (cameraSimulationScreenRecording) {
+            return paddleDetectionCameraFramesUsed < 2
+                    && currentVideoFrameRatio >= 0.60d
+                    && currentVideoFrameRatio <= 0.88d
+                    && !hasCompleteCameraDateCandidate();
         }
         if (cameraLive) {
             return RecognitionFrameSelector.shouldRunHeavyCameraOcr(
@@ -3642,7 +3671,7 @@ public final class DateOcrScanActivity extends ComponentActivity {
         int left = clamp(Math.round(imageWidth * 0.04f), 0, imageWidth - 1);
         int top = clamp(Math.round(imageHeight * 0.075f), 0, imageHeight - 1);
         int width = clamp(Math.round(imageWidth * 0.92f), 1, imageWidth - left);
-        int height = clamp(Math.round(imageHeight * 0.565f), 1, imageHeight - top);
+        int height = clamp(Math.round(imageHeight * 0.425f), 1, imageHeight - top);
         return Bitmap.createBitmap(bitmap, left, top, width, height);
     }
 
@@ -4273,9 +4302,8 @@ public final class DateOcrScanActivity extends ComponentActivity {
             return;
         }
         String cleanedText = FoodItem.cleanText(rawText);
-        if (!BarcodeUtils.isSupportedProductCode(barcode)) {
-            barcode = RecognitionTextCleaner.extractProductCodeFromOcr(cleanedText);
-        }
+        String printedBarcode = RecognitionTextCleaner.extractProductCodeFromOcr(cleanedText);
+        barcode = VerifiedBarcodeCatalog.preferCatalogBackedBarcode(barcode, printedBarcode);
         DateOcrParser.Result parsed = parsedOverride == null
                 ? DateOcrParser.parseFocusedWithDateOnlySupplement(
                 FoodItem.cleanText(dateRawText),
