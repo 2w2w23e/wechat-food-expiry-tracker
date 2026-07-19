@@ -86,6 +86,7 @@ jobs:
           script: |
             adb install -r qa-apk/app-debug.apk
             adb push qa-chinese-package.mp4 /data/local/tmp/qa-chinese-package.mp4
+            adb shell run-as com.shiqi.expirytracker mkdir -p files
             adb shell run-as com.shiqi.expirytracker cp /data/local/tmp/qa-chinese-package.mp4 files/qa-chinese-package.mp4
             adb logcat -c
             adb shell am start -W -n com.shiqi.expirytracker/.MainActivity --es com.shiqi.expirytracker.QA_VIDEO_PATH /data/user/0/com.shiqi.expirytracker/files/qa-chinese-package.mp4
