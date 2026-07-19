@@ -53,6 +53,7 @@ import androidx.camera.core.resolutionselector.ResolutionStrategy;
 import androidx.camera.lifecycle.ProcessCameraProvider;
 import androidx.camera.view.PreviewView;
 
+import com.google.android.gms.tasks.OnCompleteListener;
 import com.google.android.gms.tasks.Task;
 import com.google.android.gms.tasks.Tasks;
 import com.google.common.util.concurrent.ListenableFuture;
@@ -223,6 +224,7 @@ public final class DateOcrScanActivity extends ComponentActivity {
                 .build());
         paddleLineOcrEngine = new PaddleLineOcrEngine(getApplicationContext());
         paddleTextDetectionEngine = new PaddleTextDetectionEngine(getApplicationContext());
+        warmUpRecognitionModels();
         if (!barcodeLookupOnly) {
             cameraExecutor.execute(new Runnable() {
                 @Override
@@ -249,6 +251,36 @@ public final class DateOcrScanActivity extends ComponentActivity {
         } else {
             ensureCameraPermission();
         }
+    }
+
+    private void warmUpRecognitionModels() {
+        final Bitmap warmup = Bitmap.createBitmap(64, 64, Bitmap.Config.ARGB_8888);
+        warmup.eraseColor(Color.WHITE);
+        InputImage input = InputImage.fromBitmap(warmup, 0);
+        List<Task<?>> tasks = new ArrayList<Task<?>>();
+        if (textRecognizer != null) {
+            tasks.add(textRecognizer.process(input));
+        }
+        if (latinTextRecognizer != null) {
+            tasks.add(latinTextRecognizer.process(input));
+        }
+        if (barcodeScanner != null) {
+            tasks.add(barcodeScanner.process(input));
+        }
+        if (tasks.isEmpty()) {
+            warmup.recycle();
+            return;
+        }
+        Tasks.whenAllComplete(tasks).addOnCompleteListener(
+                new OnCompleteListener<List<Task<?>>>() {
+                    @Override
+                    public void onComplete(Task<List<Task<?>>> task) {
+                        if (!warmup.isRecycled()) {
+                            warmup.recycle();
+                        }
+                    }
+                }
+        );
     }
 
     @Override
