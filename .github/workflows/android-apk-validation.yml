@@ -90,14 +90,7 @@ jobs:
             adb shell run-as com.shiqi.expirytracker cp /data/local/tmp/qa-chinese-package.mp4 files/qa-chinese-package.mp4
             adb logcat -c
             adb shell am start -W -n com.shiqi.expirytracker/.MainActivity --es com.shiqi.expirytracker.QA_VIDEO_PATH /data/user/0/com.shiqi.expirytracker/files/qa-chinese-package.mp4
-            for attempt in $(seq 1 24); do
-              sleep 10
-              adb shell uiautomator dump /sdcard/window.xml >/dev/null 2>&1 || true
-              adb pull /sdcard/window.xml window.xml >/dev/null 2>&1 || true
-              if grep -Eq '识别完成|可先确认|已完成' window.xml; then
-                break
-              fi
-            done
+            for attempt in $(seq 1 24); do sleep 10; adb shell uiautomator dump /sdcard/window.xml >/dev/null 2>&1 || true; adb pull /sdcard/window.xml window.xml >/dev/null 2>&1 || true; if grep -Eq '识别完成|可先确认|已完成' window.xml; then break; fi; done
             adb exec-out screencap -p > scanner-video-qa.png
             echo "SHIQI_SCREENSHOT_BASE64_BEGIN"
             base64 -w 0 scanner-video-qa.png
