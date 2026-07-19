@@ -1218,7 +1218,7 @@ public final class DateOcrScanActivity extends ComponentActivity {
                     awaitRecognitionTask(
                             Tasks.whenAllComplete(variantTasks),
                             "recognition-variant",
-                            6L
+                            cameraLive ? 3L : 6L
                     );
                 }
                 if (barcodeTask != null && barcodeTask.isSuccessful()) {
