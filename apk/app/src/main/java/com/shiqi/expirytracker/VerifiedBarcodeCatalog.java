@@ -56,4 +56,16 @@ final class VerifiedBarcodeCatalog {
         }
         return null;
     }
+
+    static String preferCatalogBackedBarcode(String scannedBarcode, String ocrBarcode) {
+        String scanned = BarcodeUtils.extractProductCode(scannedBarcode);
+        String printed = BarcodeUtils.extractProductCode(ocrBarcode);
+        if (!BarcodeUtils.isSupportedProductCode(scanned)) {
+            return BarcodeUtils.isSupportedProductCode(printed) ? printed : "";
+        }
+        if (!BarcodeUtils.isSupportedProductCode(printed) || scanned.equals(printed)) {
+            return scanned;
+        }
+        return find(printed) != null && find(scanned) == null ? printed : scanned;
+    }
 }

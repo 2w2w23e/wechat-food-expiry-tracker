@@ -73,6 +73,7 @@ $MainSources = @(
   'ReplenishmentRecognitionMerge.java',
   'FoodExcelExporter.java',
   'FoodExcelImporter.java',
+  'FoodJsonTransfer.java',
   'FoodIdGenerator.java',
   'FoodStoreMigration.java'
 ) | ForEach-Object { Join-Path $MainSourceRoot $_ }

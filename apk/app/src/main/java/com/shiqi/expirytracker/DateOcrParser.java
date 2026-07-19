@@ -163,6 +163,9 @@ final class DateOcrParser {
         List<DateCandidate> expiryDates = new ArrayList<DateCandidate>(focused.expiryDates);
         expiryDates.addAll(supplement.expiryDates);
         List<ShelfLifeCandidate> shelfLives = new ArrayList<ShelfLifeCandidate>(focused.shelfLives);
+        // Shelf life is date evidence too. A small label often lands in a full-frame or
+        // detector supplement while the focused crop only contains the printed date.
+        shelfLives.addAll(supplement.shelfLives);
 
         dedupeDateCandidates(productionDates);
         dedupeDateCandidates(expiryDates);

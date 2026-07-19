@@ -9,6 +9,7 @@ import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
+import java.util.Set;
 import java.util.UUID;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
@@ -16,6 +17,7 @@ import java.util.regex.Pattern;
 final class FoodStoreMigration {
     private static final int LEGACY_ARRAY_SCHEMA_VERSION = 0;
     private static final int PRODUCT_PROFILE_SCHEMA_VERSION = 2;
+    private static final int UNIQUE_BATCH_ID_SCHEMA_VERSION = 3;
     private static final String SCHEMA_VERSION_KEY = "schemaVersion";
     private static final String FOODS_KEY = "foods";
     private static final Pattern EXPLICIT_BARCODE_NOTE = Pattern.compile(
@@ -153,6 +155,7 @@ final class FoodStoreMigration {
 
     private static ReadFoodsResult readFoods(JSONArray array, int currentSchemaVersion) {
         List<FoodItem> foods = new ArrayList<FoodItem>();
+        Set<String> reservedBatchIds = new java.util.HashSet<String>();
         boolean repairedRecords = false;
 
         for (int index = 0; index < array.length(); index++) {
@@ -163,6 +166,10 @@ final class FoodStoreMigration {
 
             String storedDateSource = object.optString("dateSource", "").trim();
             FoodItem item = FoodItem.fromJson(object);
+            if (currentSchemaVersion >= UNIQUE_BATCH_ID_SCHEMA_VERSION
+                    && ensureUniqueBatchId(item, object, index, reservedBatchIds)) {
+                repairedRecords = true;
+            }
             if ("calculated".equals(storedDateSource) && "manual".equals(item.dateSource)) {
                 repairedRecords = true;
             }
@@ -180,6 +187,7 @@ final class FoodStoreMigration {
 
     private static JSONArray serializeFoods(List<FoodItem> foods, int currentSchemaVersion) {
         JSONArray array = new JSONArray();
+        Set<String> reservedBatchIds = new java.util.HashSet<String>();
         if (foods == null) {
             return array;
         }
@@ -191,6 +199,9 @@ final class FoodStoreMigration {
             }
 
             try {
+                if (currentSchemaVersion >= UNIQUE_BATCH_ID_SCHEMA_VERSION) {
+                    ensureUniqueBatchId(item, item.toJson(), index, reservedBatchIds);
+                }
                 if (currentSchemaVersion >= PRODUCT_PROFILE_SCHEMA_VERSION) {
                     ensureStructuredFields(item, index);
                 }
@@ -201,6 +212,30 @@ final class FoodStoreMigration {
         }
 
         return array;
+    }
+
+    private static boolean ensureUniqueBatchId(
+            FoodItem item,
+            JSONObject source,
+            int recordIndex,
+            Set<String> reservedIds
+    ) {
+        String current = FoodItem.cleanText(item.id);
+        if (current.length() > 0 && reservedIds.add(current)) {
+            return false;
+        }
+
+        String payload = source == null ? "" : source.toString();
+        int attempt = 0;
+        String candidate;
+        do {
+            String seed = "food-batch-v3:" + recordIndex + ":" + attempt + ":" + payload;
+            candidate = "food_" + UUID.nameUUIDFromBytes(seed.getBytes(StandardCharsets.UTF_8));
+            attempt++;
+        } while (reservedIds.contains(candidate));
+        item.id = candidate;
+        reservedIds.add(candidate);
+        return true;
     }
 
     private static boolean ensureStructuredFields(FoodItem item, int recordIndex) {
