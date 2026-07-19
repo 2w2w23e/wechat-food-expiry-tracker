@@ -132,6 +132,68 @@ final class RecognitionFrameSelector {
     }
 
     /**
+     * Keep acquiring while recognition is busy. The single recognition worker
+     * replaces its one pending bitmap, so this raises freshness without growing a queue.
+     */
+    static boolean shouldCaptureLatestCameraFrame(
+            boolean cameraBound,
+            long nowMillis,
+            long lastCaptureMillis,
+            long minimumIntervalMillis,
+            boolean recognitionBusy
+    ) {
+        if (!cameraBound) {
+            return false;
+        }
+        long safeInterval = Math.max(0L, minimumIntervalMillis);
+        return nowMillis >= lastCaptureMillis
+                && nowMillis - lastCaptureMillis >= safeInterval;
+    }
+
+    static List<Long> highRateVideoFrameTimes(long durationUs, boolean longVideo) {
+        long safeDurationUs = Math.max(0L, durationUs);
+        int maxCandidates = longVideo ? 180 : 120;
+        long targetIntervalUs = 66667L;
+        int idealCount = safeDurationUs == 0L
+                ? 1
+                : (int) Math.min(
+                Integer.MAX_VALUE,
+                (safeDurationUs + targetIntervalUs - 1L) / targetIntervalUs + 1L
+        );
+        int count = Math.max(1, Math.min(maxCandidates, idealCount));
+        List<Long> times = new ArrayList<Long>(count);
+        if (count == 1) {
+            times.add(Long.valueOf(0L));
+            return times;
+        }
+        for (int index = 0; index < count; index++) {
+            long frameUs = Math.round(safeDurationUs * (index / (double) (count - 1)));
+            if (times.isEmpty() || times.get(times.size() - 1).longValue() != frameUs) {
+                times.add(Long.valueOf(frameUs));
+            }
+        }
+        return times;
+    }
+
+    static int highRateVideoSelectionWindow(int candidateCount, boolean longVideo) {
+        int safeCount = Math.max(1, candidateCount);
+        int maxOcrFrames = longVideo ? 18 : 16;
+        return Math.max(1, (safeCount + maxOcrFrames - 1) / maxOcrFrames);
+    }
+
+    static double highRateVideoFrameScore(
+            double visualScore,
+            double sharpness,
+            double glareRatio
+    ) {
+        return clamp01(
+                0.50d * clamp01(visualScore)
+                        + 0.40d * clamp01(sharpness)
+                        + 0.10d * (1.0d - clamp01(glareRatio))
+        );
+    }
+
+    /**
      * Returns true only when the retained keyframe set changes.
      */
     boolean offer(FrameCandidate candidate) {
