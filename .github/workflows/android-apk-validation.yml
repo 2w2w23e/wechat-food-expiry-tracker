@@ -52,3 +52,60 @@ jobs:
           path: apk/app/build/outputs/apk/debug/app-debug.apk
           if-no-files-found: error
           retention-days: 14
+
+
+  emulator-video-visual-smoke:
+    needs: test-and-build
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Check out sources
+        uses: actions/checkout@v4
+
+      - name: Download validated APK
+        uses: actions/download-artifact@v4
+        with:
+          name: shiqi-food-expiry-v0.3.13-debug
+          path: qa-apk
+
+      - name: Create moving Chinese packaging video
+        run: |
+          FONT="$(fc-match -f '%{file}' 'Noto Sans CJK SC' | head -n 1)"
+          ffmpeg -hide_banner -loglevel error             -f lavfi -i color=c=0xc8c9bd:s=720x1280:r=30:d=6             -vf "drawtext=fontfile='${FONT}':text='酸菜':fontcolor=0x303229:fontsize=96:x='(w-text_w)/2+18*sin(t*2)':y=220,drawtext=fontfile='${FONT}':text='生产日期 2026-06-12':fontcolor=0x3b3d35:fontsize=48:x='(w-text_w)/2+12*sin(t*2)':y=610,drawtext=fontfile='${FONT}':text='保质期 12 个月':fontcolor=0x3b3d35:fontsize=48:x='(w-text_w)/2+12*sin(t*2)':y=690"             -c:v libx264 -pix_fmt yuv420p -movflags +faststart qa-chinese-package.mp4
+
+      - name: Run video recognition and capture scanner
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 29
+          arch: x86_64
+          profile: pixel_2
+          disable-animations: true
+          script: |
+            adb install -r qa-apk/app-debug.apk
+            adb push qa-chinese-package.mp4 /data/local/tmp/qa-chinese-package.mp4
+            adb shell run-as com.shiqi.expirytracker cp /data/local/tmp/qa-chinese-package.mp4 files/qa-chinese-package.mp4
+            adb logcat -c
+            adb shell am start -W -n com.shiqi.expirytracker/.MainActivity --es com.shiqi.expirytracker.QA_VIDEO_PATH /data/user/0/com.shiqi.expirytracker/files/qa-chinese-package.mp4
+            for attempt in $(seq 1 24); do
+              sleep 10
+              adb shell uiautomator dump /sdcard/window.xml >/dev/null 2>&1 || true
+              adb pull /sdcard/window.xml window.xml >/dev/null 2>&1 || true
+              if grep -Eq '识别完成|可先确认|已完成' window.xml; then
+                break
+              fi
+            done
+            adb exec-out screencap -p > scanner-video-qa.png
+            echo "SHIQI_SCREENSHOT_BASE64_BEGIN"
+            base64 -w 0 scanner-video-qa.png
+            echo
+            echo "SHIQI_SCREENSHOT_BASE64_END"
+            adb logcat -d -s ShiqiRecognition:D '*:S' || true
+
+      - name: Upload visual QA evidence
+        uses: actions/upload-artifact@v4
+        with:
+          name: high-frame-chinese-video-visual-qa
+          path: scanner-video-qa.png
+          if-no-files-found: error
+          retention-days: 14
