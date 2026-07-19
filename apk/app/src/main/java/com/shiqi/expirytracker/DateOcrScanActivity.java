@@ -847,8 +847,10 @@ public final class DateOcrScanActivity extends ComponentActivity {
                         expectedFrames
                 );
                 if (cameraSimulationActive
-                        && analyzedFrames >= 5
-                        && hasCompleteVideoLabelCandidate()) {
+                        && RecognitionFrameSelector.shouldFinishCameraSimulation(
+                        analyzedFrames,
+                        hasCompleteVideoLabelCandidate()
+                )) {
                     break;
                 }
                 if (selectedFrameRatio >= 0.90d && hasCompleteVideoLabelCandidate()) {
@@ -3385,7 +3387,11 @@ public final class DateOcrScanActivity extends ComponentActivity {
                 "",
                 false
         );
-        if (current.productionDates.isEmpty() || !current.expiryDates.isEmpty()) {
+        if (!RecognitionFrameSelector.needsIncompleteDateRefinement(
+                !current.productionDates.isEmpty(),
+                !current.expiryDates.isEmpty(),
+                !current.calculatedExpiryDates.isEmpty()
+        )) {
             return;
         }
 
