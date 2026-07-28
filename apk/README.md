@@ -6,7 +6,7 @@
 
 ## 构建
 
-当前 APK 版本号：`versionName 0.3.16`，`versionCode 19`。每次生成新的可交付 APK 时，都需要同步提升 `apk/app/build.gradle` 和 `AndroidManifest.xml` 里的 `versionName` 和 `versionCode`。
+当前 APK 版本号：`versionName 0.3.17`，`versionCode 20`。每次生成新的可交付 APK 时，都需要同步提升 `apk/app/build.gradle` 和 `AndroidManifest.xml` 里的 `versionName` 和 `versionCode`。
 
 当前最低 Android 版本为 API 24（Android 7.0）。当前 debug APK 实测约 220 MB；离线模型只保留当前链路需要的关键文件，可交付 APK 的硬上限为 1 GB。
 
@@ -74,6 +74,7 @@ apk/build/outputs/apk/shiqi-android-release.apk
 - 视频识别增强：视频帧会使用全图、放大裁剪、中英文双 OCR、PP-OCRv6 日期行补充识别、多帧候选排序和 OpenCV CLAHE / 背景差分低对比增强；日期按多模型与多帧证据稳定后进入表单
 - 相机实时帧门控：每帧先检查清晰度、曝光、反光和文字区域，只保留首个、明显更好或超时兜底帧进入完整 OCR；识别繁忙时继续以 `KEEP_ONLY_LATEST` 语义替换待处理帧，不堆积旧画面
 - 实时识别反馈：取景框显示 PP-OCRv6 检测到的可能文字区；发现有效画面时提示并轻震。查看识别依据使用可返回弹窗；继续相机识别默认保留已识别的商品名、条码、日期、保质期和关键帧
+- Debug 诊断面板：实时显示取帧、预检、入选、OCR、模糊跳过、自动重对焦及各阶段耗时；可导入录屏复现并通过系统分享面板导出 UTF-8 文本日志。诊断数据只用于定位本机性能和相机状态，不会自动保存识别结果
 - 商品码识别：支持一维商品条码、QR Code / Data Matrix 中的 GS1 Digital Link 或商品码参数；商品信息查询先走现有 GS1 接口，未命中时对进口商品补查中国商品信息服务平台公开进口商品数据
 - 根据商品名和条码分类信息智能建议食品分类，保存前仍需用户确认
 - 商品名智能选择：条码商品库命中优先；包装文字必须有明确“产品名称/商品名称/食品名称/品名”标签，或同时满足食品语义、文字结构、分数与跨帧稳定要求；最多展示 1 个最佳高可信名称，说明书、医疗内容、厂家/公司名、混合脚本乱码和低分内容不显示

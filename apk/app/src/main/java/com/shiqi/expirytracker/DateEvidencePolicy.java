@@ -19,20 +19,28 @@ final class DateEvidencePolicy {
                 false
         );
         latest = retainDominantProductionDate(latest);
-        if (latest.productionDates.isEmpty() && !latest.shelfLives.isEmpty()) {
-            String dominantPastDate = DateOcrParser.dominantRepeatedPastCompactDate(
-                    latestFrameText,
-                    DateRules.getTodayString()
-            );
-            if (dominantPastDate.length() > 0) {
+        String dominantPastDate = DateOcrParser.dominantRepeatedPastCompactDate(
+                latestFrameText,
+                DateRules.getTodayString()
+        );
+        boolean alreadySelected = latest.productionDates.size() == 1
+                && latest.productionDates.get(0).normalized.equals(dominantPastDate);
+        if (dominantPastDate.length() > 0
+                && (latest.shelfLives.isEmpty()
+                || latest.productionDates.isEmpty())
+                && !alreadySelected) {
+            if (!latest.shelfLives.isEmpty() && latest.productionDates.isEmpty()) {
                 latest = apply(
                         DateOcrParser.parse(
-                                "生产日期 " + dominantPastDate + "\n" + FoodItem.cleanText(latestFrameText)
+                                "生产日期 " + dominantPastDate + "\n"
+                                        + FoodItem.cleanText(latestFrameText)
                         ),
                         "",
                         false
                 );
                 latest = retainDominantProductionDate(latest);
+            } else {
+                latest = withDominantProductionDate(latest, dominantPastDate);
             }
         }
         DateOcrFrameVoter.VoteResult direct = DateOcrFrameVoter.vote(
@@ -52,6 +60,60 @@ final class DateEvidencePolicy {
             return latest;
         }
         return earlierFallback == null ? latest : earlierFallback;
+    }
+
+    private static DateOcrParser.Result withDominantProductionDate(
+            DateOcrParser.Result parsed,
+            String normalized
+    ) {
+        if (parsed == null || !DateRules.isValidDateString(normalized)) {
+            return parsed;
+        }
+        DateOcrParser.DateCandidate source = null;
+        for (DateOcrParser.DateCandidate candidate : parsed.productionDates) {
+            if (candidate.normalized.equals(normalized)) {
+                source = candidate;
+                break;
+            }
+        }
+        if (source == null) {
+            for (DateOcrParser.DateCandidate candidate : parsed.expiryDates) {
+                if (candidate.normalized.equals(normalized)) {
+                    source = candidate;
+                    break;
+                }
+            }
+        }
+        DateOcrParser.DateCandidate production = new DateOcrParser.DateCandidate(
+                "productionDate",
+                source == null ? normalized : source.raw,
+                normalized,
+                source == null ? "repeated past package date" : source.context,
+                source == null ? 0.90d : Math.max(0.90d, source.confidence),
+                false,
+                false
+        );
+        List<DateOcrParser.DateCandidate> expiryDates =
+                new ArrayList<DateOcrParser.DateCandidate>();
+        for (DateOcrParser.DateCandidate expiry : parsed.expiryDates) {
+            if (!expiry.normalized.equals(normalized)) {
+                expiryDates.add(expiry);
+            }
+        }
+        List<DateOcrParser.DateCandidate> productionDates =
+                Collections.singletonList(production);
+        return new DateOcrParser.Result(
+                parsed.rawText,
+                parsed.normalizedText,
+                productionDates,
+                expiryDates,
+                parsed.shelfLives,
+                validatedCalculatedExpiryDates(
+                        parsed.calculatedExpiryDates,
+                        productionDates,
+                        parsed.shelfLives
+                )
+        );
     }
 
     private static DateOcrParser.Result retainDominantProductionDate(

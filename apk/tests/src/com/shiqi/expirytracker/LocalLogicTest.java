@@ -3284,6 +3284,22 @@ public final class LocalLogicTest {
             }
         });
 
+        test("Video completion recovers a repeated past production date without shelf-life text", new TestCase() {
+            public void run() {
+                String transcript = "P品 L250321 生产日期 25.03.15 有效期至 2029.02\n"
+                        + "产品批号 L250321 生产日期：25.03.13 有效期：至2029.02\n"
+                        + "L250321 25.03.13 2029.02\n"
+                        + "生产日期：25.03.13 有效期：至2029.02";
+                DateOcrParser.Result completion =
+                        DateEvidencePolicy.chooseVideoCompletionEvidence(transcript, null);
+
+                assertEquals(1, completion.productionDates.size());
+                assertEquals("2025-03-13", completion.productionDates.get(0).normalized);
+                assertEquals(1, completion.expiryDates.size());
+                assertEquals("2029-02-28", completion.expiryDates.get(0).normalized);
+            }
+        });
+
         test("Date evidence policy removes weak month fragments duplicated from a full date", new TestCase() {
             public void run() {
                 DateOcrParser.Result noisy = DateOcrParser.parse(
@@ -4596,6 +4612,64 @@ public final class LocalLogicTest {
                 assertEquals("大董老北京 炸酱面", draft.name);
                 assertEquals("unknown", draft.dateSource);
                 assertTrue(UnifiedRecognitionPayload.hasUsableDraft(draft), "text-only draft should be editable");
+            }
+        });
+
+        test("RecognitionDiagnostics keeps a bounded chronological event log", new TestCase() {
+            public void run() {
+                RecognitionDiagnostics diagnostics = new RecognitionDiagnostics(45);
+                diagnostics.reset(1000L, "camera");
+                for (int index = 0; index < 60; index++) {
+                    diagnostics.event(1001L + index, "frame", "index=" + index);
+                }
+
+                List<String> events = diagnostics.eventSnapshot();
+                assertEquals(45, events.size());
+                assertTrue(events.get(0).contains("index=15"), "oldest events should be evicted");
+                assertTrue(events.get(44).contains("index=59"), "newest event should remain");
+            }
+        });
+
+        test("RecognitionDiagnostics identifies line recognizer latency", new TestCase() {
+            public void run() {
+                RecognitionDiagnostics diagnostics = new RecognitionDiagnostics(80);
+                diagnostics.reset(1000L, "video");
+                diagnostics.timing("text_detector", 400L);
+                diagnostics.timing("line_recognizer", 3200L);
+                diagnostics.increment("frames_captured");
+                diagnostics.increment("frames_accepted");
+                diagnostics.increment("ocr_completed");
+
+                assertEquals(
+                        RecognitionDiagnostics.BOTTLENECK_LINE_RECOGNIZER,
+                        diagnostics.bottleneckCode()
+                );
+                assertTrue(diagnostics.compactHud().contains("3200ms"), "HUD should expose latest latency");
+                String report = diagnostics.report(5000L, "test-device");
+                assertTrue(report.contains("environment=test-device"), "report should include environment");
+                assertTrue(report.contains("line_recognizer"), "report should include timing details");
+            }
+        });
+
+        test("RecognitionDiagnostics separates backlog and blur bottlenecks", new TestCase() {
+            public void run() {
+                RecognitionDiagnostics backlog = new RecognitionDiagnostics(80);
+                backlog.reset(1000L, "camera");
+                backlog.timing("full_ocr", 3100L);
+                backlog.add("pending_replaced", 9L);
+                assertEquals(
+                        RecognitionDiagnostics.BOTTLENECK_OCR_BACKLOG,
+                        backlog.bottleneckCode()
+                );
+
+                RecognitionDiagnostics blur = new RecognitionDiagnostics(80);
+                blur.reset(1000L, "camera");
+                blur.add("frames_probed", 6L);
+                blur.add("skip_blur", 5L);
+                assertEquals(
+                        RecognitionDiagnostics.BOTTLENECK_FOCUS_BLUR,
+                        blur.bottleneckCode()
+                );
             }
         });
     }
