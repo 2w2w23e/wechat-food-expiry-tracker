@@ -3,6 +3,7 @@ package com.shiqi.expirytracker;
 import android.Manifest;
 import android.app.AlertDialog;
 import android.content.ActivityNotFoundException;
+import android.content.DialogInterface;
 import android.content.Intent;
 import android.content.pm.PackageManager;
 import android.graphics.Bitmap;
@@ -24,6 +25,7 @@ import android.os.SystemClock;
 import android.util.Log;
 import android.util.Size;
 import android.view.Gravity;
+import android.view.HapticFeedbackConstants;
 import android.view.MotionEvent;
 import android.view.Surface;
 import android.view.View;
@@ -149,6 +151,7 @@ public final class DateOcrScanActivity extends ComponentActivity {
     private volatile boolean appScreenRecordingDetected;
     private long nextFrameId;
     private boolean showingEvidenceFrame;
+    private AlertDialog evidenceDialog;
     private volatile int recognitionGeneration;
     private long lastAnalyzeAt;
     private volatile boolean analysisInFlight;
@@ -183,6 +186,13 @@ public final class DateOcrScanActivity extends ComponentActivity {
     private volatile long cameraLastStatusAtMs;
     private volatile String cameraFocusState = "自动对焦准备中";
     private volatile String cameraFrameState = "等待相机画面";
+    private double bestCameraVisualScore = -1d;
+    private double bestCameraAcceptedScore = -1d;
+    private long lastCameraProbeAtMs;
+    private long lastCameraAcceptedAtMs;
+    private long lastCameraAcceptedSignature;
+    private long lastValuableFramePromptAtMs;
+    private int cameraProbeCount;
 
     private final Executor mainExecutor = new Executor() {
         @Override
@@ -259,7 +269,7 @@ public final class DateOcrScanActivity extends ComponentActivity {
                 && intent.getBooleanExtra(EXTRA_START_VIDEO_REPLAY, false)) {
             startVideoReplayPicker();
         } else {
-            ensureCameraPermission();
+            ensureCameraPermission(false);
         }
     }
 
@@ -267,6 +277,10 @@ public final class DateOcrScanActivity extends ComponentActivity {
     protected void onDestroy() {
         recognitionGeneration++;
         stopVideoReplay();
+        if (evidenceDialog != null) {
+            evidenceDialog.dismiss();
+            evidenceDialog = null;
+        }
         stopCamera();
         clearLastReplayFrame();
         clearSessionKeyframes();
@@ -526,7 +540,7 @@ public final class DateOcrScanActivity extends ComponentActivity {
         cameraSourceButton.setOnClickListener(new View.OnClickListener() {
             @Override
             public void onClick(View view) {
-                ensureCameraPermission();
+                ensureCameraPermission(true);
             }
         });
         actionRow.addView(cameraSourceButton, withMargins(weightWrap(1), 0, 0, dp(6), 0));
@@ -549,7 +563,7 @@ public final class DateOcrScanActivity extends ComponentActivity {
         });
         imageSourceButton.setVisibility(View.GONE);
 
-        restartRecognitionButton = sourceButton("重新识别");
+        restartRecognitionButton = sourceButton("继续识别");
         restartRecognitionButton.setVisibility(View.GONE);
         restartRecognitionButton.setOnClickListener(new View.OnClickListener() {
             @Override
@@ -584,7 +598,40 @@ public final class DateOcrScanActivity extends ComponentActivity {
     }
 
     private void showRecognitionSourceDialog() {
-        ensureCameraPermission();
+        new AlertDialog.Builder(this)
+                .setTitle("继续识别")
+                .setItems(
+                        new String[] {
+                                "继续相机识别（保留当前结果）",
+                                "清空当前结果后重来"
+                        },
+                        new DialogInterface.OnClickListener() {
+                            @Override
+                            public void onClick(DialogInterface dialog, int which) {
+                                if (which == 0) {
+                                    ensureCameraPermission(true);
+                                } else {
+                                    confirmRestartRecognition();
+                                }
+                            }
+                        }
+                )
+                .setNegativeButton("取消", null)
+                .show();
+    }
+
+    private void confirmRestartRecognition() {
+        new AlertDialog.Builder(this)
+                .setTitle("清空识别结果？")
+                .setMessage("商品名、日期、条码和识别依据都会清空。")
+                .setNegativeButton("保留结果", null)
+                .setPositiveButton("清空重来", new DialogInterface.OnClickListener() {
+                    @Override
+                    public void onClick(DialogInterface dialog, int which) {
+                        ensureCameraPermission(false);
+                    }
+                })
+                .show();
     }
 
     private void setRecognitionComplete(boolean complete) {
@@ -619,20 +666,87 @@ public final class DateOcrScanActivity extends ComponentActivity {
         updateResultUi(stabilizer.snapshot());
     }
 
-    private void ensureCameraPermission() {
-        stopVideoReplay();
-        resetRecognitionState();
-        if (previewView != null) {
-            previewView.setVisibility(View.VISIBLE);
+    private void ensureCameraPermission(boolean preserveRecognition) {
+        if (preserveRecognition
+                && cameraBound
+                && previewView != null
+                && previewView.getVisibility() == View.VISIBLE) {
+            statusBadge.setText("相机");
+            statusText.setText("相机正在继续识别，已有商品名、日期和条码不会被清空。");
+            if (camera != null && previewView.getWidth() > 0 && previewView.getHeight() > 0) {
+                startFocusAndMetering(
+                        camera,
+                        previewView.getWidth() / 2f,
+                        previewView.getHeight() * 0.48f,
+                        false
+                );
+            }
+            return;
         }
-        if (replayFrameView != null) {
-            replayFrameView.setVisibility(View.GONE);
+        if (preserveRecognition) {
+            prepareCameraSurfacePreservingRecognition();
+        } else {
+            stopVideoReplay();
+            resetRecognitionState();
+            showCameraSurface();
         }
         if (checkSelfPermission(Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED) {
             startCamera();
             return;
         }
         requestPermissions(new String[] { Manifest.permission.CAMERA }, REQUEST_CAMERA_PERMISSION);
+    }
+
+    private void showCameraSurface() {
+        if (previewView != null) {
+            previewView.setVisibility(View.VISIBLE);
+        }
+        if (replayFrameView != null) {
+            replayFrameView.setVisibility(View.GONE);
+            replayFrameView.setImageBitmap(null);
+        }
+        clearLastReplayFrame();
+        if (recognitionOverlay != null) {
+            recognitionOverlay.showEvidence(null, 0, 0);
+            recognitionOverlay.showLiveRegions(null, 0, 0);
+        }
+        renderCameraHud();
+    }
+
+    private void prepareCameraSurfacePreservingRecognition() {
+        stopVideoReplay();
+        recognitionGeneration++;
+        clearPendingCameraFrame();
+        showingEvidenceFrame = false;
+        analyzedFrameSequence = 0;
+        recognitionFirstFrameAtMs = 0L;
+        paddleCameraBandFramesUsed = 0;
+        paddleDetectionCameraFramesUsed = 0;
+        paddleDetectedLineCameraFramesUsed = 0;
+        lowContrastCameraPassesUsed = 0;
+        analysisInFlight = false;
+        liveCameraResultFrozen = false;
+        lastAnalyzeAt = 0L;
+        cameraFramesCaptured = 0;
+        cameraLastStatusAtMs = 0L;
+        cameraFocusState = "自动对焦准备中";
+        cameraFrameState = "已保留原结果，等待新画面";
+        resetCameraFrameGate();
+        showCameraSurface();
+        setRecognitionComplete(false);
+        statusBadge.setText("继续识别");
+        statusText.setText("已有候选和识别依据已保留；继续对准缺失或不清晰的包装信息。");
+        updateResultUi(latestSnapshot);
+    }
+
+    private void resetCameraFrameGate() {
+        bestCameraVisualScore = -1d;
+        bestCameraAcceptedScore = -1d;
+        lastCameraProbeAtMs = 0L;
+        lastCameraAcceptedAtMs = 0L;
+        lastCameraAcceptedSignature = 0L;
+        lastValuableFramePromptAtMs = 0L;
+        cameraProbeCount = 0;
     }
 
     @Override
@@ -1199,7 +1313,7 @@ public final class DateOcrScanActivity extends ComponentActivity {
     }
 
     private void analyzeBitmapFrame(Bitmap bitmap, boolean singleFrameConfirmation) throws Exception {
-        analyzeBitmapFrame(bitmap, singleFrameConfirmation, false, recognitionGeneration);
+        analyzeBitmapFrame(bitmap, singleFrameConfirmation, false, recognitionGeneration, null);
     }
 
     private void analyzeBitmapFrame(
@@ -1207,6 +1321,18 @@ public final class DateOcrScanActivity extends ComponentActivity {
             boolean singleFrameConfirmation,
             boolean cameraLive,
             int expectedGeneration
+    ) throws Exception {
+        analyzeBitmapFrame(
+                bitmap, singleFrameConfirmation, cameraLive, expectedGeneration, null
+        );
+    }
+
+    private void analyzeBitmapFrame(
+            Bitmap bitmap,
+            boolean singleFrameConfirmation,
+            boolean cameraLive,
+            int expectedGeneration,
+            CameraFrameProbe cameraProbe
     ) throws Exception {
         if (bitmap == null || textRecognizer == null || barcodeScanner == null) {
             return;
@@ -1226,7 +1352,9 @@ public final class DateOcrScanActivity extends ComponentActivity {
         long frameId = ++nextFrameId;
         long frameTimestampUs = currentFrameTimestampUs;
         LowContrastTextPreprocessor.FrameMetrics frameMetrics =
-                LowContrastTextPreprocessor.measureFrame(bitmap);
+                cameraProbe == null
+                        ? LowContrastTextPreprocessor.measureFrame(bitmap)
+                        : cameraProbe.metrics;
         analyzedFrameSequence++;
         if (cameraLive) {
             String quality = CameraOcrFeedback.qualityLabel(
@@ -1434,7 +1562,11 @@ public final class DateOcrScanActivity extends ComponentActivity {
                 if (videoReplayActive) {
                     paddleDetectionVideoFramesUsed++;
                 }
-                detectedRegionEvidence = recognizePaddleTextRegionsForFrame(bitmap, cameraLive);
+                detectedRegionEvidence = recognizePaddleTextRegionsForFrame(
+                        bitmap,
+                        cameraLive,
+                        cameraProbe
+                );
                 if (cameraLive) {
                     paddleDetectionCameraFramesUsed++;
                 }
@@ -2413,13 +2545,27 @@ public final class DateOcrScanActivity extends ComponentActivity {
     }
 
     private PaddleDateEvidence recognizePaddleTextRegions(Bitmap bitmap, boolean cameraLive) {
-        return recognizePaddleTextRegions(bitmap, cameraLive, 0);
+        return recognizePaddleTextRegions(bitmap, cameraLive, 0, null);
     }
 
     private PaddleDateEvidence recognizePaddleTextRegions(
             Bitmap bitmap,
             boolean cameraLive,
             int requestedMaxRegions
+    ) {
+        return recognizePaddleTextRegions(
+                bitmap,
+                cameraLive,
+                requestedMaxRegions,
+                null
+        );
+    }
+
+    private PaddleDateEvidence recognizePaddleTextRegions(
+            Bitmap bitmap,
+            boolean cameraLive,
+            int requestedMaxRegions,
+            List<PaddleTextDetectionEngine.TextRegion> preDetectedRegions
     ) {
         PaddleTextDetectionEngine detector = paddleTextDetectionEngine;
         PaddleLineOcrEngine recognizer = paddleLineOcrEngine;
@@ -2444,20 +2590,34 @@ public final class DateOcrScanActivity extends ComponentActivity {
             }
         }
         long detectorStartedAt = SystemClock.elapsedRealtime();
-        List<PaddleTextDetectionEngine.TextRegion> detectedRegions;
+        List<PaddleTextDetectionEngine.TextRegion> detectedRegions =
+                new ArrayList<PaddleTextDetectionEngine.TextRegion>();
+        boolean reuseProbe = cameraLive
+                && cameraPass == 0
+                && detectorInput == bitmap
+                && preDetectedRegions != null
+                && !preDetectedRegions.isEmpty();
         try {
-            int maxRegions = requestedMaxRegions > 0
-                    ? requestedMaxRegions
-                    : cameraLive ? (dateOnlyMode ? 28 : 22) : videoReplayActive ? 10 : 24;
-            detectedRegions = detector.detect(
-                    detectorInput,
-                    maxRegions,
-                    cameraLive ? cameraInputSide : 1280
-            );
+            if (reuseProbe) {
+                detectedRegions.addAll(preDetectedRegions);
+                cameraInputSide = 640;
+            } else {
+                int maxRegions = requestedMaxRegions > 0
+                        ? requestedMaxRegions
+                        : cameraLive ? (dateOnlyMode ? 28 : 22) : videoReplayActive ? 10 : 24;
+                detectedRegions.addAll(detector.detect(
+                        detectorInput,
+                        maxRegions,
+                        cameraLive ? cameraInputSide : 1280
+                ));
+            }
         } finally {
             if (detectorInput != bitmap && !detectorInput.isRecycled()) {
                 detectorInput.recycle();
             }
+        }
+        if (cameraLive) {
+            publishLiveTextRegions(detectedRegions, bitmap.getWidth(), bitmap.getHeight());
         }
         List<PaddleTextDetectionEngine.TextRegion> regions =
                 new ArrayList<PaddleTextDetectionEngine.TextRegion>();
@@ -2685,9 +2845,18 @@ public final class DateOcrScanActivity extends ComponentActivity {
         );
     }
 
-    private PaddleDateEvidence recognizePaddleTextRegionsForFrame(Bitmap bitmap, boolean cameraLive) {
+    private PaddleDateEvidence recognizePaddleTextRegionsForFrame(
+            Bitmap bitmap,
+            boolean cameraLive,
+            CameraFrameProbe cameraProbe
+    ) {
         if (!appScreenRecordingDetected || bitmap == null || bitmap.isRecycled()) {
-            return recognizePaddleTextRegions(bitmap, cameraLive);
+            return recognizePaddleTextRegions(
+                    bitmap,
+                    cameraLive,
+                    0,
+                    cameraProbe == null ? null : cameraProbe.regions
+            );
         }
         double leftRatio = 0.04d;
         double topRatio = 0.075d;
@@ -3600,6 +3769,7 @@ public final class DateOcrScanActivity extends ComponentActivity {
                 showingEvidenceFrame = false;
                 if (recognitionOverlay != null) {
                     recognitionOverlay.showEvidence(null, 0, 0);
+                    recognitionOverlay.showLiveRegions(null, 0, 0);
                 }
                 clearLastReplayFrame();
                 lastReplayFrame = bitmap;
@@ -4025,6 +4195,7 @@ public final class DateOcrScanActivity extends ComponentActivity {
         liveCameraResultFrozen = false;
         lastAnalyzeAt = 0L;
         cameraFramesCaptured = 0;
+        resetCameraFrameGate();
         cameraLastStatusAtMs = 0L;
         cameraFocusState = "自动对焦准备中";
         cameraFrameState = "等待相机画面";
@@ -4525,7 +4696,10 @@ public final class DateOcrScanActivity extends ComponentActivity {
             try {
                 if (cameraBound && generation == recognitionGeneration) {
                     currentFrameTimestampUs = timestampUs;
-                    analyzeBitmapFrame(frame, false, true, generation);
+                    CameraFrameProbe probe = inspectCameraFrame(frame, generation);
+                    if (probe.shouldRecognize) {
+                        analyzeBitmapFrame(frame, false, true, generation, probe);
+                    }
                 }
             } catch (Exception error) {
                 Log.w("ShiqiRecognition", "Camera frame recognition failed", error);
@@ -4533,6 +4707,195 @@ public final class DateOcrScanActivity extends ComponentActivity {
                 recycleBitmap(frame);
             }
         }
+    }
+
+    private CameraFrameProbe inspectCameraFrame(Bitmap frame, int expectedGeneration) {
+        LowContrastTextPreprocessor.FrameMetrics metrics =
+                LowContrastTextPreprocessor.measureFrame(frame);
+        long now = SystemClock.elapsedRealtime();
+        RecognitionFrameSelector.CameraFramePreflight preflight =
+                RecognitionFrameSelector.cameraFramePreflight(
+                        cameraFramesCaptured,
+                        now,
+                        lastCameraProbeAtMs,
+                        metrics.visualScore,
+                        metrics.sharpness,
+                        metrics.brightness,
+                        metrics.contrast,
+                        metrics.glareRatio,
+                        bestCameraVisualScore,
+                        dateOnlyMode
+                );
+        if (!preflight.shouldProbe) {
+            publishCameraPreflightGuidance(preflight.reason);
+            return new CameraFrameProbe(
+                    metrics,
+                    Collections.<PaddleTextDetectionEngine.TextRegion>emptyList(),
+                    false
+            );
+        }
+
+        boolean detectorReady = paddleModelsReady
+                && paddleTextDetectionEngine != null
+                && !barcodeLookupOnly;
+        List<PaddleTextDetectionEngine.TextRegion> regions =
+                new ArrayList<PaddleTextDetectionEngine.TextRegion>();
+        if (detectorReady && expectedGeneration == recognitionGeneration) {
+            regions.addAll(paddleTextDetectionEngine.detect(
+                    frame,
+                    dateOnlyMode ? 16 : 12,
+                    640
+            ));
+        }
+        if (expectedGeneration != recognitionGeneration) {
+            return new CameraFrameProbe(metrics, regions, false);
+        }
+
+        cameraProbeCount++;
+        lastCameraProbeAtMs = now;
+        bestCameraVisualScore = Math.max(bestCameraVisualScore, preflight.visualScore);
+        double coverage = 0d;
+        double confidence = 0d;
+        for (PaddleTextDetectionEngine.TextRegion region : regions) {
+            coverage += Math.max(0d, region.right - region.left)
+                    * Math.max(0d, region.bottom - region.top);
+            confidence += region.confidence;
+        }
+        double meanConfidence = regions.isEmpty() ? 0d : confidence / regions.size();
+        double informationScore = RecognitionFrameSelector.cameraInformationScore(
+                regions.size(),
+                coverage,
+                meanConfidence
+        );
+        double candidateScore = RecognitionFrameSelector.cameraFrameValueScore(
+                preflight.visualScore,
+                informationScore
+        );
+        boolean shouldRecognize = RecognitionFrameSelector.shouldRecognizeCameraFrame(
+                cameraProbeCount,
+                now,
+                lastCameraAcceptedAtMs,
+                barcodeLookupOnly,
+                dateOnlyMode,
+                regions.size(),
+                candidateScore,
+                bestCameraAcceptedScore,
+                detectorReady
+        );
+        int signatureDistance = lastCameraAcceptedAtMs <= 0L
+                ? 64
+                : RecognitionFrameSelector.perceptualHashDistance(
+                        metrics.signature,
+                        lastCameraAcceptedSignature
+                );
+        if (shouldRecognize
+                && signatureDistance <= 1
+                && now - lastCameraAcceptedAtMs < 650L
+                && candidateScore <= bestCameraAcceptedScore + 0.01d) {
+            shouldRecognize = false;
+        }
+
+        publishLiveTextRegions(regions, frame.getWidth(), frame.getHeight());
+        if (!shouldRecognize) {
+            setCameraFrameState(
+                    regions.isEmpty()
+                            ? "暂未发现文字区 · 缓慢移动包装"
+                            : "发现 " + regions.size() + " 个文字区 · 等待更清晰画面",
+                    true
+            );
+            return new CameraFrameProbe(metrics, regions, false);
+        }
+
+        boolean meaningfulImprovement = bestCameraAcceptedScore < 0d
+                || candidateScore >= bestCameraAcceptedScore + 0.025d;
+        lastCameraAcceptedAtMs = now;
+        lastCameraAcceptedSignature = metrics.signature;
+        bestCameraAcceptedScore = Math.max(bestCameraAcceptedScore, candidateScore);
+        if (!regions.isEmpty()) {
+            announceValuableFrame(regions.size(), meaningfulImprovement, now);
+        } else {
+            setCameraFrameState("正在核验低对比度文字 · 请保持稳定", false);
+        }
+        return new CameraFrameProbe(metrics, regions, true);
+    }
+
+    private void publishCameraPreflightGuidance(int reason) {
+        String guidance;
+        if (reason == RecognitionFrameSelector.CAMERA_FRAME_TOO_DARK) {
+            guidance = "画面太暗 · 请增加环境光";
+        } else if (reason == RecognitionFrameSelector.CAMERA_FRAME_TOO_BRIGHT) {
+            guidance = "画面过亮 · 请避开直射光";
+        } else if (reason == RecognitionFrameSelector.CAMERA_FRAME_GLARE) {
+            guidance = "包装反光 · 请稍微倾斜手机";
+        } else if (reason == RecognitionFrameSelector.CAMERA_FRAME_BLUR) {
+            guidance = "文字发糊 · 请轻点文字并保持稳定";
+        } else {
+            guidance = "正在比较画面 · 等待更清晰一帧";
+        }
+        setCameraFrameState(guidance, true);
+    }
+
+    private void publishLiveTextRegions(
+            List<PaddleTextDetectionEngine.TextRegion> regions,
+            int imageWidth,
+            int imageHeight
+    ) {
+        final List<PaddleTextDetectionEngine.TextRegion> safeRegions =
+                regions == null
+                        ? Collections.<PaddleTextDetectionEngine.TextRegion>emptyList()
+                        : new ArrayList<PaddleTextDetectionEngine.TextRegion>(regions);
+        final int width = imageWidth;
+        final int height = imageHeight;
+        final int generation = recognitionGeneration;
+        runOnUiThread(new Runnable() {
+            @Override
+            public void run() {
+                if (generation != recognitionGeneration || recognitionOverlay == null) {
+                    return;
+                }
+                recognitionOverlay.showLiveRegions(safeRegions, width, height);
+            }
+        });
+    }
+
+    private void announceValuableFrame(
+            final int regionCount,
+            boolean meaningfulImprovement,
+            long now
+    ) {
+        if (!meaningfulImprovement
+                && lastValuableFramePromptAtMs > 0L
+                && now - lastValuableFramePromptAtMs < 1800L) {
+            setCameraFrameState("已发现文字区 · 正在稳定识别", false);
+            return;
+        }
+        final boolean firstPrompt = lastValuableFramePromptAtMs == 0L;
+        lastValuableFramePromptAtMs = now;
+        runOnUiThread(new Runnable() {
+            @Override
+            public void run() {
+                statusBadge.setText("发现有效画面");
+                setCameraFrameState(
+                        "已保留更清晰画面 · 正在识别 " + regionCount + " 个文字区",
+                        false
+                );
+                View hapticView = previewView == null ? recognitionOverlay : previewView;
+                if (hapticView != null) {
+                    hapticView.performHapticFeedback(
+                            Build.VERSION.SDK_INT >= Build.VERSION_CODES.R
+                                    ? HapticFeedbackConstants.CONFIRM
+                                    : HapticFeedbackConstants.CLOCK_TICK
+                    );
+                }
+                if (firstPrompt) {
+                    Toast.makeText(
+                            DateOcrScanActivity.this,
+                            "已发现有效包装画面，正在选取最清晰文字",
+                            Toast.LENGTH_SHORT
+                    ).show();
+                }
+            }
+        });
     }
 
     private void clearPendingCameraFrame() {
@@ -6038,8 +6401,69 @@ public final class DateOcrScanActivity extends ComponentActivity {
         }
     }
 
-    private void showEvidenceFrame(SessionKeyframe keyframe) {
-        showEvidenceFrame(keyframe, true);
+    private void showEvidenceFrame(final SessionKeyframe keyframe) {
+        if (keyframe == null || keyframe.bitmap == null || keyframe.bitmap.isRecycled()) {
+            return;
+        }
+        if (evidenceDialog != null) {
+            evidenceDialog.dismiss();
+        }
+
+        RecognitionEvidence.Region primary = keyframe.primaryRegion();
+        LinearLayout content = new LinearLayout(this);
+        content.setOrientation(LinearLayout.VERTICAL);
+        content.setPadding(dp(8), dp(4), dp(8), 0);
+
+        TextView summary = new TextView(this);
+        summary.setText(fieldLabel(primary.field) + " · "
+                + RecognitionEvidence.confidenceLabel(primary.confidence)
+                + "\n关闭后会回到刚才的识别结果，当前候选不会清空。");
+        summary.setTextColor(Color.rgb(54, 65, 58));
+        summary.setTextSize(15);
+        summary.setLineSpacing(0f, 1.08f);
+        summary.setPadding(dp(4), 0, dp(4), dp(10));
+        content.addView(summary, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT
+        ));
+
+        FrameLayout evidenceFrame = new FrameLayout(this);
+        ImageView image = new ImageView(this);
+        image.setScaleType(ImageView.ScaleType.CENTER_CROP);
+        image.setBackgroundColor(Color.BLACK);
+        image.setImageBitmap(keyframe.bitmap);
+        evidenceFrame.addView(image, new FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.MATCH_PARENT
+        ));
+
+        RecognitionGuideOverlay overlay = new RecognitionGuideOverlay(this);
+        overlay.showEvidence(
+                keyframe.evidence.regions,
+                keyframe.evidence.width,
+                keyframe.evidence.height
+        );
+        evidenceFrame.addView(overlay, new FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.MATCH_PARENT
+        ));
+        content.addView(evidenceFrame, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                dp(430)
+        ));
+
+        evidenceDialog = new AlertDialog.Builder(this)
+                .setTitle("识别依据")
+                .setView(content)
+                .setPositiveButton("返回识别结果", null)
+                .create();
+        evidenceDialog.setOnDismissListener(new DialogInterface.OnDismissListener() {
+            @Override
+            public void onDismiss(DialogInterface dialog) {
+                evidenceDialog = null;
+            }
+        });
+        evidenceDialog.show();
     }
 
     private void showEvidenceFrame(SessionKeyframe keyframe, boolean updateStatusText) {
@@ -6584,6 +7008,24 @@ public final class DateOcrScanActivity extends ComponentActivity {
         }
     }
 
+    private static final class CameraFrameProbe {
+        final LowContrastTextPreprocessor.FrameMetrics metrics;
+        final List<PaddleTextDetectionEngine.TextRegion> regions;
+        final boolean shouldRecognize;
+
+        CameraFrameProbe(
+                LowContrastTextPreprocessor.FrameMetrics metrics,
+                List<PaddleTextDetectionEngine.TextRegion> regions,
+                boolean shouldRecognize
+        ) {
+            this.metrics = metrics;
+            this.regions = regions == null
+                    ? Collections.<PaddleTextDetectionEngine.TextRegion>emptyList()
+                    : new ArrayList<PaddleTextDetectionEngine.TextRegion>(regions);
+            this.shouldRecognize = shouldRecognize;
+        }
+    }
+
     private static final class SessionKeyframe {
         final RecognitionEvidence.Frame evidence;
         final Bitmap bitmap;
@@ -6636,6 +7078,10 @@ public final class DateOcrScanActivity extends ComponentActivity {
         private List<RecognitionEvidence.Region> evidenceRegions = Collections.emptyList();
         private int evidenceImageWidth;
         private int evidenceImageHeight;
+        private List<PaddleTextDetectionEngine.TextRegion> liveTextRegions = Collections.emptyList();
+        private int liveImageWidth;
+        private int liveImageHeight;
+        private long liveVisibleUntilMs;
         private float focusX;
         private float focusY;
         private int focusState;
@@ -6653,6 +7099,26 @@ public final class DateOcrScanActivity extends ComponentActivity {
             evidenceImageHeight = imageHeight;
             invalidate();
         }
+
+        void showLiveRegions(
+                List<PaddleTextDetectionEngine.TextRegion> regions,
+                int imageWidth,
+                int imageHeight
+        ) {
+            liveTextRegions = regions == null
+                    ? Collections.<PaddleTextDetectionEngine.TextRegion>emptyList()
+                    : new ArrayList<PaddleTextDetectionEngine.TextRegion>(regions);
+            liveImageWidth = imageWidth;
+            liveImageHeight = imageHeight;
+            liveVisibleUntilMs = liveTextRegions.isEmpty()
+                    ? 0L
+                    : SystemClock.uptimeMillis() + 1200L;
+            invalidate();
+            if (liveVisibleUntilMs > 0L) {
+                postInvalidateDelayed(1250L);
+            }
+        }
+
         void showFocusPoint(float x, float y, int state) {
             focusX = x;
             focusY = y;
@@ -6699,8 +7165,73 @@ public final class DateOcrScanActivity extends ComponentActivity {
             drawCorner(canvas, frame.left, frame.bottom, corner, true, false);
             drawCorner(canvas, frame.right, frame.bottom, corner, false, false);
 
+            drawLiveTextRegions(canvas, width, height);
             drawFocusPoint(canvas);
+        }
 
+        private void drawLiveTextRegions(Canvas canvas, int width, int height) {
+            if (liveTextRegions.isEmpty()
+                    || liveImageWidth <= 0
+                    || liveImageHeight <= 0
+                    || SystemClock.uptimeMillis() > liveVisibleUntilMs) {
+                if (SystemClock.uptimeMillis() > liveVisibleUntilMs) {
+                    liveTextRegions = Collections.emptyList();
+                }
+                return;
+            }
+            float scale = Math.max(
+                    width / (float) liveImageWidth,
+                    height / (float) liveImageHeight
+            );
+            float displayedWidth = liveImageWidth * scale;
+            float displayedHeight = liveImageHeight * scale;
+            float offsetX = (width - displayedWidth) / 2f;
+            float offsetY = (height - displayedHeight) / 2f;
+            RectF firstRect = null;
+            for (PaddleTextDetectionEngine.TextRegion region : liveTextRegions) {
+                RectF rect = new RectF(
+                        offsetX + (float) (region.left * liveImageWidth * scale),
+                        offsetY + (float) (region.top * liveImageHeight * scale),
+                        offsetX + (float) (region.right * liveImageWidth * scale),
+                        offsetY + (float) (region.bottom * liveImageHeight * scale)
+                );
+                if (firstRect == null) {
+                    firstRect = rect;
+                }
+                int color = region.confidence >= 0.62d
+                        ? Color.rgb(91, 232, 145)
+                        : Color.rgb(255, 204, 82);
+                paint.setStyle(Paint.Style.FILL);
+                paint.setColor(Color.argb(24, Color.red(color), Color.green(color), Color.blue(color)));
+                canvas.drawRoundRect(rect, dp(4), dp(4), paint);
+                paint.setStyle(Paint.Style.STROKE);
+                paint.setStrokeWidth(dp(2));
+                paint.setColor(color);
+                canvas.drawRoundRect(rect, dp(4), dp(4), paint);
+            }
+            if (firstRect == null) {
+                return;
+            }
+            String label = "可能文字区 " + liveTextRegions.size();
+            paint.setTypeface(Typeface.DEFAULT_BOLD);
+            paint.setTextSize(sp(13));
+            float labelWidth = paint.measureText(label) + dp(14);
+            float labelLeft = Math.max(
+                    dp(8),
+                    Math.min(firstRect.left, width - labelWidth - dp(8))
+            );
+            float labelTop = Math.max(dp(112), firstRect.top - dp(28));
+            RectF labelRect = new RectF(
+                    labelLeft,
+                    labelTop,
+                    labelLeft + labelWidth,
+                    labelTop + dp(27)
+            );
+            paint.setStyle(Paint.Style.FILL);
+            paint.setColor(Color.argb(224, 20, 28, 24));
+            canvas.drawRoundRect(labelRect, dp(4), dp(4), paint);
+            paint.setColor(Color.WHITE);
+            canvas.drawText(label, labelRect.left + dp(7), labelRect.bottom - dp(7), paint);
         }
 
         private void drawFocusPoint(Canvas canvas) {

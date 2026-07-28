@@ -22,6 +22,14 @@ final class RecognitionFrameSelector {
     private static final double OCR_CONFIDENCE_WEIGHT = 0.20d;
     private static final double TEMPORAL_POSITION_WEIGHT = 0.05d;
 
+    static final int CAMERA_FRAME_READY = 0;
+    static final int CAMERA_FRAME_TOO_DARK = 1;
+    static final int CAMERA_FRAME_TOO_BRIGHT = 2;
+    static final int CAMERA_FRAME_GLARE = 3;
+    static final int CAMERA_FRAME_BLUR = 4;
+    static final int CAMERA_FRAME_NOT_BETTER = 5;
+    private static final long CAMERA_PROBE_MAX_GAP_MILLIS = 700L;
+
     private static final double FIELD_QUALITY_WEIGHT = 0.40d;
     private static final double FIELD_VOTE_WEIGHT = 0.35d;
     private static final double FIELD_OCR_WEIGHT = 0.25d;
@@ -148,6 +156,115 @@ final class RecognitionFrameSelector {
         long safeInterval = Math.max(0L, minimumIntervalMillis);
         return nowMillis >= lastCaptureMillis
                 && nowMillis - lastCaptureMillis >= safeInterval;
+    }
+
+    static CameraFramePreflight cameraFramePreflight(
+            int capturedFrames,
+            long nowMillis,
+            long lastProbeMillis,
+            double visualScore,
+            double sharpness,
+            double brightness,
+            double contrast,
+            double glareRatio,
+            double bestVisualScore,
+            boolean dateOnlyMode
+    ) {
+        double exposure = clamp01(1.0d - (Math.abs(clamp01(brightness) - 0.53d) / 0.53d));
+        double glareQuality = clamp01(1.0d - (clamp01(glareRatio) * 3.2d));
+        double score = clamp01(
+                (0.48d * clamp01(visualScore))
+                        + (0.24d * clamp01(sharpness))
+                        + (0.16d * clamp01(contrast))
+                        + (0.08d * exposure)
+                        + (0.04d * glareQuality)
+        );
+        boolean periodicProbe = capturedFrames <= 2
+                || lastProbeMillis <= 0L
+                || nowMillis - lastProbeMillis >= CAMERA_PROBE_MAX_GAP_MILLIS
+                || capturedFrames % (dateOnlyMode ? 7 : 10) == 0;
+
+        int reason = CAMERA_FRAME_READY;
+        boolean viable = true;
+        if (brightness < 0.055d) {
+            reason = CAMERA_FRAME_TOO_DARK;
+            viable = false;
+        } else if (brightness > 0.965d) {
+            reason = CAMERA_FRAME_TOO_BRIGHT;
+            viable = false;
+        } else if (glareRatio > 0.42d) {
+            reason = CAMERA_FRAME_GLARE;
+            viable = false;
+        } else if (sharpness < (dateOnlyMode ? 0.075d : 0.09d)
+                && visualScore < (dateOnlyMode ? 0.28d : 0.32d)) {
+            reason = CAMERA_FRAME_BLUR;
+            viable = false;
+        }
+
+        double improvementMargin = dateOnlyMode ? 0.012d : 0.020d;
+        boolean improvesBest = bestVisualScore < 0d
+                || score >= bestVisualScore + improvementMargin;
+        boolean shouldProbe = viable && (improvesBest || periodicProbe);
+        if (viable && !shouldProbe) {
+            reason = CAMERA_FRAME_NOT_BETTER;
+        }
+        return new CameraFramePreflight(shouldProbe, reason, score, improvesBest);
+    }
+
+    static double cameraInformationScore(
+            int regionCount,
+            double regionCoverage,
+            double meanRegionConfidence
+    ) {
+        double countScore = clamp01(Math.max(0, regionCount) / 6.0d);
+        double coverageScore = clamp01(regionCoverage / 0.12d);
+        return clamp01(
+                (0.34d * countScore)
+                        + (0.30d * coverageScore)
+                        + (0.36d * clamp01(meanRegionConfidence))
+        );
+    }
+
+    static double cameraFrameValueScore(double visualScore, double informationScore) {
+        return clamp01(
+                (0.58d * clamp01(visualScore))
+                        + (0.42d * clamp01(informationScore))
+        );
+    }
+
+    static boolean shouldRecognizeCameraFrame(
+            int probeCount,
+            long nowMillis,
+            long lastAcceptedMillis,
+            boolean barcodeOnly,
+            boolean dateOnlyMode,
+            int regionCount,
+            double candidateScore,
+            double bestAcceptedScore,
+            boolean detectorReady
+    ) {
+        long age = lastAcceptedMillis <= 0L
+                ? Long.MAX_VALUE
+                : Math.max(0L, nowMillis - lastAcceptedMillis);
+        boolean first = probeCount <= 1 || bestAcceptedScore < 0d;
+        boolean improved = candidateScore >= bestAcceptedScore
+                + (dateOnlyMode ? 0.012d : 0.022d);
+        if (barcodeOnly) {
+            return first || improved || age >= 350L;
+        }
+        if (!detectorReady) {
+            return first || improved || age >= 650L;
+        }
+        if (regionCount > 0) {
+            return first || improved || age >= 900L;
+        }
+        return first
+                || age >= 1400L
+                || (dateOnlyMode && probeCount % 3 == 0);
+    }
+
+    static int perceptualHashDistance(long first, long second) {
+        return Long.bitCount(first ^ second);
     }
 
     static List<Long> highRateVideoFrameTimes(long durationUs, boolean longVideo) {
@@ -433,6 +550,25 @@ final class RecognitionFrameSelector {
 
     private static double normalizeGlareRatio(double value) {
         return Double.isNaN(value) ? 1.0d : clamp01(value);
+    }
+
+    static final class CameraFramePreflight {
+        final boolean shouldProbe;
+        final int reason;
+        final double visualScore;
+        final boolean improvesBest;
+
+        CameraFramePreflight(
+                boolean shouldProbe,
+                int reason,
+                double visualScore,
+                boolean improvesBest
+        ) {
+            this.shouldProbe = shouldProbe;
+            this.reason = reason;
+            this.visualScore = clamp01(visualScore);
+            this.improvesBest = improvesBest;
+        }
     }
 
     static final class FrameCandidate {
