@@ -3606,7 +3606,10 @@ public final class MainActivity extends Activity {
         form.addView(optionalSection, matchWrap());
 
         ScrollView scrollView = new ScrollView(this);
-        scrollView.addView(form);
+        scrollView.addView(form, new ScrollView.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT
+        ));
 
         final AlertDialog dialog = new AlertDialog.Builder(this)
                 .setTitle(formTitle)

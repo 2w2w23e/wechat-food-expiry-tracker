@@ -123,7 +123,15 @@ $UnsignedApk = Join-Path $BuildRoot 'app-unsigned.apk'
 $DexApk = Join-Path $BuildRoot 'app-unsigned-dex.apk'
 $AlignedApk = Join-Path $BuildRoot 'app-aligned.apk'
 $CompiledClassesJar = Join-Path $BuildRoot 'classes.jar'
-$Keystore = Join-Path $AndroidRoot 'debug.keystore'
+$LegacyDebugKeystore = Join-Path $AndroidRoot 'debug.keystore'
+$StableDebugKeystore = Join-Path `
+  ([Environment]::GetFolderPath('UserProfile')) `
+  '.shiqi-expiry-tracker\signing\debug.keystore'
+$Keystore = if ($env:SHIQI_DEBUG_KEYSTORE) {
+  $env:SHIQI_DEBUG_KEYSTORE
+} else {
+  $StableDebugKeystore
+}
 $KeyAlias = 'androiddebugkey'
 $KeyStorePass = 'android'
 $KeyPass = 'android'
@@ -215,18 +223,26 @@ try {
 }
 
 if ($Variant -eq 'debug' -and -not (Test-Path $Keystore)) {
-  $KeytoolArgs = @(
-    '-genkeypair',
-    '-keystore', $Keystore,
-    '-storepass', 'android',
-    '-keypass', 'android',
-    '-alias', 'androiddebugkey',
-    '-dname', 'CN=Android Debug,O=Android,C=US',
-    '-keyalg', 'RSA',
-    '-keysize', '2048',
-    '-validity', '10000'
-  )
-  Invoke-Checked $Keytool $KeytoolArgs | Out-Null
+  $KeystoreParent = Split-Path -Parent $Keystore
+  if ($KeystoreParent) {
+    New-Item -ItemType Directory -Force $KeystoreParent | Out-Null
+  }
+  if (-not $env:SHIQI_DEBUG_KEYSTORE -and (Test-Path $LegacyDebugKeystore)) {
+    Copy-Item -LiteralPath $LegacyDebugKeystore -Destination $Keystore
+  } else {
+    $KeytoolArgs = @(
+      '-genkeypair',
+      '-keystore', $Keystore,
+      '-storepass', 'android',
+      '-keypass', 'android',
+      '-alias', 'androiddebugkey',
+      '-dname', 'CN=Android Debug,O=Android,C=US',
+      '-keyalg', 'RSA',
+      '-keysize', '2048',
+      '-validity', '10000'
+    )
+    Invoke-Checked $Keytool $KeytoolArgs | Out-Null
+  }
 }
 
 Invoke-Checked $Zipalign @('-f', '4', $DexApk, $AlignedApk)

@@ -2408,6 +2408,90 @@ public final class LocalLogicTest {
             }
         });
 
+        test("RecognitionFrameSelector probes useful frames and defers weaker repeats", new TestCase() {
+            public void run() {
+                RecognitionFrameSelector.CameraFramePreflight clear =
+                        RecognitionFrameSelector.cameraFramePreflight(
+                                3,
+                                1000L,
+                                900L,
+                                0.72d,
+                                0.68d,
+                                0.50d,
+                                0.55d,
+                                0.02d,
+                                0.40d,
+                                false
+                        );
+                assertTrue(clear.shouldProbe, "a clearly improved frame should run the text-region probe");
+                assertTrue(clear.improvesBest, "the preflight must expose why the frame was selected");
+
+                RecognitionFrameSelector.CameraFramePreflight blurred =
+                        RecognitionFrameSelector.cameraFramePreflight(
+                                3,
+                                1100L,
+                                1050L,
+                                0.20d,
+                                0.03d,
+                                0.50d,
+                                0.10d,
+                                0.01d,
+                                0.60d,
+                                false
+                        );
+                assertFalse(blurred.shouldProbe, "a blurred frame must not consume detector time");
+                assertEquals(
+                        RecognitionFrameSelector.CAMERA_FRAME_BLUR,
+                        blurred.reason
+                );
+
+                RecognitionFrameSelector.CameraFramePreflight weaker =
+                        RecognitionFrameSelector.cameraFramePreflight(
+                                4,
+                                1200L,
+                                1150L,
+                                0.55d,
+                                0.45d,
+                                0.50d,
+                                0.40d,
+                                0.02d,
+                                0.90d,
+                                false
+                        );
+                assertFalse(weaker.shouldProbe, "a recent weaker frame should wait for a better image");
+                assertEquals(
+                        RecognitionFrameSelector.CAMERA_FRAME_NOT_BETTER,
+                        weaker.reason
+                );
+
+                double usefulInformation = RecognitionFrameSelector.cameraInformationScore(
+                        6, 0.12d, 0.80d
+                );
+                double emptyInformation = RecognitionFrameSelector.cameraInformationScore(
+                        0, 0d, 0d
+                );
+                assertTrue(usefulInformation > emptyInformation,
+                        "multiple confident text boxes must increase information value");
+                double usefulFrame = RecognitionFrameSelector.cameraFrameValueScore(
+                        clear.visualScore,
+                        usefulInformation
+                );
+                assertTrue(RecognitionFrameSelector.shouldRecognizeCameraFrame(
+                        1, 1000L, 0L, false, false, 6,
+                        usefulFrame, -1d, true
+                ), "the first useful text frame must be recognized immediately");
+                assertFalse(RecognitionFrameSelector.shouldRecognizeCameraFrame(
+                        2, 1200L, 1000L, false, false, 4,
+                        usefulFrame - 0.10d, usefulFrame, true
+                ), "a weaker recent text frame must not replace the accepted frame");
+                assertTrue(RecognitionFrameSelector.shouldRecognizeCameraFrame(
+                        3, 2000L, 1000L, false, true, 0,
+                        0.35d, 0.60d, true
+                ), "date-only mode must periodically retry low-contrast text missed by detection");
+                assertEquals(1, RecognitionFrameSelector.perceptualHashDistance(0L, 1L));
+            }
+        });
+
         test("RecognitionFrameSelector completes stable camera simulation without redundant rescans", new TestCase() {
             public void run() {
                 assertFalse(RecognitionFrameSelector.shouldFinishCameraSimulation(2, true),

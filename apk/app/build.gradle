@@ -2,7 +2,42 @@ plugins {
     id 'com.android.application'
 }
 
-def localDebugKeystore = rootProject.file('apk/debug.keystore')
+def resolveCanonicalRepositoryRoot = {
+    try {
+        def output = new ByteArrayOutputStream()
+        def result = exec {
+            workingDir rootProject.projectDir
+            commandLine 'git', 'rev-parse', '--git-common-dir'
+            standardOutput = output
+            errorOutput = new ByteArrayOutputStream()
+            ignoreExitValue = true
+        }
+        if (result.exitValue == 0) {
+            def commonDirectory = new File(output.toString('UTF-8').trim())
+            if (!commonDirectory.isAbsolute()) {
+                commonDirectory = new File(rootProject.projectDir, commonDirectory.path)
+            }
+            commonDirectory = commonDirectory.canonicalFile
+            if (commonDirectory.name == '.git') {
+                return commonDirectory.parentFile
+            }
+        }
+    } catch (Exception ignored) {
+        // Source archives and some CI environments do not expose Git metadata.
+    }
+    return rootProject.projectDir.canonicalFile
+}
+
+def configuredDebugKeystore = System.getenv('SHIQI_DEBUG_KEYSTORE')
+def canonicalRepositoryRoot = resolveCanonicalRepositoryRoot()
+def legacyRepositoryDebugKeystore =
+        new File(canonicalRepositoryRoot, 'apk/debug.keystore')
+def stableUserDebugKeystore = new File(
+        System.getProperty('user.home'), '.shiqi-expiry-tracker/signing/debug.keystore'
+)
+def localDebugKeystore = configuredDebugKeystore
+        ? file(configuredDebugKeystore).canonicalFile
+        : stableUserDebugKeystore
 
 android {
     namespace 'com.shiqi.expirytracker'
@@ -27,8 +62,8 @@ android {
         applicationId 'com.shiqi.expirytracker'
         minSdk 24
         targetSdk 35
-        versionCode 18
-        versionName '0.3.15'
+        versionCode 19
+        versionName '0.3.16'
         ndk {
             abiFilters 'arm64-v8a', 'x86_64'
         }
@@ -66,6 +101,12 @@ tasks.register('ensureLocalDebugKeystore') {
         }
 
         localDebugKeystore.parentFile.mkdirs()
+        if (!configuredDebugKeystore && legacyRepositoryDebugKeystore.exists()) {
+            java.nio.file.Files.copy(
+                    legacyRepositoryDebugKeystore.toPath(), localDebugKeystore.toPath()
+            )
+            return
+        }
         def keytoolName = System.getProperty('os.name').toLowerCase().contains('windows') ? 'keytool.exe' : 'keytool'
         exec {
             executable new File(System.getProperty('java.home'), "bin/${keytoolName}").absolutePath
