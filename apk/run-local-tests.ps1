@@ -59,6 +59,7 @@ $MainSources = @(
   'DateOcrParser.java',
   'DateEvidencePolicy.java',
   'DateOcrFrameVoter.java',
+  'RecognitionDiagnostics.java',
   'RecognitionFrameSelector.java',
   'CameraOcrFeedback.java',
   'DateOcrResultPayload.java',

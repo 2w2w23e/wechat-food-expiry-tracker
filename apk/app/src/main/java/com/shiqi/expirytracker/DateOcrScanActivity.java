@@ -3,6 +3,7 @@ package com.shiqi.expirytracker;
 import android.Manifest;
 import android.app.AlertDialog;
 import android.content.ActivityNotFoundException;
+import android.content.ClipData;
 import android.content.DialogInterface;
 import android.content.Intent;
 import android.content.pm.PackageManager;
@@ -54,6 +55,7 @@ import androidx.camera.core.resolutionselector.ResolutionSelector;
 import androidx.camera.core.resolutionselector.ResolutionStrategy;
 import androidx.camera.lifecycle.ProcessCameraProvider;
 import androidx.camera.view.PreviewView;
+import androidx.core.content.FileProvider;
 
 import com.google.android.gms.tasks.Task;
 import com.google.android.gms.tasks.Tasks;
@@ -69,7 +71,12 @@ import com.google.mlkit.vision.text.TextRecognizer;
 import com.google.mlkit.vision.text.chinese.ChineseTextRecognizerOptions;
 import com.google.mlkit.vision.text.latin.TextRecognizerOptions;
 
+import java.io.File;
+import java.io.FileOutputStream;
+import java.io.IOException;
 import java.io.InputStream;
+import java.io.OutputStreamWriter;
+import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.Comparator;
@@ -95,6 +102,7 @@ public final class DateOcrScanActivity extends ComponentActivity {
     private static final int VIDEO_MAX_FRAME_SIDE = 1280;
     private static final int STILL_IMAGE_MAX_SIDE = 2048;
     private static final int STILL_IMAGE_MIN_SIDE = 1400;
+    private static final int PADDLE_RECOGNITION_BATCH_SIZE = 1;
     private PreviewView previewView;
     private ImageView replayFrameView;
     private TextView statusBadge;
@@ -129,6 +137,7 @@ public final class DateOcrScanActivity extends ComponentActivity {
     private Camera camera;
     private final UnifiedRecognitionStabilizer stabilizer = new UnifiedRecognitionStabilizer();
     private final RecognitionFrameSelector frameSelector = new RecognitionFrameSelector(1600L);
+    private final RecognitionDiagnostics diagnostics = new RecognitionDiagnostics(600);
     private UnifiedRecognitionStabilizer.Snapshot latestSnapshot = stabilizer.snapshot();
     private UnifiedRecognitionStabilizer.Snapshot bestSessionSnapshot;
     private BarcodeProductInfo latestProductInfo;
@@ -152,6 +161,8 @@ public final class DateOcrScanActivity extends ComponentActivity {
     private long nextFrameId;
     private boolean showingEvidenceFrame;
     private AlertDialog evidenceDialog;
+    private AlertDialog diagnosticsDialog;
+    private TextView diagnosticsSummaryView;
     private volatile int recognitionGeneration;
     private long lastAnalyzeAt;
     private volatile boolean analysisInFlight;
@@ -193,6 +204,12 @@ public final class DateOcrScanActivity extends ComponentActivity {
     private long lastCameraAcceptedSignature;
     private long lastValuableFramePromptAtMs;
     private int cameraProbeCount;
+    private int consecutiveBlurFrames;
+    private long lastAutomaticFocusAtMs;
+    private long latestFocusRequestId;
+    private volatile boolean focusRequestInFlight;
+    private volatile double latestTextFocusXRatio = 0.5d;
+    private volatile double latestTextFocusYRatio = 0.48d;
 
     private final Executor mainExecutor = new Executor() {
         @Override
@@ -221,6 +238,7 @@ public final class DateOcrScanActivity extends ComponentActivity {
                 && intent.getBooleanExtra(EXTRA_BARCODE_LOOKUP_ONLY, false);
         dateOnlyMode = intent != null
                 && intent.getBooleanExtra(EXTRA_DATE_ONLY_MODE, false);
+        diagnostics.reset(SystemClock.elapsedRealtime(), "launch");
 
         cameraAnalyzerExecutor = Executors.newSingleThreadExecutor();
         cameraExecutor = Executors.newSingleThreadExecutor();
@@ -280,6 +298,11 @@ public final class DateOcrScanActivity extends ComponentActivity {
         if (evidenceDialog != null) {
             evidenceDialog.dismiss();
             evidenceDialog = null;
+        }
+        if (diagnosticsDialog != null) {
+            diagnosticsDialog.dismiss();
+            diagnosticsDialog = null;
+            diagnosticsSummaryView = null;
         }
         stopCamera();
         clearLastReplayFrame();
@@ -365,7 +388,7 @@ public final class DateOcrScanActivity extends ComponentActivity {
         cameraHud.setTextColor(Color.WHITE);
         cameraHud.setTextSize(13);
         cameraHud.setGravity(Gravity.CENTER);
-        cameraHud.setMaxLines(2);
+        cameraHud.setMaxLines(isDebuggable() ? 4 : 2);
         cameraHud.setLineSpacing(0f, 0.92f);
         cameraHud.setPadding(dp(10), dp(4), dp(10), dp(4));
         cameraHud.setBackground(rounded(Color.argb(218, 20, 28, 24), dp(6), 0));
@@ -475,6 +498,18 @@ public final class DateOcrScanActivity extends ComponentActivity {
             }
         });
         resultHeader.addView(rawButton, fixed(64, 48));
+
+        if (isDebuggable()) {
+            Button diagnosticsButton = plainButton("诊断");
+            diagnosticsButton.setContentDescription("查看并分享识别诊断");
+            diagnosticsButton.setOnClickListener(new View.OnClickListener() {
+                @Override
+                public void onClick(View view) {
+                    showDiagnosticsDialog();
+                }
+            });
+            resultHeader.addView(diagnosticsButton, fixed(64, 48));
+        }
 
         productValue = new TextView(this);
         productValue.setText(dateOnlyMode ? "正在寻找日期文字" : "正在寻找商品名");
@@ -860,6 +895,11 @@ public final class DateOcrScanActivity extends ComponentActivity {
         if (replayFrameView != null) {
             replayFrameView.setVisibility(View.VISIBLE);
         }
+        diagnostics.setSource(
+                SystemClock.elapsedRealtime(),
+                "相机模拟".equals(badge) ? "qa-video" : "video"
+        );
+        diagnosticEvent("source.ready", "badge=" + badge);
         statusBadge.setText(badge);
         statusText.setText("正在分析中英文包装，条码、商品名和日期会自动合并。");
     }
@@ -970,6 +1010,8 @@ public final class DateOcrScanActivity extends ComponentActivity {
                     continue;
                 }
 
+                diagnostics.increment("frames_captured");
+                diagnostics.increment("frames_probed");
                 LowContrastTextPreprocessor.FrameMetrics metrics =
                         LowContrastTextPreprocessor.measureFrame(scaled);
                 double candidateScore = RecognitionFrameSelector.highRateVideoFrameScore(
@@ -978,6 +1020,9 @@ public final class DateOcrScanActivity extends ComponentActivity {
                         metrics.glareRatio
                 );
                 if (selectedFrame == null || candidateScore > selectedFrameScore) {
+                    if (selectedFrame != null) {
+                        diagnostics.increment("pending_replaced");
+                    }
                     recycleBitmap(selectedFrame);
                     selectedFrame = scaled;
                     selectedFrameUs = frameUs;
@@ -985,6 +1030,7 @@ public final class DateOcrScanActivity extends ComponentActivity {
                     selectedFrameScore = candidateScore;
                     selectedDetailFrame = videoDetailFrame;
                 } else {
+                    diagnostics.increment("skip_not_better");
                     scaled.recycle();
                 }
 
@@ -1009,6 +1055,8 @@ public final class DateOcrScanActivity extends ComponentActivity {
                 Bitmap frameForRecognition = selectedFrame;
                 selectedFrame = null;
                 selectedFrameScore = -1d;
+                diagnostics.increment("frames_accepted");
+                diagnosticEvent("frame.accept", "source=video timestampUs=" + selectedFrameUs);
                 showReplayFrame(frameForRecognition);
                 if (cameraSimulationActive) {
                     analyzeBitmapFrame(frameForRecognition, false, true, replayGeneration);
@@ -1162,6 +1210,8 @@ public final class DateOcrScanActivity extends ComponentActivity {
         if (replayFrameView != null) {
             replayFrameView.setVisibility(View.VISIBLE);
         }
+        diagnostics.setSource(SystemClock.elapsedRealtime(), "image");
+        diagnosticEvent("source.ready", "image");
         statusBadge.setText("图片");
         statusText.setText("正在识别所选图片中的条码和包装文字。");
     }
@@ -1337,6 +1387,8 @@ public final class DateOcrScanActivity extends ComponentActivity {
         if (bitmap == null || textRecognizer == null || barcodeScanner == null) {
             return;
         }
+        final long fullOcrStartedAt = SystemClock.elapsedRealtime();
+        diagnosticEvent("ocr.start", "cameraLive=" + cameraLive + " frame=" + (analyzedFrameSequence + 1));
         if (recognitionFirstFrameAtMs == 0L) {
             recognitionFirstFrameAtMs = SystemClock.elapsedRealtime();
         }
@@ -1760,16 +1812,28 @@ public final class DateOcrScanActivity extends ComponentActivity {
                 parsedFrame,
                 barcode
         );
+        long fullOcrElapsedMs = SystemClock.elapsedRealtime() - fullOcrStartedAt;
+        diagnostics.increment("ocr_completed");
+        diagnostics.timing("full_ocr", fullOcrElapsedMs);
+        diagnostics.value("latest_raw_chars", Integer.toString(rawText.length()));
+        diagnostics.value("latest_sharpness", String.format(Locale.US, "%.1f", frameMetrics.sharpness));
+        diagnosticEvent("ocr.done", "frame=" + analyzedFrameSequence
+                + " elapsedMs=" + fullOcrElapsedMs
+                + " rawChars=" + rawText.length()
+                + " date=" + parsedFrame.hasAnyCandidate());
         maybeCompleteLiveCamera(cameraLive, expectedGeneration);
     }
 
     private boolean awaitRecognitionTask(Task<?> task, String label, long timeoutSeconds) {
+        long startedAt = SystemClock.elapsedRealtime();
         try {
             Tasks.await(task, timeoutSeconds, TimeUnit.SECONDS);
             return task.isSuccessful();
         } catch (Exception error) {
             Log.w("ShiqiRecognition", label + " failed for one variant", error);
             return false;
+        } finally {
+            diagnostics.timing("mlkit_wait", SystemClock.elapsedRealtime() - startedAt);
         }
     }
 
@@ -2505,7 +2569,7 @@ public final class DateOcrScanActivity extends ComponentActivity {
         }
         if (cameraSimulationScreenRecording) {
             return paddleDetectionCameraFramesUsed < 2
-                    && currentVideoFrameRatio >= 0.60d
+                    && currentVideoFrameRatio >= 0.40d
                     && currentVideoFrameRatio <= 0.88d
                     && !hasCompleteCameraDateCandidate();
         }
@@ -2574,7 +2638,9 @@ public final class DateOcrScanActivity extends ComponentActivity {
         }
 
         int cameraPass = paddleDetectionCameraFramesUsed;
-        int cameraInputSide = cameraPass == 0 ? 960 : 1280;
+        int cameraInputSide = cameraSimulationScreenRecording
+                ? 1280
+                : cameraPass == 0 ? 960 : 1280;
         Bitmap detectorInput = bitmap;
         boolean stillPhotoPass = !cameraLive && !videoReplayActive;
         if ((cameraLive && lowContrastCameraPassesUsed > 0 && cameraPass < 3)
@@ -2631,7 +2697,7 @@ public final class DateOcrScanActivity extends ComponentActivity {
             regions.add(region);
             cropRects.add(region.contextRect());
         }
-        if (cameraLive) {
+        if (cameraLive && cameraPass > 0) {
             for (PaddleTextDetectionEngine.TextRegion region : detectedRegions) {
                 if (region.aspectRatio() < 4d || region.widthRatio() < 0.06d) {
                     continue;
@@ -2643,12 +2709,17 @@ public final class DateOcrScanActivity extends ComponentActivity {
                 }
             }
         }
+        long detectorElapsedMs = SystemClock.elapsedRealtime() - detectorStartedAt;
+        diagnostics.timing("text_detector", detectorElapsedMs);
+        diagnostics.value("last_regions", Integer.toString(regions.size()));
+        diagnosticEvent("detector.done", "pass=" + (cameraPass + 1)
+                + " regions=" + regions.size() + " elapsedMs=" + detectorElapsedMs);
         Log.i(
                 "ShiqiRecognition",
                 "Text detector pass=" + (cameraPass + 1)
                         + " input=" + cameraInputSide
                         + " regions=" + regions.size()
-                        + " elapsedMs=" + (SystemClock.elapsedRealtime() - detectorStartedAt)
+                        + " elapsedMs=" + detectorElapsedMs
         );
         StringBuilder recognized = new StringBuilder();
         StringBuilder original = new StringBuilder();
@@ -2676,22 +2747,29 @@ public final class DateOcrScanActivity extends ComponentActivity {
         }
         if (cameraLive && !crops.isEmpty()) {
             recognitionCrops = new ArrayList<Bitmap>(crops);
+            int augmentationLimit = cameraPass == 0
+                    ? (dateOnlyMode ? 4 : 3)
+                    : (dateOnlyMode ? 8 : 5);
             for (int cropIndex = 0; cropIndex < crops.size(); cropIndex++) {
                 Bitmap crop = crops.get(cropIndex);
-                if (cropIndex >= (dateOnlyMode ? 8 : 5)) {
+                if (cropIndex >= augmentationLimit) {
                     continue;
                 }
-                Bitmap laser = LowContrastTextPreprocessor.enhanceLaserPrintedText(crop);
-                if (laser != null) {
-                    recognitionCrops.add(laser);
-                    generatedRecognitionCrops.add(laser);
+                Bitmap primaryEnhanced = cameraPass == 1
+                        ? LowContrastTextPreprocessor.enhanceEmbossedText(crop)
+                        : LowContrastTextPreprocessor.enhanceLaserPrintedText(crop);
+                if (primaryEnhanced != null) {
+                    recognitionCrops.add(primaryEnhanced);
+                    generatedRecognitionCrops.add(primaryEnhanced);
                     recognitionRegionIndexes.add(Integer.valueOf(cropIndex));
                 }
-                Bitmap embossed = LowContrastTextPreprocessor.enhanceEmbossedText(crop);
-                if (embossed != null) {
-                    recognitionCrops.add(embossed);
-                    generatedRecognitionCrops.add(embossed);
-                    recognitionRegionIndexes.add(Integer.valueOf(cropIndex));
+                if (cameraPass >= 2) {
+                    Bitmap embossed = LowContrastTextPreprocessor.enhanceEmbossedText(crop);
+                    if (embossed != null) {
+                        recognitionCrops.add(embossed);
+                        generatedRecognitionCrops.add(embossed);
+                        recognitionRegionIndexes.add(Integer.valueOf(cropIndex));
+                    }
                 }
                 if (lowContrastCameraPassesUsed > cameraPass) {
                     Bitmap bidirectional =
@@ -2702,7 +2780,7 @@ public final class DateOcrScanActivity extends ComponentActivity {
                         recognitionRegionIndexes.add(Integer.valueOf(cropIndex));
                     }
                 }
-                if (videoDetailFrame || cameraPass >= 2) {
+                if (cameraPass >= 2) {
                     Bitmap binary = LowContrastTextPreprocessor.binarizeText(crop, false);
                     if (binary != null) {
                         recognitionCrops.add(binary);
@@ -2718,15 +2796,22 @@ public final class DateOcrScanActivity extends ComponentActivity {
                 }
             }
         }
+        diagnostics.value("last_crop_count", Integer.toString(recognitionCrops.size()));
         long recognizerStartedAt = SystemClock.elapsedRealtime();
         try {
             List<PaddleLineOcrEngine.LineResult> results =
                     recognizePaddleCropsInSmallBatches(recognizer, recognitionCrops);
+            long recognizerElapsedMs = SystemClock.elapsedRealtime() - recognizerStartedAt;
+            diagnostics.timing("line_recognizer", recognizerElapsedMs);
+            diagnosticEvent("recognizer.done", "pass=" + (cameraPass + 1)
+                    + " crops=" + recognitionCrops.size()
+                    + " batch=" + PADDLE_RECOGNITION_BATCH_SIZE
+                    + " elapsedMs=" + recognizerElapsedMs);
             Log.i(
                     "ShiqiRecognition",
                     "Text recognizer pass=" + (cameraPass + 1)
                             + " crops=" + recognitionCrops.size()
-                            + " elapsedMs=" + (SystemClock.elapsedRealtime() - recognizerStartedAt)
+                            + " elapsedMs=" + recognizerElapsedMs
             );
             boolean acceptedAny = false;
             for (int index = 0; index < results.size(); index++) {
@@ -2946,8 +3031,8 @@ public final class DateOcrScanActivity extends ComponentActivity {
     ) {
         List<PaddleLineOcrEngine.LineResult> results =
                 new ArrayList<PaddleLineOcrEngine.LineResult>();
-        for (int start = 0; start < crops.size(); start++) {
-            int end = start + 1;
+        for (int start = 0; start < crops.size(); start += PADDLE_RECOGNITION_BATCH_SIZE) {
+            int end = Math.min(crops.size(), start + PADDLE_RECOGNITION_BATCH_SIZE);
             results.addAll(recognizer.recognizeResults(crops.subList(start, end), 0.25f));
         }
         return results;
@@ -3853,6 +3938,22 @@ public final class DateOcrScanActivity extends ComponentActivity {
             showEvidenceFrame(completedKeyframes.get(0), false);
         }
         setRecognitionComplete(true);
+        String completionProduction = finalTranscriptDates.productionDates.isEmpty()
+                ? ""
+                : finalTranscriptDates.productionDates.get(0).normalized;
+        String completionExpiry = completionExpiry(finalTranscriptDates);
+        long completedElapsedMs = recognitionElapsedMs();
+        diagnostics.value("completion_fillable", Boolean.toString(snapshot.hasFillableCandidate()));
+        diagnostics.value("completion_production", completionProduction);
+        diagnostics.value("completion_expiry", completionExpiry);
+        diagnosticEvent(
+                "replay.complete",
+                "frames=" + analyzedFrames
+                        + " fillable=" + snapshot.hasFillableCandidate()
+                        + " production=" + completionProduction
+                        + " expiry=" + completionExpiry
+                        + " elapsedMs=" + completedElapsedMs
+        );
         Log.i(
                 "ShiqiRecognition",
                 "Replay complete frames=" + analyzedFrames
@@ -3860,11 +3961,10 @@ public final class DateOcrScanActivity extends ComponentActivity {
                         + " barcode=" + snapshot.hasStableBarcode()
                         + " name=" + snapshot.hasStablePackagingName()
                         + " dates=" + (snapshot.stableDateVote != null)
-                        + " completionProduction=" + (finalTranscriptDates.productionDates.isEmpty()
-                        ? "" : finalTranscriptDates.productionDates.get(0).normalized)
-                        + " completionExpiry=" + completionExpiry(finalTranscriptDates)
+                        + " completionProduction=" + completionProduction
+                        + " completionExpiry=" + completionExpiry
                         + " sessionName=" + sessionProductName
-                        + " elapsedMs=" + recognitionElapsedMs()
+                        + " elapsedMs=" + completedElapsedMs
         );
     }
 
@@ -4165,6 +4265,7 @@ public final class DateOcrScanActivity extends ComponentActivity {
                 "Reset recognition generation=" + (recognitionGeneration + 1)
                         + " videoActive=" + videoReplayActive
         );
+        diagnostics.reset(SystemClock.elapsedRealtime(), "reset");
         recognitionGeneration++;
         clearPendingCameraFrame();
         stabilizer.reset();
@@ -4197,6 +4298,12 @@ public final class DateOcrScanActivity extends ComponentActivity {
         cameraFramesCaptured = 0;
         resetCameraFrameGate();
         cameraLastStatusAtMs = 0L;
+        consecutiveBlurFrames = 0;
+        lastAutomaticFocusAtMs = 0L;
+        latestFocusRequestId = 0L;
+        focusRequestInFlight = false;
+        latestTextFocusXRatio = 0.5d;
+        latestTextFocusYRatio = 0.48d;
         cameraFocusState = "自动对焦准备中";
         cameraFrameState = "等待相机画面";
         renderCameraHud();
@@ -4378,6 +4485,8 @@ public final class DateOcrScanActivity extends ComponentActivity {
         if (previewView == null || cameraExecutor == null || cameraAnalyzerExecutor == null) {
             return;
         }
+        diagnostics.setSource(SystemClock.elapsedRealtime(), "camera");
+        diagnosticEvent("camera.start", "request provider");
 
         final int cameraGeneration = recognitionGeneration;
         final ListenableFuture<ProcessCameraProvider> providerFuture = ProcessCameraProvider.getInstance(this);
@@ -4499,8 +4608,26 @@ public final class DateOcrScanActivity extends ComponentActivity {
         }, 450L);
     }
 
-    private void startFocusAndMetering(final Camera boundCamera, float x, float y, final boolean announceResult) {
+    private void startFocusAndMetering(
+            final Camera boundCamera,
+            float x,
+            float y,
+            final boolean announceResult
+    ) {
+        startFocusAndMetering(boundCamera, x, y, announceResult, false);
+    }
+
+    private void startFocusAndMetering(
+            final Camera boundCamera,
+            float x,
+            float y,
+            final boolean announceResult,
+            final boolean automaticRecovery
+    ) {
         if (previewView == null || boundCamera == null || previewView.getWidth() <= 0 || previewView.getHeight() <= 0) {
+            return;
+        }
+        if (focusRequestInFlight && !announceResult) {
             return;
         }
         MeteringPoint point = previewView.getMeteringPointFactory().createPoint(x, y, 0.18f);
@@ -4509,12 +4636,26 @@ public final class DateOcrScanActivity extends ComponentActivity {
         FocusMeteringAction action = new FocusMeteringAction.Builder(
                 point,
                 FocusMeteringAction.FLAG_AF | FocusMeteringAction.FLAG_AE | FocusMeteringAction.FLAG_AWB
-        ).setAutoCancelDuration(3, TimeUnit.SECONDS).build();
+        ).setAutoCancelDuration(announceResult ? 2L : 1L, TimeUnit.SECONDS).build();
         if (!boundCamera.getCameraInfo().isFocusMeteringSupported(action)) {
             setCameraFocusState("固定焦距设备");
             recognitionOverlay.showFocusPoint(x, y, RecognitionGuideOverlay.FOCUS_UNSUPPORTED);
+            diagnostics.increment("focus_failed");
+            diagnosticEvent("focus.unsupported", "x=" + Math.round(x) + " y=" + Math.round(y));
             return;
         }
+        focusRequestInFlight = true;
+        final long requestId = ++latestFocusRequestId;
+        final long focusStartedAt = SystemClock.elapsedRealtime();
+        diagnostics.increment("focus_requested");
+        if (automaticRecovery) {
+            diagnostics.increment("focus_recovery");
+        }
+        diagnosticEvent(
+                "focus.start",
+                "id=" + requestId + " recovery=" + automaticRecovery
+                        + " x=" + Math.round(x) + " y=" + Math.round(y)
+        );
         setCameraFocusState(announceResult ? "点按对焦中" : "自动对焦中");
         recognitionOverlay.showFocusPoint(x, y, RecognitionGuideOverlay.FOCUS_RUNNING);
         final ListenableFuture<FocusMeteringResult> focusFuture =
@@ -4525,9 +4666,21 @@ public final class DateOcrScanActivity extends ComponentActivity {
                 if (boundCamera != camera) {
                     return;
                 }
+                if (requestId != latestFocusRequestId) {
+                    diagnosticEvent("focus.superseded", "id=" + requestId);
+                    return;
+                }
                 try {
                     boolean successful = focusFuture.get().isFocusSuccessful();
-                    setCameraFocusState(successful ? "对焦完成" : "未锁定焦点");
+                    if (requestId == latestFocusRequestId) {
+                        focusRequestInFlight = false;
+                    }
+                    diagnostics.increment(successful ? "focus_success" : "focus_failed");
+                    diagnostics.timing("focus", SystemClock.elapsedRealtime() - focusStartedAt);
+                    diagnosticEvent("focus.done", "id=" + requestId + " success=" + successful);
+                    setCameraFocusState(successful
+                            ? "本次对焦已完成 · 正在验清晰度"
+                            : "未锁定焦点 · 连续对焦已恢复");
                     recognitionOverlay.showFocusPoint(
                             requestedFocusX,
                             requestedFocusY,
@@ -4536,13 +4689,28 @@ public final class DateOcrScanActivity extends ComponentActivity {
                                     : RecognitionGuideOverlay.FOCUS_FAILED
                     );
                 } catch (Exception error) {
-                    setCameraFocusState("对焦失败，请再轻点日期");
+                    if (requestId == latestFocusRequestId) {
+                        focusRequestInFlight = false;
+                    }
+                    diagnostics.increment("focus_failed");
+                    diagnostics.timing("focus", SystemClock.elapsedRealtime() - focusStartedAt);
+                    diagnosticEvent("focus.failed", "id=" + requestId
+                            + " error=" + error.getClass().getSimpleName());
+                    setCameraFocusState("对焦失败 · 连续对焦已恢复");
                     recognitionOverlay.showFocusPoint(
                             requestedFocusX,
                             requestedFocusY,
                             RecognitionGuideOverlay.FOCUS_FAILED
                     );
                 }
+                previewView.postDelayed(new Runnable() {
+                    @Override
+                    public void run() {
+                        if (requestId == latestFocusRequestId && boundCamera == camera) {
+                            setCameraFocusState("连续自动对焦 · 实时检查清晰度");
+                        }
+                    }
+                }, announceResult ? 2200L : 1200L);
             }
         }, mainExecutor);
     }
@@ -4578,9 +4746,13 @@ public final class DateOcrScanActivity extends ComponentActivity {
         }
         String focus = FoodItem.cleanText(cameraFocusState);
         String frame = FoodItem.cleanText(cameraFrameState);
-        cameraHud.setText((focus.length() == 0 ? "自动对焦" : focus)
+        String text = (focus.length() == 0 ? "自动对焦" : focus)
                 + "\n"
-                + (frame.length() == 0 ? "等待相机画面" : frame));
+                + (frame.length() == 0 ? "等待相机画面" : frame);
+        if (isDebuggable()) {
+            text += "\n" + diagnostics.compactHud();
+        }
+        cameraHud.setText(text);
         boolean previewVisible = previewView != null
                 && previewView.getVisibility() == View.VISIBLE
                 && !videoReplayActive;
@@ -4642,9 +4814,13 @@ public final class DateOcrScanActivity extends ComponentActivity {
                 recycleBitmap(bitmap);
                 return;
             }
+            if (pendingCameraFrame != null) {
+                diagnostics.increment("pending_replaced");
+            }
             recycleBitmap(pendingCameraFrame);
             pendingCameraFrame = bitmap;
             cameraFramesCaptured++;
+            diagnostics.increment("frames_captured");
             pendingCameraFrameTimestampUs = timestampUs;
             pendingCameraFrameGeneration = generation;
             if (!cameraRecognitionScheduled) {
@@ -4695,6 +4871,11 @@ public final class DateOcrScanActivity extends ComponentActivity {
             }
             try {
                 if (cameraBound && generation == recognitionGeneration) {
+                    long queueLagMs = Math.max(
+                            0L,
+                            (SystemClock.elapsedRealtime() * 1000L - timestampUs) / 1000L
+                    );
+                    diagnostics.timing("queue_lag", queueLagMs);
                     currentFrameTimestampUs = timestampUs;
                     CameraFrameProbe probe = inspectCameraFrame(frame, generation);
                     if (probe.shouldRecognize) {
@@ -4712,6 +4893,7 @@ public final class DateOcrScanActivity extends ComponentActivity {
     private CameraFrameProbe inspectCameraFrame(Bitmap frame, int expectedGeneration) {
         LowContrastTextPreprocessor.FrameMetrics metrics =
                 LowContrastTextPreprocessor.measureFrame(frame);
+        diagnostics.increment("frames_probed");
         long now = SystemClock.elapsedRealtime();
         RecognitionFrameSelector.CameraFramePreflight preflight =
                 RecognitionFrameSelector.cameraFramePreflight(
@@ -4727,6 +4909,16 @@ public final class DateOcrScanActivity extends ComponentActivity {
                         dateOnlyMode
                 );
         if (!preflight.shouldProbe) {
+            if (preflight.reason == RecognitionFrameSelector.CAMERA_FRAME_BLUR) {
+                diagnostics.increment("skip_blur");
+            } else {
+                diagnostics.increment("skip_preflight");
+            }
+            diagnostics.value("latest_sharpness", String.format(Locale.US, "%.1f", metrics.sharpness));
+            diagnostics.value("latest_contrast", String.format(Locale.US, "%.1f", metrics.contrast));
+            diagnosticEvent("frame.skip", "preflight=" + preflight.reason
+                    + " sharpness=" + String.format(Locale.US, "%.1f", metrics.sharpness)
+                    + " contrast=" + String.format(Locale.US, "%.1f", metrics.contrast));
             publishCameraPreflightGuidance(preflight.reason);
             return new CameraFrameProbe(
                     metrics,
@@ -4741,11 +4933,16 @@ public final class DateOcrScanActivity extends ComponentActivity {
         List<PaddleTextDetectionEngine.TextRegion> regions =
                 new ArrayList<PaddleTextDetectionEngine.TextRegion>();
         if (detectorReady && expectedGeneration == recognitionGeneration) {
+            long probeStartedAt = SystemClock.elapsedRealtime();
             regions.addAll(paddleTextDetectionEngine.detect(
                     frame,
                     dateOnlyMode ? 16 : 12,
                     640
             ));
+            long probeElapsedMs = SystemClock.elapsedRealtime() - probeStartedAt;
+            diagnostics.timing("probe_detector", probeElapsedMs);
+            diagnosticEvent("probe.done", "regions=" + regions.size()
+                    + " elapsedMs=" + probeElapsedMs);
         }
         if (expectedGeneration != recognitionGeneration) {
             return new CameraFrameProbe(metrics, regions, false);
@@ -4795,8 +4992,14 @@ public final class DateOcrScanActivity extends ComponentActivity {
             shouldRecognize = false;
         }
 
+        updateLatestFocusTarget(regions);
         publishLiveTextRegions(regions, frame.getWidth(), frame.getHeight());
         if (!shouldRecognize) {
+            if (regions.isEmpty()) {
+                diagnostics.increment("skip_no_text");
+            } else {
+                diagnostics.increment("skip_not_better");
+            }
             setCameraFrameState(
                     regions.isEmpty()
                             ? "暂未发现文字区 · 缓慢移动包装"
@@ -4808,6 +5011,9 @@ public final class DateOcrScanActivity extends ComponentActivity {
 
         boolean meaningfulImprovement = bestCameraAcceptedScore < 0d
                 || candidateScore >= bestCameraAcceptedScore + 0.025d;
+        consecutiveBlurFrames = 0;
+        diagnostics.increment("frames_accepted");
+        diagnosticEvent("frame.accept", "source=camera regions=" + regions.size());
         lastCameraAcceptedAtMs = now;
         lastCameraAcceptedSignature = metrics.signature;
         bestCameraAcceptedScore = Math.max(bestCameraAcceptedScore, candidateScore);
@@ -4820,6 +5026,7 @@ public final class DateOcrScanActivity extends ComponentActivity {
     }
 
     private void publishCameraPreflightGuidance(int reason) {
+        maybeRecoverCameraFocus(reason);
         String guidance;
         if (reason == RecognitionFrameSelector.CAMERA_FRAME_TOO_DARK) {
             guidance = "画面太暗 · 请增加环境光";
@@ -4833,6 +5040,70 @@ public final class DateOcrScanActivity extends ComponentActivity {
             guidance = "正在比较画面 · 等待更清晰一帧";
         }
         setCameraFrameState(guidance, true);
+    }
+
+    private void maybeRecoverCameraFocus(int reason) {
+        if (reason != RecognitionFrameSelector.CAMERA_FRAME_BLUR) {
+            consecutiveBlurFrames = 0;
+            return;
+        }
+        consecutiveBlurFrames++;
+        long now = SystemClock.elapsedRealtime();
+        if (consecutiveBlurFrames < 2
+                || focusRequestInFlight
+                || now - lastAutomaticFocusAtMs < 1800L) {
+            return;
+        }
+        final Camera activeCamera = camera;
+        final PreviewView activePreview = previewView;
+        if (activeCamera == null || activePreview == null) {
+            return;
+        }
+        lastAutomaticFocusAtMs = now;
+        consecutiveBlurFrames = 0;
+        final float focusX = (float) (latestTextFocusXRatio * activePreview.getWidth());
+        final float focusY = (float) (latestTextFocusYRatio * activePreview.getHeight());
+        runOnUiThread(new Runnable() {
+            @Override
+            public void run() {
+                if (activeCamera != camera || !cameraBound) {
+                    return;
+                }
+                setCameraFrameState("连续模糊 · 正在自动重对焦", false);
+                startFocusAndMetering(activeCamera, focusX, focusY, false, true);
+            }
+        });
+    }
+
+    private void updateLatestFocusTarget(List<PaddleTextDetectionEngine.TextRegion> regions) {
+        if (regions == null || regions.isEmpty()) {
+            return;
+        }
+        PaddleTextDetectionEngine.TextRegion best = null;
+        double bestScore = -1d;
+        for (PaddleTextDetectionEngine.TextRegion region : regions) {
+            if (region == null) {
+                continue;
+            }
+            double area = Math.max(0d, region.right - region.left)
+                    * Math.max(0d, region.bottom - region.top);
+            double score = region.confidence + Math.min(0.25d, area * 2d);
+            if (score > bestScore) {
+                best = region;
+                bestScore = score;
+            }
+        }
+        if (best == null) {
+            return;
+        }
+        latestTextFocusXRatio = Math.max(
+                0.08d,
+                Math.min(0.92d, (best.left + best.right) / 2d)
+        );
+        latestTextFocusYRatio = Math.max(
+                0.12d,
+                Math.min(0.78d, (best.top + best.bottom) / 2d)
+        );
     }
 
     private void publishLiveTextRegions(
@@ -6625,6 +6896,132 @@ public final class DateOcrScanActivity extends ComponentActivity {
                 .setMessage(raw)
                 .setPositiveButton("知道了", null)
                 .show();
+    }
+
+    private void showDiagnosticsDialog() {
+        if (!isDebuggable()) {
+            return;
+        }
+        if (diagnosticsDialog != null) {
+            diagnosticsDialog.dismiss();
+        }
+        ScrollView scroll = new ScrollView(this);
+        diagnosticsSummaryView = new TextView(this);
+        diagnosticsSummaryView.setTextColor(Color.rgb(35, 42, 38));
+        diagnosticsSummaryView.setTextSize(13);
+        diagnosticsSummaryView.setTypeface(Typeface.MONOSPACE);
+        diagnosticsSummaryView.setTextIsSelectable(true);
+        diagnosticsSummaryView.setPadding(dp(16), dp(10), dp(16), dp(12));
+        scroll.addView(diagnosticsSummaryView, new ScrollView.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT
+        ));
+
+        diagnosticsDialog = new AlertDialog.Builder(this)
+                .setTitle("识别诊断（测试版）")
+                .setView(scroll)
+                .setNeutralButton("选择录屏", null)
+                .setPositiveButton("分享日志", null)
+                .setNegativeButton("关闭", null)
+                .create();
+        diagnosticsDialog.setOnShowListener(new DialogInterface.OnShowListener() {
+            @Override
+            public void onShow(DialogInterface dialog) {
+                diagnosticsDialog.getButton(AlertDialog.BUTTON_POSITIVE)
+                        .setOnClickListener(new View.OnClickListener() {
+                            @Override
+                            public void onClick(View view) {
+                                shareDiagnosticsLog();
+                            }
+                        });
+                diagnosticsDialog.getButton(AlertDialog.BUTTON_NEUTRAL)
+                        .setOnClickListener(new View.OnClickListener() {
+                            @Override
+                            public void onClick(View view) {
+                                diagnosticsDialog.dismiss();
+                                startVideoReplayPicker();
+                            }
+                        });
+                refreshDiagnosticsDialog();
+            }
+        });
+        diagnosticsDialog.setOnDismissListener(new DialogInterface.OnDismissListener() {
+            @Override
+            public void onDismiss(DialogInterface dialog) {
+                diagnosticsDialog = null;
+                diagnosticsSummaryView = null;
+            }
+        });
+        diagnosticsDialog.show();
+    }
+
+    private void refreshDiagnosticsDialog() {
+        final TextView summaryView = diagnosticsSummaryView;
+        if (summaryView == null || diagnosticsDialog == null || !diagnosticsDialog.isShowing()) {
+            return;
+        }
+        summaryView.setText(diagnostics.summary(SystemClock.elapsedRealtime()));
+        summaryView.postDelayed(new Runnable() {
+            @Override
+            public void run() {
+                refreshDiagnosticsDialog();
+            }
+        }, 750L);
+    }
+
+    private void shareDiagnosticsLog() {
+        diagnosticEvent("log.share", "requested");
+        File directory = new File(getCacheDir(), "shared-transfers");
+        if (!directory.exists() && !directory.mkdirs()) {
+            Toast.makeText(this, "无法准备诊断日志", Toast.LENGTH_SHORT).show();
+            return;
+        }
+        File file = new File(
+                directory,
+                "shiqi-ocr-diagnostic-" + System.currentTimeMillis() + ".txt"
+        );
+        try (OutputStreamWriter writer = new OutputStreamWriter(
+                new FileOutputStream(file),
+                StandardCharsets.UTF_8
+        )) {
+            writer.write(diagnostics.report(
+                    SystemClock.elapsedRealtime(),
+                    Build.MANUFACTURER + "/" + Build.MODEL
+                            + "; sdk=" + Build.VERSION.SDK_INT
+                            + "; package=" + getPackageName()
+            ));
+            writer.write("\nraw_ocr\n");
+            writer.write(FoodItem.cleanText(latestRawText));
+            writer.flush();
+
+            Uri contentUri = FileProvider.getUriForFile(
+                    this,
+                    getPackageName() + ".fileprovider",
+                    file
+            );
+            Intent share = new Intent(Intent.ACTION_SEND);
+            share.setType("text/plain");
+            share.putExtra(Intent.EXTRA_STREAM, contentUri);
+            share.putExtra(Intent.EXTRA_SUBJECT, "食期管家 OCR 诊断日志");
+            share.setClipData(ClipData.newRawUri("OCR 诊断日志", contentUri));
+            share.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
+            startActivity(Intent.createChooser(share, "分享识别诊断日志"));
+        } catch (IOException | IllegalArgumentException | ActivityNotFoundException error) {
+            Toast.makeText(
+                    this,
+                    "诊断日志分享失败：" + FoodItem.cleanText(error.getMessage()),
+                    Toast.LENGTH_LONG
+            ).show();
+        }
+    }
+
+    private void diagnosticEvent(String stage, String details) {
+        if (!isDebuggable()) {
+            return;
+        }
+        long now = SystemClock.elapsedRealtime();
+        diagnostics.event(now, stage, details);
+        Log.i("ShiqiDiag", stage + " " + FoodItem.cleanText(details));
     }
 
     private void finishWithCandidate() {

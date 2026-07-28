@@ -193,7 +193,10 @@ final class DateOcrParser {
                 ? referenceDate
                 : DateRules.getTodayString();
         Map<String, Integer> counts = new LinkedHashMap<String, Integer>();
+        countPastCompactDates(text, DATE_WITH_SEPARATOR, today, counts);
+        countPastCompactDates(text, DAY_MONTH_YEAR_WITH_SEPARATOR, today, counts);
         countPastCompactDates(text, COMPACT_DATE, today, counts);
+        countPastCompactDates(text, COMPACT_DAY_MONTH_YEAR, today, counts);
         countPastCompactDates(text, PACKED_PRODUCTION_CODE, today, counts);
 
         String best = "";
@@ -220,6 +223,9 @@ final class DateOcrParser {
     ) {
         Matcher matcher = pattern.matcher(text);
         while (matcher.find()) {
+            if (pattern == COMPACT_DATE && hasLotCodePrefix(text, matcher.start(1))) {
+                continue;
+            }
             if (pattern == PACKED_PRODUCTION_CODE
                     && BarcodeUtils.isSupportedProductCode(matcher.group())) {
                 continue;
