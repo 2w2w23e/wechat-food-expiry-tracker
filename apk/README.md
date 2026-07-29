@@ -6,7 +6,7 @@
 
 ## 构建
 
-当前 APK 版本号：`versionName 0.4.3`，`versionCode 33`。每次生成新的可交付 APK 时，都需要同步提升 `apk/app/build.gradle` 和 `AndroidManifest.xml` 里的 `versionName` 和 `versionCode`。
+当前 APK 版本号：`versionName 0.4.4`，`versionCode 34`。每次生成新的可交付 APK 时，都需要同步提升 `apk/app/build.gradle` 和 `AndroidManifest.xml` 里的 `versionName` 和 `versionCode`。
 
 当前最低 Android 版本为 API 24（Android 7.0）。当前 debug APK 实测约 220 MB；离线模型只保留当前链路需要的关键文件，可交付 APK 的硬上限为 1 GB。
 
@@ -74,6 +74,7 @@ apk/build/outputs/apk/shiqi-android-release.apk
 - 状态多选筛选和分类多选筛选
 - 食品搜索，支持中文、拼音和首字母匹配
 - 统一智能识别：同一页面支持相机、视频模拟和图片，自动融合商品码、中文/拉丁包装文字、生产日期、保质期和最终日期；候选只会填入新增表单，仍需用户确认保存
+- V2 扫描与核对：预览区保持为首要区域，条码、商品名和日期分别显示用户状态；进入核对页后冻结候选，查看关键帧证据或返回扫描都不会丢失当前结果
 - 视频识别增强：视频帧会使用全图、放大裁剪、中英文双 OCR、PP-OCRv6 日期行补充识别、多帧候选排序和 OpenCV CLAHE / 背景差分低对比增强；日期按多模型与多帧证据稳定后进入表单
 - 相机实时帧门控：每帧先检查清晰度、曝光、反光和文字区域，只保留首个、明显更好或超时兜底帧进入完整 OCR；识别繁忙时继续以 `KEEP_ONLY_LATEST` 语义替换待处理帧，不堆积旧画面
 - 实时识别反馈：取景框显示 PP-OCRv6 检测到的可能文字区；发现有效画面时提示并轻震。查看识别依据使用可返回弹窗；继续相机识别默认保留已识别的商品名、条码、日期、保质期和关键帧
@@ -129,3 +130,4 @@ apk/build/outputs/apk/shiqi-android-release.apk
 - V0.4.1 指定失败视频的药品名字段晋升、结果页到新增表单、覆盖安装保数和 360 x 800 视觉证据见 `../docs/qa/2026-07-29-redesign-v2-c1-ocr.md`。
 - V0.4.2 有界 ROI、低对比度日期快速路径、四组冻结样本速度回归和字段优先结果页见 `../docs/qa/2026-07-30-redesign-v2-c2-roi-speed.md`。
 - V0.4.3 商品档案分组库存、全屏批次详情、减量撤销、补货相机首屏、完整增改删和五尺寸视觉证据见 `../docs/qa/2026-07-30-redesign-v2-d1a-inventory-detail.md`。
+- V0.4.4 全屏扫描、稳定核对、证据无损返回、四组冻结样本、完整增改删和五尺寸视觉证据见 `../docs/qa/2026-07-30-redesign-v2-d1b-scan-confirm.md`。
