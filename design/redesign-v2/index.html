@@ -1,0 +1,593 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#f7f9fb">
+  <title>食期管家 V2 原型</title>
+  <link rel="stylesheet" href="./styles.css">
+</head>
+<body>
+  <main class="app-shell" aria-label="食期管家 V2 可点击原型">
+    <div class="system-bar" aria-hidden="true">
+      <span>09:41</span>
+      <span>5G&nbsp;&nbsp;87%</span>
+    </div>
+
+    <section class="screen is-active" data-screen="home" aria-label="总览">
+      <header class="app-bar">
+        <div>
+          <p class="eyebrow">7月29日 周三</p>
+          <h1>总览</h1>
+        </div>
+        <button class="icon-button" type="button" data-go="settings" aria-label="打开设置">
+          <i data-lucide="settings"></i>
+        </button>
+      </header>
+
+      <div class="screen-scroll">
+        <section class="summary-strip" aria-label="库存摘要">
+          <button type="button" data-filter-jump="soon">
+            <strong class="status-danger">2</strong>
+            <span>今天到期</span>
+          </button>
+          <button type="button" data-filter-jump="soon">
+            <strong class="status-warning">5</strong>
+            <span>7天内</span>
+          </button>
+          <button type="button" data-filter-jump="low">
+            <strong>3</strong>
+            <span>低库存</span>
+          </button>
+        </section>
+
+        <button class="primary-action scan-entry" type="button" data-start-scan="auto">
+          <span class="action-icon"><i data-lucide="scan-line"></i></span>
+          <span>
+            <strong>扫描添加</strong>
+            <small>识别名称、条码和日期</small>
+          </span>
+          <i data-lucide="chevron-right"></i>
+        </button>
+
+        <section class="content-section">
+          <div class="section-heading">
+            <div>
+              <p class="eyebrow">按最终日期排序</p>
+              <h2>需要先处理</h2>
+            </div>
+            <button class="text-button" type="button" data-go="inventory">查看全部</button>
+          </div>
+
+          <div class="item-list">
+            <article class="inventory-row" data-open-item>
+              <div class="product-thumb thumb-milk" aria-hidden="true">奶</div>
+              <button class="row-main" type="button" data-go="detail">
+                <span class="row-title">鲜牛奶</span>
+                <span class="row-meta">冷藏 · 批次 07-27 · 2 件</span>
+              </button>
+              <div class="expiry-cell">
+                <strong class="status-danger">今天</strong>
+                <span>7月29日</span>
+              </div>
+            </article>
+
+            <article class="inventory-row">
+              <div class="product-thumb thumb-bread" aria-hidden="true">包</div>
+              <button class="row-main" type="button" data-go="detail">
+                <span class="row-title">全麦吐司</span>
+                <span class="row-meta">常温 · 批次 07-26 · 1 件</span>
+              </button>
+              <div class="expiry-cell">
+                <strong class="status-warning">剩 2 天</strong>
+                <span>7月31日</span>
+              </div>
+            </article>
+
+            <article class="inventory-row">
+              <div class="product-thumb thumb-drops">
+                <img src="./assets/eye-drops-preview.png" alt="">
+              </div>
+              <button class="row-main" type="button" data-go="detail">
+                <span class="row-title">复方硫酸软骨素滴眼液</span>
+                <span class="row-meta">未开封 · 1 盒</span>
+              </button>
+              <div class="expiry-cell">
+                <strong>待补日期</strong>
+                <span>刚刚识别</span>
+              </div>
+            </article>
+          </div>
+        </section>
+
+        <section class="recent-action">
+          <span class="recent-icon"><i data-lucide="history"></i></span>
+          <span>
+            <strong>刚刚将酸奶减少 1</strong>
+            <small>当前剩余 2 件</small>
+          </span>
+          <button class="text-button" type="button" data-toast="已撤销本次减量">撤销</button>
+        </section>
+      </div>
+    </section>
+
+    <section class="screen" data-screen="inventory" aria-label="库存">
+      <header class="app-bar app-bar-compact">
+        <h1>库存</h1>
+        <button class="icon-button" type="button" aria-label="筛选库存">
+          <i data-lucide="sliders-horizontal"></i>
+        </button>
+      </header>
+
+      <div class="inventory-tools">
+        <label class="search-field">
+          <i data-lucide="search"></i>
+          <input type="search" placeholder="搜索名称、条码或批次" aria-label="搜索库存">
+        </label>
+        <div class="filter-row" role="tablist" aria-label="库存筛选">
+          <button class="filter-chip is-selected" type="button" data-filter="all">全部</button>
+          <button class="filter-chip" type="button" data-filter="soon">临期</button>
+          <button class="filter-chip" type="button" data-filter="expired">已过期</button>
+          <button class="filter-chip" type="button" data-filter="low">低库存</button>
+          <button class="filter-chip" type="button" data-filter="opened">已开封</button>
+        </div>
+      </div>
+
+      <div class="screen-scroll inventory-scroll">
+        <div class="list-summary">
+          <span>共 18 种商品 · 27 个批次</span>
+          <span>最早到期优先</span>
+        </div>
+
+        <div class="item-list inventory-full-list">
+          <article class="stock-row" data-stock-status="soon">
+            <button class="stock-main" type="button" data-go="detail">
+              <span class="product-thumb thumb-milk" aria-hidden="true">奶</span>
+              <span class="stock-copy">
+                <strong>鲜牛奶</strong>
+                <small>2 个批次 · 最早今天到期</small>
+              </span>
+            </button>
+            <div class="quick-actions">
+              <button class="square-button" type="button" data-decrement aria-label="鲜牛奶减少一件">
+                <i data-lucide="minus"></i>
+              </button>
+              <button class="restock-button" type="button" data-restock>补货</button>
+            </div>
+          </article>
+
+          <article class="stock-row" data-stock-status="soon">
+            <button class="stock-main" type="button" data-go="detail">
+              <span class="product-thumb thumb-bread" aria-hidden="true">包</span>
+              <span class="stock-copy">
+                <strong>全麦吐司</strong>
+                <small>1 个批次 · 剩 2 天 · 1 件</small>
+              </span>
+            </button>
+            <div class="quick-actions">
+              <button class="square-button" type="button" data-decrement aria-label="全麦吐司减少一件">
+                <i data-lucide="minus"></i>
+              </button>
+              <button class="restock-button" type="button" data-restock>补货</button>
+            </div>
+          </article>
+
+          <article class="stock-row" data-stock-status="opened">
+            <button class="stock-main" type="button" data-go="detail">
+              <span class="product-thumb thumb-sauce" aria-hidden="true">酱</span>
+              <span class="stock-copy">
+                <strong>原味沙拉酱</strong>
+                <small>已开封 · 冷藏 · 剩 12 天</small>
+              </span>
+            </button>
+            <div class="quick-actions">
+              <button class="square-button" type="button" data-decrement aria-label="原味沙拉酱减少一件">
+                <i data-lucide="minus"></i>
+              </button>
+              <button class="restock-button" type="button" data-restock>补货</button>
+            </div>
+          </article>
+
+          <article class="stock-row" data-stock-status="low">
+            <button class="stock-main" type="button" data-go="detail">
+              <span class="product-thumb thumb-drops">
+                <img src="./assets/eye-drops-preview.png" alt="">
+              </span>
+              <span class="stock-copy">
+                <strong>复方硫酸软骨素滴眼液</strong>
+                <small>条码 6917246211883 · 1 盒</small>
+              </span>
+            </button>
+            <div class="quick-actions">
+              <button class="square-button" type="button" data-decrement aria-label="滴眼液减少一盒">
+                <i data-lucide="minus"></i>
+              </button>
+              <button class="restock-button" type="button" data-restock>补货</button>
+            </div>
+          </article>
+
+          <article class="stock-row" data-stock-status="all">
+            <button class="stock-main" type="button" data-go="detail">
+              <span class="product-thumb thumb-care" aria-hidden="true">护</span>
+              <span class="stock-copy">
+                <strong>保湿乳液</strong>
+                <small>未开封 · 剩 148 天 · 2 瓶</small>
+              </span>
+            </button>
+            <div class="quick-actions">
+              <button class="square-button" type="button" data-decrement aria-label="保湿乳液减少一瓶">
+                <i data-lucide="minus"></i>
+              </button>
+              <button class="restock-button" type="button" data-restock>补货</button>
+            </div>
+          </article>
+        </div>
+      </div>
+    </section>
+
+    <section class="screen scanner-screen" data-screen="scanner" aria-label="扫描">
+      <img class="camera-preview" src="./assets/eye-drops-preview.png" alt="相机中的滴眼液包装">
+      <div class="camera-shade"></div>
+
+      <header class="scanner-topbar">
+        <button class="camera-button" type="button" data-back aria-label="返回">
+          <i data-lucide="arrow-left"></i>
+        </button>
+        <div class="scanner-title">
+          <strong data-scan-title>自动识别</strong>
+          <span data-scan-status>已找到 2 项，继续查找日期</span>
+        </div>
+        <div class="scanner-actions">
+          <button class="camera-button" type="button" data-toast="已打开手电筒" aria-label="打开手电筒">
+            <i data-lucide="flashlight"></i>
+          </button>
+          <button class="camera-button" type="button" data-toast="点按文字区域可优先对焦识别" aria-label="扫描帮助">
+            <i data-lucide="circle-help"></i>
+          </button>
+        </div>
+      </header>
+
+      <div class="focus-reticle" data-focus-reticle aria-hidden="true"></div>
+      <button class="detection-box name-box is-recognized" type="button" data-focus-region="name">
+        <span>商品名</span>
+      </button>
+      <button class="detection-box barcode-box is-recognized" type="button" data-focus-region="barcode">
+        <span>条码</span>
+      </button>
+      <button class="detection-box date-box" type="button" data-focus-region="date">
+        <span data-date-box-label>可能的日期</span>
+      </button>
+
+      <div class="quality-banner">
+        <i data-lucide="focus"></i>
+        <span>已对焦 · 画面稳定</span>
+      </div>
+
+      <section class="scan-sheet">
+        <div class="mode-segment" role="tablist" aria-label="扫描模式">
+          <button class="is-selected" type="button" data-scan-mode="auto">自动</button>
+          <button type="button" data-scan-mode="date">日期特写</button>
+        </div>
+
+        <div class="field-progress" aria-label="识别字段进度">
+          <div class="field-step is-done">
+            <i data-lucide="barcode"></i>
+            <span>条码</span>
+            <strong>已识别</strong>
+          </div>
+          <div class="field-step is-done">
+            <i data-lucide="type"></i>
+            <span>名称</span>
+            <strong>已识别</strong>
+          </div>
+          <div class="field-step" data-date-step>
+            <i data-lucide="calendar-days"></i>
+            <span>日期</span>
+            <strong>查找中</strong>
+          </div>
+        </div>
+
+        <button class="secondary-action scan-result-button" type="button" data-review-result>
+          核对已识别的 2 项
+        </button>
+        <button class="primary-button date-priority-button" type="button" data-prioritize-date>
+          <i data-lucide="focus"></i>
+          优先识别日期
+        </button>
+      </section>
+    </section>
+
+    <section class="screen" data-screen="confirm" aria-label="确认识别结果">
+      <header class="app-bar app-bar-with-back">
+        <button class="icon-button" type="button" data-back aria-label="返回扫描">
+          <i data-lucide="arrow-left"></i>
+        </button>
+        <div>
+          <h1>核对结果</h1>
+          <p class="app-bar-note" data-confirm-subtitle>已识别 2 项，日期待补充</p>
+        </div>
+        <button class="icon-button" type="button" data-toast="已保留本次识别草稿" aria-label="保留草稿">
+          <i data-lucide="bookmark"></i>
+        </button>
+      </header>
+
+      <div class="screen-scroll confirm-scroll">
+        <section class="known-product-banner">
+          <i data-lucide="package-check"></i>
+          <span>
+            <strong>找到已有商品档案</strong>
+            <small>本次将作为新批次补货</small>
+          </span>
+          <button class="text-button" type="button" data-go="detail">查看</button>
+        </section>
+
+        <section class="evidence-section">
+          <div class="section-heading compact-heading">
+            <div>
+              <p class="eyebrow">关键帧</p>
+              <h2>识别依据</h2>
+            </div>
+            <span class="confidence-pill">画面清楚</span>
+          </div>
+          <div class="evidence-strip">
+            <button class="evidence-thumb is-selected" type="button" aria-label="关键帧一">
+              <img src="./assets/eye-drops-preview.png" alt="">
+              <span>名称</span>
+            </button>
+            <button class="evidence-thumb" type="button" aria-label="关键帧二">
+              <img src="./assets/eye-drops-preview.png" alt="">
+              <span>条码</span>
+            </button>
+            <button class="evidence-thumb is-missing" type="button" data-rescan-date aria-label="补扫日期">
+              <i data-lucide="camera"></i>
+              <span>补扫日期</span>
+            </button>
+          </div>
+        </section>
+
+        <section class="field-section">
+          <div class="section-heading compact-heading">
+            <h2>商品与批次</h2>
+            <span class="field-count" data-field-count>2 / 4</span>
+          </div>
+
+          <div class="review-fields">
+<button class="review-row needs-attention" type="button" data-rescan-date>
+              <span class="review-icon warning-icon"><i data-lucide="calendar-days"></i></span>
+              <span class="review-copy">
+                <small>生产日期 / 有效期</small>
+                <strong data-date-review-value>尚未找到清楚日期</strong>
+                <em data-date-review-note>继续对准喷码、拓印或激光日期</em>
+              </span>
+              <i data-lucide="camera"></i>
+            </button>
+
+            <button class="review-row" type="button" data-toast="商品名来自关键帧 1">
+              <span class="review-icon success-icon"><i data-lucide="type"></i></span>
+              <span class="review-copy">
+                <small>商品名称</small>
+                <strong>复方硫酸软骨素滴眼液</strong>
+                <em>关键帧 1 · 跨帧稳定</em>
+              </span>
+              <i data-lucide="chevron-right"></i>
+            </button>
+
+            <button class="review-row" type="button" data-toast="条码在 3 帧中一致">
+              <span class="review-icon success-icon"><i data-lucide="barcode"></i></span>
+              <span class="review-copy">
+                <small>条码</small>
+                <strong>6917246211883</strong>
+                <em>3 帧一致 · 已匹配档案</em>
+              </span>
+              <i data-lucide="chevron-right"></i>
+            </button>
+
+            <button class="review-row" type="button" data-toast="数量将在保存前再次确认">
+              <span class="review-icon"><i data-lucide="boxes"></i></span>
+              <span class="review-copy">
+                <small>补货数量</small>
+                <strong>1 盒</strong>
+                <em>新批次</em>
+              </span>
+              <i data-lucide="chevron-right"></i>
+            </button>
+          </div>
+        </section>
+      </div>
+
+      <footer class="bottom-action-bar">
+        <button class="secondary-action" type="button" data-rescan-date data-confirm-secondary>补扫日期</button>
+        <button class="primary-button" type="button" data-save-batch disabled>确认补货</button>
+      </footer>
+    </section>
+
+    <section class="screen" data-screen="detail" aria-label="商品详情">
+      <header class="app-bar app-bar-with-back">
+        <button class="icon-button" type="button" data-back aria-label="返回">
+          <i data-lucide="arrow-left"></i>
+        </button>
+        <h1>商品详情</h1>
+        <button class="icon-button" type="button" data-toast="更多操作" aria-label="更多操作">
+          <i data-lucide="more-horizontal"></i>
+        </button>
+      </header>
+
+      <div class="screen-scroll detail-scroll">
+        <section class="product-identity">
+          <div class="detail-image">
+            <img src="./assets/eye-drops-preview.png" alt="复方硫酸软骨素滴眼液">
+          </div>
+          <div>
+            <p class="eyebrow">药品 · 未开封</p>
+            <h2>复方硫酸软骨素滴眼液</h2>
+            <p>条码 6917246211883</p>
+          </div>
+        </section>
+
+        <section class="detail-summary">
+          <div>
+            <span>总数量</span>
+            <strong data-detail-quantity>1 盒</strong>
+          </div>
+          <div>
+            <span>批次数</span>
+            <strong>1</strong>
+          </div>
+          <div>
+            <span>最近到期</span>
+            <strong data-detail-expiry>待补充</strong>
+          </div>
+        </section>
+
+        <section class="content-section">
+          <div class="section-heading">
+            <div>
+              <p class="eyebrow">最早到期优先</p>
+              <h2>批次</h2>
+            </div>
+            <button class="text-button" type="button" data-restock>补货</button>
+          </div>
+
+          <article class="batch-row">
+            <div class="batch-status warning-icon"><i data-lucide="calendar-clock"></i></div>
+            <div class="batch-copy">
+              <strong>批次 20260729-A1</strong>
+              <span data-batch-date>日期待补充 · 1 盒</span>
+              <small>未开封 · 常温</small>
+            </div>
+            <button class="square-button" type="button" data-decrement aria-label="当前批次减少一盒">
+              <i data-lucide="minus"></i>
+            </button>
+          </article>
+        </section>
+
+        <section class="detail-actions">
+          <button class="primary-button" type="button" data-restock>
+            <i data-lucide="package-plus"></i>
+            补货新批次
+          </button>
+          <button class="secondary-action" type="button" data-toast="已进入编辑状态">
+            <i data-lucide="pencil"></i>
+            编辑商品
+          </button>
+        </section>
+      </div>
+    </section>
+
+    <section class="screen" data-screen="settings" aria-label="设置">
+      <header class="app-bar app-bar-compact">
+        <div>
+          <p class="eyebrow">规则、本地数据与识别</p>
+          <h1>设置</h1>
+        </div>
+      </header>
+
+      <div class="screen-scroll settings-scroll">
+        <section class="settings-group">
+          <h2>提醒</h2>
+          <button class="settings-row" type="button" data-toast="当前使用智能提醒">
+            <span class="settings-icon"><i data-lucide="bell-ring"></i></span>
+            <span>
+              <strong>提醒方式</strong>
+              <small>智能提醒 · 新增或状态变化时计算</small>
+            </span>
+            <i data-lucide="chevron-right"></i>
+          </button>
+          <div class="settings-row">
+            <span class="settings-icon"><i data-lucide="calendar-check"></i></span>
+            <span>
+              <strong>每日简报</strong>
+              <small>每天 09:00</small>
+            </span>
+            <button class="switch is-on" type="button" data-toggle aria-label="切换每日简报"><span></span></button>
+          </div>
+        </section>
+
+        <section class="settings-group">
+          <h2>本地数据</h2>
+          <button class="settings-row" type="button" data-toast="已打开 JSON 导出筛选">
+            <span class="settings-icon"><i data-lucide="file-json"></i></span>
+            <span>
+              <strong>JSON 快速导入导出</strong>
+              <small>筛选日期后分享或恢复</small>
+            </span>
+            <i data-lucide="chevron-right"></i>
+          </button>
+          <button class="settings-row" type="button" data-toast="已打开 Excel 批量管理">
+            <span class="settings-icon"><i data-lucide="file-spreadsheet"></i></span>
+            <span>
+              <strong>Excel 批量管理</strong>
+              <small>预览、校验、导入与导出</small>
+            </span>
+            <i data-lucide="chevron-right"></i>
+          </button>
+          <button class="settings-row" type="button" data-toast="最近备份：今天 09:12">
+            <span class="settings-icon"><i data-lucide="database-backup"></i></span>
+            <span>
+              <strong>备份与恢复</strong>
+              <small>最近备份：今天 09:12</small>
+            </span>
+            <i data-lucide="chevron-right"></i>
+          </button>
+        </section>
+
+        <section class="settings-group">
+          <h2>识别</h2>
+          <button class="settings-row" type="button" data-toast="离线中文模型已就绪">
+            <span class="settings-icon"><i data-lucide="scan-text"></i></span>
+            <span>
+              <strong>离线模型</strong>
+              <small>中文文字、日期与条码已就绪</small>
+            </span>
+            <span class="status-badge success-badge">就绪</span>
+          </button>
+          <div class="settings-row">
+            <span class="settings-icon"><i data-lucide="bug"></i></span>
+            <span>
+              <strong>诊断记录</strong>
+              <small>仅测试时保留处理日志</small>
+            </span>
+            <button class="switch" type="button" data-toggle aria-label="切换诊断记录"><span></span></button>
+          </div>
+        </section>
+
+        <section class="settings-group">
+          <h2>应用</h2>
+          <button class="settings-row" type="button" data-toast="食期管家 V2 设计原型">
+            <span class="settings-icon"><i data-lucide="info"></i></span>
+            <span>
+              <strong>版本与说明</strong>
+              <small>本地 APK · 数据只保存在设备</small>
+            </span>
+            <i data-lucide="chevron-right"></i>
+          </button>
+        </section>
+      </div>
+    </section>
+
+    <nav class="bottom-nav" aria-label="主导航">
+      <button class="is-selected" type="button" data-nav="home">
+        <i data-lucide="house"></i>
+        <span>总览</span>
+      </button>
+      <button type="button" data-nav="inventory">
+        <i data-lucide="package-search"></i>
+        <span>库存</span>
+      </button>
+      <button class="scan-nav" type="button" data-start-scan="auto">
+        <span class="scan-nav-icon"><i data-lucide="scan-line"></i></span>
+        <span>扫描</span>
+      </button>
+      <button type="button" data-nav="settings">
+        <i data-lucide="settings"></i>
+        <span>设置</span>
+      </button>
+    </nav>
+
+    <div class="toast" role="status" aria-live="polite"></div>
+  </main>
+
+  <script src="./lucide.min.js"></script>
+  <script src="./app.js"></script>
+</body>
+</html>
