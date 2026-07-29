@@ -9,6 +9,7 @@ final class RecognitionEvidence {
     static final String FIELD_PRODUCTION_DATE = "production_date";
     static final String FIELD_EXPIRY_DATE = "expiry_date";
     static final String FIELD_BARCODE = "barcode";
+    static final String FIELD_TEXT_REGION = "text_region";
 
     private RecognitionEvidence() {}
 

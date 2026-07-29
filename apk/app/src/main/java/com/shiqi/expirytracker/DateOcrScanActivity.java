@@ -36,9 +36,11 @@ import android.view.WindowManager;
 import android.widget.Button;
 import android.widget.FrameLayout;
 import android.widget.HorizontalScrollView;
+import android.widget.ImageButton;
 import android.widget.ImageView;
 import android.widget.LinearLayout;
 import android.widget.ScrollView;
+import android.widget.Space;
 import android.widget.TextView;
 import android.widget.Toast;
 
@@ -118,6 +120,27 @@ public final class DateOcrScanActivity extends ComponentActivity {
     private LinearLayout keyframeContainer;
     private LinearLayout resultSheet;
     private RecognitionGuideOverlay recognitionOverlay;
+    private View scannerScreen;
+    private View confirmationScreen;
+    private TextView confirmationSubtitle;
+    private TextView confirmationFieldCount;
+    private TextView confirmationProductValue;
+    private TextView confirmationProductNote;
+    private TextView confirmationBarcodeValue;
+    private TextView confirmationBarcodeNote;
+    private TextView confirmationDateValue;
+    private TextView confirmationDateNote;
+    private TextView knownProductBanner;
+    private TextView evidenceQualityLabel;
+    private ScanFieldView barcodeProgressView;
+    private ScanFieldView productProgressView;
+    private ScanFieldView dateProgressView;
+    private Button automaticModeButton;
+    private Button dateModeButton;
+    private Button reviewResultButton;
+    private Button prioritizeDateButton;
+    private Button continueScanButton;
+    private ImageButton torchButton;
     private Button fillButton;
     private Button cameraSourceButton;
     private Button videoSourceButton;
@@ -209,6 +232,11 @@ public final class DateOcrScanActivity extends ComponentActivity {
     private volatile boolean focusRequestInFlight;
     private volatile double latestTextFocusXRatio = 0.5d;
     private volatile double latestTextFocusYRatio = 0.48d;
+    private boolean confirmationVisible;
+    private boolean torchEnabled;
+    private boolean compactScannerLayout;
+    private String cachedLocalMatchBarcode = "";
+    private int cachedLocalMatchCount;
 
     private final Executor mainExecutor = new Executor() {
         @Override
@@ -291,6 +319,19 @@ public final class DateOcrScanActivity extends ComponentActivity {
     }
 
     @Override
+    public void onBackPressed() {
+        if (confirmationVisible) {
+            showScannerScreen();
+            return;
+        }
+        if (!currentUiPresentation().hasReviewableResult) {
+            setResult(RESULT_CANCELED);
+            super.onBackPressed();
+            return;
+        }
+        requestExitRecognition();
+    }
+    @Override
     protected void onDestroy() {
         recognitionGeneration++;
         stopVideoReplay();
@@ -357,12 +398,21 @@ public final class DateOcrScanActivity extends ComponentActivity {
     }
 
     private void buildScreen() {
+        compactScannerLayout = getResources().getConfiguration().screenHeightDp < 700;
         FrameLayout root = new FrameLayout(this);
         root.setBackgroundColor(Color.BLACK);
 
+        FrameLayout scanner = new FrameLayout(this);
+        scanner.setBackgroundColor(Color.BLACK);
+        scannerScreen = scanner;
+        root.addView(scanner, new FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.MATCH_PARENT
+        ));
+
         previewView = new PreviewView(this);
         previewView.setScaleType(PreviewView.ScaleType.FILL_CENTER);
-        root.addView(previewView, new FrameLayout.LayoutParams(
+        scanner.addView(previewView, new FrameLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
                 ViewGroup.LayoutParams.MATCH_PARENT
         ));
@@ -371,243 +421,435 @@ public final class DateOcrScanActivity extends ComponentActivity {
         replayFrameView.setScaleType(ImageView.ScaleType.CENTER_CROP);
         replayFrameView.setBackgroundColor(Color.BLACK);
         replayFrameView.setVisibility(View.GONE);
-        root.addView(replayFrameView, new FrameLayout.LayoutParams(
+        scanner.addView(replayFrameView, new FrameLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
                 ViewGroup.LayoutParams.MATCH_PARENT
         ));
 
         recognitionOverlay = new RecognitionGuideOverlay(this);
-        root.addView(recognitionOverlay, new FrameLayout.LayoutParams(
+        scanner.addView(recognitionOverlay, new FrameLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
                 ViewGroup.LayoutParams.MATCH_PARENT
         ));
 
-        cameraHud = new TextView(this);
-        cameraHud.setText("自动对焦准备中\n等待相机画面");
-        cameraHud.setTextColor(Color.WHITE);
-        cameraHud.setTextSize(13);
-        cameraHud.setGravity(Gravity.CENTER);
-        cameraHud.setMaxLines(isDebuggable() ? 4 : 2);
-        cameraHud.setLineSpacing(0f, 0.92f);
-        cameraHud.setPadding(dp(10), dp(4), dp(10), dp(4));
-        cameraHud.setBackground(rounded(Color.argb(218, 20, 28, 24), dp(6), 0));
-        FrameLayout.LayoutParams hudParams = new FrameLayout.LayoutParams(
-                ViewGroup.LayoutParams.WRAP_CONTENT,
-                ViewGroup.LayoutParams.WRAP_CONTENT
-        );
-        hudParams.gravity = Gravity.TOP | Gravity.CENTER_HORIZONTAL;
-        hudParams.topMargin = dp(78);
-        hudParams.leftMargin = dp(16);
-        hudParams.rightMargin = dp(16);
-        root.addView(cameraHud, hudParams);
-
         LinearLayout topPanel = new LinearLayout(this);
         topPanel.setOrientation(LinearLayout.HORIZONTAL);
         topPanel.setGravity(Gravity.CENTER_VERTICAL);
-        topPanel.setPadding(dp(12), dp(10), dp(12), dp(10));
-        topPanel.setBackgroundColor(Color.argb(210, 20, 24, 22));
+        topPanel.setPadding(dp(8), dp(8), dp(8), dp(8));
+        topPanel.setBackgroundColor(Color.argb(205, 15, 23, 29));
         FrameLayout.LayoutParams topParams = new FrameLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
-                ViewGroup.LayoutParams.WRAP_CONTENT
+                dp(72)
         );
         topParams.gravity = Gravity.TOP;
-        root.addView(topPanel, topParams);
+        scanner.addView(topPanel, topParams);
 
-        Button closeButton = overlayButton("返回", Color.rgb(52, 58, 55));
+        ImageButton closeButton = iconButton(
+                R.drawable.ic_v2_back,
+                Color.WHITE,
+                Color.argb(56, 255, 255, 255),
+                "返回"
+        );
         closeButton.setOnClickListener(new View.OnClickListener() {
             @Override
             public void onClick(View view) {
-                setResult(RESULT_CANCELED);
-                finish();
+                requestExitRecognition();
             }
         });
-        topPanel.addView(closeButton, fixed(64, 48));
+        topPanel.addView(closeButton, fixedLinear(48, 48));
 
-        TextView title = new TextView(this);
-        title.setText(dateOnlyMode ? "识别本批次日期" : "智能识别");
-        title.setTextColor(Color.WHITE);
-        title.setTextSize(18);
-        title.setTypeface(Typeface.DEFAULT, Typeface.BOLD);
-        title.setGravity(Gravity.CENTER);
-        topPanel.addView(title, weightWrap(1));
+        LinearLayout titleStack = new LinearLayout(this);
+        titleStack.setOrientation(LinearLayout.VERTICAL);
+        titleStack.setGravity(Gravity.CENTER);
+        titleStack.setPadding(dp(6), 0, dp(6), 0);
+        topPanel.addView(titleStack, weightWrap(1));
 
         statusBadge = new TextView(this);
-        statusBadge.setText("待识别");
-        statusBadge.setTextColor(Color.rgb(226, 246, 232));
-        statusBadge.setTextSize(14);
+        statusBadge.setText("自动识别");
+        statusBadge.setTextColor(Color.WHITE);
+        statusBadge.setTextSize(17);
         statusBadge.setGravity(Gravity.CENTER);
         statusBadge.setTypeface(Typeface.DEFAULT, Typeface.BOLD);
-        statusBadge.setBackground(rounded(Color.rgb(46, 91, 66), dp(8), 0));
-        topPanel.addView(statusBadge, fixed(88, 36));
+        statusBadge.setMaxLines(1);
+        titleStack.addView(statusBadge, matchWrap());
 
         statusText = new TextView(this);
-        statusText.setTextColor(Color.rgb(82, 91, 86));
-        statusText.setTextSize(16);
-        statusText.setMaxLines(3);
-        statusText.setPadding(0, dp(1), 0, dp(2));
+        statusText.setText("对准商品正面或日期");
+        statusText.setTextColor(Color.rgb(222, 229, 233));
+        statusText.setTextSize(12);
+        statusText.setGravity(Gravity.CENTER);
+        statusText.setMaxLines(2);
+        statusText.setEllipsize(android.text.TextUtils.TruncateAt.END);
+        titleStack.addView(statusText, matchWrap());
+
+        torchButton = iconButton(
+                R.drawable.ic_v2_flashlight,
+                Color.WHITE,
+                Color.argb(56, 255, 255, 255),
+                "打开手电筒"
+        );
+        torchButton.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View view) {
+                toggleTorch();
+            }
+        });
+        topPanel.addView(torchButton, fixedLinear(48, 48));
+
+        ImageButton helpButton = iconButton(
+                R.drawable.ic_v2_help,
+                Color.WHITE,
+                Color.argb(56, 255, 255, 255),
+                "扫描帮助"
+        );
+        helpButton.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View view) {
+                showScanHelp();
+            }
+        });
+        topPanel.addView(helpButton, fixedLinear(48, 48));
+
+        cameraHud = new TextView(this);
+        cameraHud.setText("正在对焦，请保持稳定");
+        cameraHud.setTextColor(Color.WHITE);
+        cameraHud.setTextSize(13);
+        cameraHud.setGravity(Gravity.CENTER);
+        cameraHud.setMaxLines(1);
+        cameraHud.setEllipsize(android.text.TextUtils.TruncateAt.END);
+        cameraHud.setPadding(dp(12), dp(6), dp(12), dp(6));
+        cameraHud.setBackground(rounded(Color.argb(220, 20, 30, 36), dp(8), 0));
+        cameraHud.setContentDescription("相机画面状态");
+        FrameLayout.LayoutParams hudParams = new FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT,
+                dp(36)
+        );
+        hudParams.gravity = Gravity.TOP | Gravity.CENTER_HORIZONTAL;
+        hudParams.topMargin = dp(82);
+        hudParams.leftMargin = dp(16);
+        hudParams.rightMargin = dp(16);
+        scanner.addView(cameraHud, hudParams);
 
         LinearLayout bottomShell = new LinearLayout(this);
         bottomShell.setOrientation(LinearLayout.VERTICAL);
-        bottomShell.setBackground(rounded(Color.rgb(249, 250, 250), dp(8), 0));
+        bottomShell.setPadding(dp(12), dp(10), dp(12), dp(10));
+        bottomShell.setBackground(rounded(Color.rgb(249, 250, 252), dp(8), 0));
         resultSheet = bottomShell;
 
-        ScrollView resultScroll = new ScrollView(this);
-        resultScroll.setFillViewport(false);
-        resultScroll.setVerticalScrollBarEnabled(true);
+        LinearLayout modeRow = new LinearLayout(this);
+        modeRow.setOrientation(LinearLayout.HORIZONTAL);
+        modeRow.setPadding(dp(3), dp(3), dp(3), dp(3));
+        modeRow.setBackground(rounded(Color.rgb(235, 239, 244), dp(8), 0));
+        automaticModeButton = segmentButton("自动");
+        dateModeButton = segmentButton("日期特写");
+        modeRow.addView(automaticModeButton, weightMatch(1));
+        modeRow.addView(dateModeButton, weightMatch(1));
+        bottomShell.addView(modeRow, fixedHeight(compactScannerLayout ? 42 : 48));
 
-        LinearLayout bottomPanel = new LinearLayout(this);
-        bottomPanel.setOrientation(LinearLayout.VERTICAL);
-        bottomPanel.setPadding(dp(14), dp(10), dp(14), dp(6));
-        resultScroll.addView(bottomPanel, new ScrollView.LayoutParams(
+        automaticModeButton.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View view) {
+                dateOnlyMode = false;
+                updateModeButtons();
+                updateResultUi(latestSnapshot);
+            }
+        });
+        dateModeButton.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View view) {
+                dateOnlyMode = true;
+                updateModeButtons();
+                updateResultUi(latestSnapshot);
+                requestDateFocus();
+            }
+        });
+
+        Space modeGap = new Space(this);
+        bottomShell.addView(modeGap, fixedHeight(compactScannerLayout ? 4 : 6));
+
+        LinearLayout progressRow = new LinearLayout(this);
+        progressRow.setOrientation(LinearLayout.HORIZONTAL);
+        progressRow.setGravity(Gravity.CENTER);
+        barcodeProgressView = buildScanField(R.drawable.ic_v2_barcode, "条码");
+        productProgressView = buildScanField(R.drawable.ic_v2_type, "名称");
+        dateProgressView = buildScanField(R.drawable.ic_v2_calendar, "日期");
+        progressRow.addView(barcodeProgressView.root, weightMatch(1));
+        progressRow.addView(verticalDivider(), fixedLinear(1, 58));
+        progressRow.addView(productProgressView.root, weightMatch(1));
+        progressRow.addView(verticalDivider(), fixedLinear(1, 58));
+        progressRow.addView(dateProgressView.root, weightMatch(1));
+        bottomShell.addView(progressRow, fixedHeight(compactScannerLayout ? 60 : 72));
+
+        reviewResultButton = outlinedActionButton("查看当前识别结果");
+        reviewResultButton.setEnabled(false);
+        reviewResultButton.setAlpha(0.46f);
+        reviewResultButton.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View view) {
+                showConfirmationScreen();
+            }
+        });
+        bottomShell.addView(reviewResultButton, fixedHeight(48));
+        reviewResultButton.setVisibility(compactScannerLayout ? View.GONE : View.VISIBLE);
+
+        Space actionGap = new Space(this);
+        bottomShell.addView(actionGap, fixedHeight(compactScannerLayout ? 4 : 6));
+
+        prioritizeDateButton = primaryActionButton("优先识别日期");
+        prioritizeDateButton.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View view) {
+                ScanUiPresentation.State state = currentUiPresentation();
+                if (state.ready || (compactScannerLayout && state.hasReviewableResult)) {
+                    showConfirmationScreen();
+                    return;
+                }
+                dateOnlyMode = true;
+                updateModeButtons();
+                updateResultUi(latestSnapshot);
+                requestDateFocus();
+            }
+        });
+        bottomShell.addView(prioritizeDateButton, fixedHeight(compactScannerLayout ? 44 : 48));
+
+        FrameLayout.LayoutParams bottomParams = new FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                dp(compactScannerLayout ? 174 : 248)
+        );
+        bottomParams.gravity = Gravity.BOTTOM;
+        scanner.addView(bottomShell, bottomParams);
+
+        productCandidateScroll = new HorizontalScrollView(this);
+        productCandidateScroll.setVisibility(View.GONE);
+        productCandidateContainer = new LinearLayout(this);
+        productCandidateContainer.setOrientation(LinearLayout.HORIZONTAL);
+        productCandidateScroll.addView(productCandidateContainer);
+
+        rawPreviewText = new TextView(this);
+        rawPreviewText.setVisibility(View.GONE);
+
+        confirmationScreen = buildConfirmationScreen();
+        confirmationScreen.setVisibility(View.GONE);
+        root.addView(confirmationScreen, new FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.MATCH_PARENT
+        ));
+
+        setContentView(root);
+        updateModeButtons();
+    }
+
+    private View buildConfirmationScreen() {
+        LinearLayout screen = new LinearLayout(this);
+        screen.setOrientation(LinearLayout.VERTICAL);
+        screen.setBackgroundColor(Color.rgb(247, 249, 251));
+
+        LinearLayout appBar = new LinearLayout(this);
+        appBar.setOrientation(LinearLayout.HORIZONTAL);
+        appBar.setGravity(Gravity.CENTER_VERTICAL);
+        appBar.setPadding(dp(8), dp(8), dp(8), dp(8));
+        appBar.setBackgroundColor(Color.WHITE);
+
+        ImageButton backButton = iconButton(
+                R.drawable.ic_v2_back,
+                Color.rgb(23, 33, 43),
+                Color.WHITE,
+                "返回扫描"
+        );
+        backButton.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View view) {
+                showScannerScreen();
+            }
+        });
+        appBar.addView(backButton, fixedLinear(48, 48));
+
+        LinearLayout heading = new LinearLayout(this);
+        heading.setOrientation(LinearLayout.VERTICAL);
+        heading.setGravity(Gravity.CENTER);
+        appBar.addView(heading, weightWrap(1));
+
+        TextView title = new TextView(this);
+        title.setText("核对结果");
+        title.setTextColor(Color.rgb(23, 33, 43));
+        title.setTextSize(18);
+        title.setTypeface(Typeface.DEFAULT, Typeface.BOLD);
+        title.setGravity(Gravity.CENTER);
+        heading.addView(title, matchWrap());
+
+        confirmationSubtitle = new TextView(this);
+        confirmationSubtitle.setText("请核对识别字段后再使用");
+        confirmationSubtitle.setTextColor(Color.rgb(100, 116, 139));
+        confirmationSubtitle.setTextSize(12);
+        confirmationSubtitle.setGravity(Gravity.CENTER);
+        confirmationSubtitle.setMaxLines(1);
+        confirmationSubtitle.setEllipsize(android.text.TextUtils.TruncateAt.END);
+        heading.addView(confirmationSubtitle, matchWrap());
+
+        ImageButton moreButton = iconButton(
+                R.drawable.ic_v2_more,
+                Color.rgb(23, 33, 43),
+                Color.WHITE,
+                "更多识别信息"
+        );
+        moreButton.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View view) {
+                showConfirmationMenu();
+            }
+        });
+        appBar.addView(moreButton, fixedLinear(48, 48));
+        screen.addView(appBar, fixedHeight(72));
+        screen.addView(horizontalDivider(), fixedHeight(1));
+
+        ScrollView scroll = new ScrollView(this);
+        scroll.setFillViewport(false);
+        scroll.setVerticalScrollBarEnabled(true);
+        LinearLayout content = new LinearLayout(this);
+        content.setOrientation(LinearLayout.VERTICAL);
+        content.setPadding(dp(16), dp(12), dp(16), dp(20));
+        scroll.addView(content, new ScrollView.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
                 ViewGroup.LayoutParams.WRAP_CONTENT
         ));
-        bottomShell.addView(resultScroll, new LinearLayout.LayoutParams(
+        screen.addView(scroll, new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
                 0,
                 1f
         ));
-        float fontScale = Math.max(1f, getResources().getConfiguration().fontScale);
-        int desiredPanelDp = 370 + Math.round(Math.min(0.4f, fontScale - 1f) * 140f);
-        int maxPanelHeight = Math.round(getResources().getDisplayMetrics().heightPixels * 0.60f);
-        int panelHeight = Math.min(dp(desiredPanelDp), maxPanelHeight);
-        FrameLayout.LayoutParams bottomParams = new FrameLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT,
-                panelHeight
-        );
-        bottomParams.gravity = Gravity.BOTTOM;
-        root.addView(bottomShell, bottomParams);
 
-        LinearLayout resultHeader = new LinearLayout(this);
-        resultHeader.setGravity(Gravity.CENTER_VERTICAL);
-        bottomPanel.addView(resultHeader, matchWrap());
-
-        TextView resultTitle = new TextView(this);
-        resultTitle.setText("识别结果");
-        resultTitle.setTextColor(Color.rgb(30, 35, 33));
-        resultTitle.setTextSize(16);
-        resultTitle.setTypeface(Typeface.DEFAULT, Typeface.BOLD);
-        resultHeader.addView(resultTitle, weightWrap(1));
-
-        Button rawButton = plainButton("原文");
-        rawButton.setOnClickListener(new View.OnClickListener() {
-            @Override
-            public void onClick(View view) {
-                showRawTextDialog();
-            }
-        });
-        resultHeader.addView(rawButton, fixed(64, 48));
-
-        if (isDebuggable()) {
-            Button diagnosticsButton = plainButton("诊断");
-            diagnosticsButton.setContentDescription("查看并分享识别诊断");
-            diagnosticsButton.setOnClickListener(new View.OnClickListener() {
-                @Override
-                public void onClick(View view) {
-                    showDiagnosticsDialog();
-                }
-            });
-            resultHeader.addView(diagnosticsButton, fixed(64, 48));
-        }
-
-        productValue = new TextView(this);
-        productValue.setText(dateOnlyMode ? "正在寻找日期文字" : "正在寻找商品名");
-        productValue.setTextColor(Color.rgb(24, 30, 27));
-        productValue.setTextSize(18);
-        productValue.setTypeface(Typeface.DEFAULT, Typeface.BOLD);
-        productValue.setMaxLines(3);
-        productValue.setPadding(0, dp(3), 0, dp(1));
-        bottomPanel.addView(productValue, matchWrap());
-        bottomPanel.addView(statusText, matchWrap());
-
-        productCandidateScroll = new HorizontalScrollView(this);
-        productCandidateScroll.setHorizontalScrollBarEnabled(false);
-        productCandidateScroll.setFillViewport(false);
-        productCandidateScroll.setVisibility(View.GONE);
-        productCandidateContainer = new LinearLayout(this);
-        productCandidateContainer.setOrientation(LinearLayout.HORIZONTAL);
-        productCandidateScroll.addView(productCandidateContainer, new HorizontalScrollView.LayoutParams(
-                ViewGroup.LayoutParams.WRAP_CONTENT,
-                ViewGroup.LayoutParams.WRAP_CONTENT
+        knownProductBanner = new TextView(this);
+        knownProductBanner.setTextColor(Color.rgb(38, 82, 177));
+        knownProductBanner.setTextSize(14);
+        knownProductBanner.setTypeface(Typeface.DEFAULT, Typeface.BOLD);
+        knownProductBanner.setGravity(Gravity.CENTER_VERTICAL);
+        knownProductBanner.setPadding(dp(12), dp(10), dp(12), dp(10));
+        knownProductBanner.setBackground(rounded(
+                Color.rgb(235, 241, 255),
+                dp(8),
+                Color.rgb(192, 209, 247)
         ));
-        bottomPanel.addView(productCandidateScroll, fixedHeight(48));
+        knownProductBanner.setVisibility(View.GONE);
+        content.addView(knownProductBanner, matchWrap());
 
-        keyframeTitle = new TextView(this);
-        keyframeTitle.setText("识别依据");
-        keyframeTitle.setTextColor(Color.rgb(70, 82, 73));
-        keyframeTitle.setTextSize(14);
-        keyframeTitle.setTypeface(Typeface.DEFAULT, Typeface.BOLD);
-        keyframeTitle.setGravity(Gravity.CENTER_VERTICAL);
-        keyframeTitle.setPadding(0, dp(5), 0, 0);
+        LinearLayout evidenceHeading = new LinearLayout(this);
+        evidenceHeading.setGravity(Gravity.CENTER_VERTICAL);
+        evidenceHeading.setPadding(0, dp(14), 0, dp(6));
+        keyframeTitle = sectionTitle("识别依据");
+        evidenceHeading.addView(keyframeTitle, weightWrap(1));
+        evidenceQualityLabel = new TextView(this);
+        evidenceQualityLabel.setText("等待清晰画面");
+        evidenceQualityLabel.setTextColor(Color.rgb(23, 132, 93));
+        evidenceQualityLabel.setTextSize(12);
+        evidenceQualityLabel.setPadding(dp(8), dp(4), dp(8), dp(4));
+        evidenceQualityLabel.setBackground(rounded(Color.rgb(232, 247, 240), dp(8), 0));
+        evidenceHeading.addView(evidenceQualityLabel, wrapWrap());
+        content.addView(evidenceHeading, matchWrap());
 
         keyframeScroll = new HorizontalScrollView(this);
         keyframeScroll.setHorizontalScrollBarEnabled(false);
         keyframeScroll.setFillViewport(false);
-        keyframeTitle.setVisibility(View.GONE);
-        keyframeScroll.setVisibility(View.GONE);
         keyframeContainer = new LinearLayout(this);
         keyframeContainer.setOrientation(LinearLayout.HORIZONTAL);
         keyframeScroll.addView(keyframeContainer, new HorizontalScrollView.LayoutParams(
                 ViewGroup.LayoutParams.WRAP_CONTENT,
                 ViewGroup.LayoutParams.MATCH_PARENT
         ));
+        content.addView(keyframeScroll, fixedHeight(96));
 
-        barcodeValue = compactResultText();
-        bottomPanel.addView(barcodeValue, matchWrap());
+        LinearLayout fieldHeading = new LinearLayout(this);
+        fieldHeading.setGravity(Gravity.CENTER_VERTICAL);
+        fieldHeading.setPadding(0, dp(18), 0, dp(6));
+        fieldHeading.addView(sectionTitle("商品与批次"), weightWrap(1));
+        confirmationFieldCount = new TextView(this);
+        confirmationFieldCount.setText("0 / 3");
+        confirmationFieldCount.setTextColor(Color.rgb(100, 116, 139));
+        confirmationFieldCount.setTextSize(13);
+        fieldHeading.addView(confirmationFieldCount, wrapWrap());
+        content.addView(fieldHeading, matchWrap());
 
-        productionDateValue = compactResultText();
-        bottomPanel.addView(productionDateValue, matchWrap());
-        bottomPanel.addView(keyframeTitle, fixedHeight(30));
-        bottomPanel.addView(keyframeScroll, fixedHeight(94));
-
-        rawPreviewText = new TextView(this);
-        rawPreviewText.setTextColor(Color.rgb(86, 99, 88));
-        rawPreviewText.setTextSize(14);
-        rawPreviewText.setMaxLines(2);
-        rawPreviewText.setPadding(0, dp(3), 0, dp(5));
-
-        LinearLayout actionRow = new LinearLayout(this);
-        actionRow.setGravity(Gravity.CENTER_VERTICAL);
-        actionRow.setPadding(dp(14), dp(6), dp(14), dp(12));
-
-        cameraSourceButton = sourceButton("相机");
-        cameraSourceButton.setOnClickListener(new View.OnClickListener() {
+        confirmationDateValue = reviewValue("尚未找到清楚日期");
+        confirmationDateNote = reviewNote("继续对准喷码、拓印或激光日期");
+        View dateRow = buildReviewRow(
+                R.drawable.ic_v2_calendar,
+                "生产日期 / 保质期 / 有效期",
+                confirmationDateValue,
+                confirmationDateNote,
+                true
+        );
+        dateRow.setContentDescription("核对日期或返回补扫日期");
+        dateRow.setOnClickListener(new View.OnClickListener() {
             @Override
             public void onClick(View view) {
-                ensureCameraPermission(true);
+                showScannerScreen();
+                dateOnlyMode = true;
+                updateModeButtons();
+                updateResultUi(latestSnapshot);
+                requestDateFocus();
             }
         });
-        actionRow.addView(cameraSourceButton, withMargins(weightWrap(1), 0, 0, dp(6), 0));
+        content.addView(dateRow, matchWrap());
+        content.addView(horizontalDivider(), fixedHeight(1));
 
-        videoSourceButton = sourceButton("视频");
-        videoSourceButton.setOnClickListener(new View.OnClickListener() {
+        confirmationProductValue = reviewValue("尚未识别商品名称");
+        confirmationProductNote = reviewNote("对准包装正面的较大中文名称");
+        View productRow = buildReviewRow(
+                R.drawable.ic_v2_type,
+                "商品名称",
+                confirmationProductValue,
+                confirmationProductNote,
+                false
+        );
+        productRow.setContentDescription("核对商品名称");
+        productRow.setOnClickListener(new View.OnClickListener() {
             @Override
             public void onClick(View view) {
-                startVideoReplayPicker();
+                showProductReview();
             }
         });
-        videoSourceButton.setVisibility(View.GONE);
+        content.addView(productRow, matchWrap());
+        content.addView(horizontalDivider(), fixedHeight(1));
 
-        imageSourceButton = sourceButton("图片");
-        imageSourceButton.setOnClickListener(new View.OnClickListener() {
+        confirmationBarcodeValue = reviewValue("尚未识别商品码");
+        confirmationBarcodeNote = reviewNote("条码不是保存主键，可关联多个商品档案");
+        View barcodeRow = buildReviewRow(
+                R.drawable.ic_v2_barcode,
+                "条码",
+                confirmationBarcodeValue,
+                confirmationBarcodeNote,
+                false
+        );
+        barcodeRow.setContentDescription("查看条码识别依据");
+        barcodeRow.setOnClickListener(new View.OnClickListener() {
             @Override
             public void onClick(View view) {
-                startImagePicker();
+                showEvidenceForField(RecognitionEvidence.FIELD_BARCODE);
             }
         });
-        imageSourceButton.setVisibility(View.GONE);
+        content.addView(barcodeRow, matchWrap());
 
-        restartRecognitionButton = sourceButton("继续识别");
-        restartRecognitionButton.setVisibility(View.GONE);
-        restartRecognitionButton.setOnClickListener(new View.OnClickListener() {
+        productValue = confirmationProductValue;
+        barcodeValue = confirmationBarcodeValue;
+        productionDateValue = confirmationDateValue;
+
+        screen.addView(horizontalDivider(), fixedHeight(1));
+        LinearLayout footer = new LinearLayout(this);
+        footer.setOrientation(LinearLayout.HORIZONTAL);
+        footer.setGravity(Gravity.CENTER_VERTICAL);
+        footer.setPadding(dp(12), dp(10), dp(12), dp(10));
+        footer.setBackgroundColor(Color.WHITE);
+
+        continueScanButton = outlinedActionButton("继续扫描");
+        continueScanButton.setOnClickListener(new View.OnClickListener() {
             @Override
             public void onClick(View view) {
+                showScannerScreen();
                 showRecognitionSourceDialog();
             }
         });
-        actionRow.addView(restartRecognitionButton, withMargins(weightWrap(1), 0, 0, dp(6), 0));
+        footer.addView(continueScanButton, withMargins(weightMatch(1), 0, 0, dp(8), 0));
 
-        fillButton = overlayButton("核对并填入", Color.rgb(38, 104, 76));
+        fillButton = primaryActionButton("使用这些结果");
         fillButton.setEnabled(false);
         fillButton.setAlpha(0.45f);
         fillButton.setOnClickListener(new View.OnClickListener() {
@@ -616,12 +858,211 @@ public final class DateOcrScanActivity extends ComponentActivity {
                 finishWithCandidate();
             }
         });
-        actionRow.addView(fillButton, weightWrap(2));
-        bottomShell.addView(actionRow, fixedHeight(68));
+        footer.addView(fillButton, weightMatch(2));
+        screen.addView(footer, fixedHeight(72));
 
-        setContentView(root);
+        return screen;
     }
 
+    private ScanFieldView buildScanField(int iconResource, String labelText) {
+        LinearLayout root = new LinearLayout(this);
+        root.setOrientation(LinearLayout.VERTICAL);
+        root.setGravity(Gravity.CENTER);
+        root.setPadding(dp(2), dp(3), dp(2), dp(3));
+
+        ImageView icon = new ImageView(this);
+        icon.setImageResource(iconResource);
+        icon.setColorFilter(Color.rgb(100, 116, 139));
+        icon.setContentDescription(labelText);
+        root.addView(icon, fixedLinear(24, 24));
+
+        TextView label = new TextView(this);
+        label.setText(labelText);
+        label.setTextColor(Color.rgb(71, 85, 105));
+        label.setTextSize(12);
+        label.setGravity(Gravity.CENTER);
+        root.addView(label, matchWrap());
+
+        TextView state = new TextView(this);
+        state.setText("查找中");
+        state.setTextColor(Color.rgb(100, 116, 139));
+        state.setTextSize(12);
+        state.setTypeface(Typeface.DEFAULT, Typeface.BOLD);
+        state.setGravity(Gravity.CENTER);
+        state.setMaxLines(1);
+        root.addView(state, matchWrap());
+        return new ScanFieldView(root, icon, state);
+    }
+
+    private View buildReviewRow(
+            int iconResource,
+            String labelText,
+            TextView value,
+            TextView note,
+            boolean cameraAction
+    ) {
+        LinearLayout row = new LinearLayout(this);
+        row.setOrientation(LinearLayout.HORIZONTAL);
+        row.setGravity(Gravity.CENTER_VERTICAL);
+        row.setMinimumHeight(dp(82));
+        row.setPadding(dp(4), dp(9), dp(4), dp(9));
+        row.setBackgroundColor(Color.WHITE);
+        row.setClickable(true);
+        row.setFocusable(true);
+
+        FrameLayout iconShell = new FrameLayout(this);
+        iconShell.setBackground(rounded(
+                cameraAction ? Color.rgb(255, 246, 224) : Color.rgb(232, 247, 240),
+                dp(8),
+                0
+        ));
+        ImageView icon = new ImageView(this);
+        icon.setImageResource(iconResource);
+        icon.setColorFilter(cameraAction
+                ? Color.rgb(180, 120, 18)
+                : Color.rgb(23, 132, 93));
+        icon.setPadding(dp(10), dp(10), dp(10), dp(10));
+        iconShell.addView(icon, new FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.MATCH_PARENT
+        ));
+        row.addView(iconShell, fixedLinear(44, 44));
+
+        LinearLayout copy = new LinearLayout(this);
+        copy.setOrientation(LinearLayout.VERTICAL);
+        copy.setPadding(dp(10), 0, dp(8), 0);
+        TextView label = new TextView(this);
+        label.setText(labelText);
+        label.setTextColor(Color.rgb(100, 116, 139));
+        label.setTextSize(12);
+        copy.addView(label, matchWrap());
+        copy.addView(value, matchWrap());
+        copy.addView(note, matchWrap());
+        row.addView(copy, weightWrap(1));
+
+        ImageView action = new ImageView(this);
+        action.setImageResource(cameraAction ? R.drawable.ic_v2_camera : R.drawable.ic_v2_more);
+        action.setColorFilter(cameraAction
+                ? Color.rgb(47, 102, 237)
+                : Color.rgb(100, 116, 139));
+        action.setPadding(dp(12), dp(12), dp(12), dp(12));
+        row.addView(action, fixedLinear(48, 48));
+        return row;
+    }
+
+    private TextView reviewValue(String text) {
+        TextView value = new TextView(this);
+        value.setText(text);
+        value.setTextColor(Color.rgb(23, 33, 43));
+        value.setTextSize(16);
+        value.setTypeface(Typeface.DEFAULT, Typeface.BOLD);
+        value.setMaxLines(2);
+        value.setEllipsize(android.text.TextUtils.TruncateAt.END);
+        return value;
+    }
+
+    private TextView reviewNote(String text) {
+        TextView note = new TextView(this);
+        note.setText(text);
+        note.setTextColor(Color.rgb(100, 116, 139));
+        note.setTextSize(12);
+        note.setMaxLines(2);
+        note.setEllipsize(android.text.TextUtils.TruncateAt.END);
+        return note;
+    }
+
+    private TextView sectionTitle(String text) {
+        TextView title = new TextView(this);
+        title.setText(text);
+        title.setTextColor(Color.rgb(23, 33, 43));
+        title.setTextSize(16);
+        title.setTypeface(Typeface.DEFAULT, Typeface.BOLD);
+        return title;
+    }
+
+    private Button segmentButton(String text) {
+        Button button = new Button(this);
+        button.setText(text);
+        button.setTextSize(14);
+        button.setAllCaps(false);
+        button.setMinWidth(0);
+        button.setMinHeight(0);
+        button.setPadding(dp(4), 0, dp(4), 0);
+        return button;
+    }
+
+    private Button primaryActionButton(String text) {
+        Button button = new Button(this);
+        button.setText(text);
+        button.setTextColor(Color.WHITE);
+        button.setTextSize(15);
+        button.setTypeface(Typeface.DEFAULT, Typeface.BOLD);
+        button.setAllCaps(false);
+        button.setMinWidth(0);
+        button.setMinHeight(dp(48));
+        button.setPadding(dp(8), 0, dp(8), 0);
+        button.setBackground(rounded(Color.rgb(47, 102, 237), dp(8), 0));
+        return button;
+    }
+
+    private Button outlinedActionButton(String text) {
+        Button button = new Button(this);
+        button.setText(text);
+        button.setTextColor(Color.rgb(47, 102, 237));
+        button.setTextSize(14);
+        button.setTypeface(Typeface.DEFAULT, Typeface.BOLD);
+        button.setAllCaps(false);
+        button.setMinWidth(0);
+        button.setMinHeight(dp(48));
+        button.setPadding(dp(8), 0, dp(8), 0);
+        button.setBackground(rounded(Color.WHITE, dp(8), Color.rgb(180, 199, 246)));
+        return button;
+    }
+
+    private ImageButton iconButton(
+            int drawableResource,
+            int tintColor,
+            int backgroundColor,
+            String description
+    ) {
+        ImageButton button = new ImageButton(this);
+        button.setImageResource(drawableResource);
+        button.setColorFilter(tintColor);
+        button.setScaleType(ImageView.ScaleType.CENTER);
+        button.setPadding(dp(12), dp(12), dp(12), dp(12));
+        button.setBackground(rounded(backgroundColor, dp(8), 0));
+        button.setContentDescription(description);
+        button.setMinimumWidth(dp(48));
+        button.setMinimumHeight(dp(48));
+        return button;
+    }
+
+    private View horizontalDivider() {
+        View divider = new View(this);
+        divider.setBackgroundColor(Color.rgb(221, 227, 234));
+        return divider;
+    }
+
+    private View verticalDivider() {
+        View divider = new View(this);
+        divider.setBackgroundColor(Color.rgb(225, 230, 236));
+        return divider;
+    }
+
+    private LinearLayout.LayoutParams fixedLinear(int widthDp, int heightDp) {
+        return new LinearLayout.LayoutParams(dp(widthDp), dp(heightDp));
+    }
+
+    private LinearLayout.LayoutParams weightMatch(float weight) {
+        return new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.MATCH_PARENT, weight);
+    }
+
+    private LinearLayout.LayoutParams wrapWrap() {
+        return new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT
+        );
+    }
     private TextView compactResultText() {
         TextView value = new TextView(this);
         value.setTextColor(Color.rgb(70, 82, 73));
@@ -631,6 +1072,418 @@ public final class DateOcrScanActivity extends ComponentActivity {
         return value;
     }
 
+    private ScanUiPresentation.State currentUiPresentation() {
+        UnifiedRecognitionStabilizer.Snapshot snapshot = latestSnapshot == null
+                ? stabilizer.snapshot()
+                : latestSnapshot;
+        boolean stableProduct = selectedPackagingName.length() > 0
+                || (snapshot != null && snapshot.hasStablePackagingName())
+                || (snapshot != null
+                && latestProductBarcode.equals(snapshot.stableBarcode)
+                && latestProductInfo != null
+                && latestProductInfo.found);
+        boolean sawText = latestRawText.length() > 0
+                || (snapshot != null && !snapshot.rankedPackagingCandidates.isEmpty());
+        boolean sawDateCandidate = snapshot != null && snapshot.latestDateVote != null;
+        boolean conflict = snapshot != null
+                && ((snapshot.latestDateVote != null && snapshot.latestDateVote.hasConflict)
+                || (snapshot.stableDateVote != null && snapshot.stableDateVote.hasConflict));
+        return ScanUiPresentation.from(
+                dateOnlyMode,
+                snapshot != null && snapshot.hasStableBarcode(),
+                stableProduct,
+                snapshot != null && snapshot.hasStableDateCandidate(),
+                sawText,
+                sawDateCandidate,
+                conflict
+        );
+    }
+
+    private String recommendedProductName(UnifiedRecognitionStabilizer.Snapshot snapshot) {
+        if (selectedPackagingName.length() > 0) {
+            return selectedPackagingName;
+        }
+        String packagingName = snapshot == null
+                ? ""
+                : FoodItem.cleanText(snapshot.bestPackagingNameForConfirmation());
+        BarcodeProductInfo info = snapshot != null
+                && latestProductBarcode.equals(snapshot.stableBarcode)
+                ? latestProductInfo
+                : null;
+        String name = RecognitionTextCleaner.preferredRecognizedProductName(
+                packagingName,
+                info != null && info.found ? info.displayName() : ""
+        );
+        if (name.length() > 0) {
+            return name;
+        }
+        if (snapshot != null && snapshot.hasStablePackagingName()) {
+            return FoodItem.cleanText(snapshot.stablePackagingName);
+        }
+        return "";
+    }
+
+    private void updatePresentationUi(UnifiedRecognitionStabilizer.Snapshot snapshot) {
+        if (snapshot == null) {
+            snapshot = stabilizer.snapshot();
+        }
+        ScanUiPresentation.State state = currentUiPresentation();
+        updateScanField(barcodeProgressView, state.barcode);
+        updateScanField(productProgressView, state.productName);
+        updateScanField(dateProgressView, state.date);
+
+        if (reviewResultButton != null) {
+            reviewResultButton.setText(state.reviewAction);
+            reviewResultButton.setEnabled(state.hasReviewableResult);
+            reviewResultButton.setAlpha(state.hasReviewableResult ? 1f : 0.46f);
+        }
+        if (prioritizeDateButton != null) {
+            String primaryAction = compactScannerLayout && state.hasReviewableResult
+                    ? state.reviewAction
+                    : state.primaryScanAction;
+            prioritizeDateButton.setText(barcodeLookupOnly
+                    ? "对准条码继续识别"
+                    : primaryAction);
+        }
+        if (confirmationSubtitle != null) {
+            confirmationSubtitle.setText(state.confirmationSubtitle);
+        }
+        if (confirmationFieldCount != null) {
+            confirmationFieldCount.setText(state.recognizedCount + " / 3");
+        }
+
+        String productName = recommendedProductName(snapshot);
+        if (confirmationProductValue != null) {
+            confirmationProductValue.setText(productName.length() > 0
+                    ? productName
+                    : state.productName == ScanUiPresentation.FieldState.LOCATED
+                    ? "已看到文字，尚未形成可靠名称"
+                    : "尚未识别商品名称");
+        }
+        if (confirmationProductNote != null) {
+            confirmationProductNote.setText(state.productName == ScanUiPresentation.FieldState.READY
+                    ? "系统只推荐一个结果，请结合包装核对"
+                    : "对准包装正面的较大中文名称");
+        }
+
+        if (confirmationBarcodeValue != null) {
+            confirmationBarcodeValue.setText(snapshot.hasStableBarcode()
+                    ? snapshot.stableBarcode
+                    : "尚未识别商品码");
+        }
+        if (confirmationBarcodeNote != null) {
+            confirmationBarcodeNote.setText(snapshot.hasStableBarcode()
+                    ? "跨帧稳定；条码可关联多个商品档案"
+                    : "条码不是保存主键，可稍后补充");
+        }
+
+        FoodItem dateDraft = DateOcrResultPayload.toDraft(snapshot.stableDateVote);
+        if (confirmationDateValue != null) {
+            confirmationDateValue.setText(snapshot.hasStableDateCandidate()
+                    ? compactDateSummary(dateDraft)
+                    : state.date == ScanUiPresentation.FieldState.ATTENTION
+                    ? "出现多个日期，请继续扫描后核对"
+                    : state.date == ScanUiPresentation.FieldState.LOCATED
+                    ? "已看到日期样文字，尚未稳定"
+                    : "尚未找到清楚日期");
+        }
+        if (confirmationDateNote != null) {
+            confirmationDateNote.setText(state.date == ScanUiPresentation.FieldState.ATTENTION
+                    ? "日期证据有冲突，不会静默预选"
+                    : snapshot.hasStableDateCandidate()
+                    ? "来自关键帧和跨帧推理，请确认字段含义"
+                    : "继续对准喷码、拓印或激光日期");
+        }
+
+        if (evidenceQualityLabel != null) {
+            int keyframeCount = keyframeSnapshot().size();
+            evidenceQualityLabel.setText(keyframeCount > 0
+                    ? "已保留 " + Math.min(3, keyframeCount) + " 帧"
+                    : "等待清晰画面");
+        }
+        updateKnownProductBanner(snapshot);
+
+        boolean fillable = dateOnlyMode
+                ? snapshot.hasStableDateCandidate()
+                : snapshot.hasFillableCandidate() || selectedPackagingName.length() > 0;
+        if (fillButton != null) {
+            fillButton.setText(dateOnlyMode ? "使用本批次日期" : "使用这些结果");
+            fillButton.setEnabled(fillable);
+            fillButton.setAlpha(fillable ? 1f : 0.45f);
+        }
+        updateModeButtons();
+    }
+
+    private void updateScanField(ScanFieldView field, ScanUiPresentation.FieldState state) {
+        if (field == null) {
+            return;
+        }
+        int foreground;
+        int background;
+        if (state == ScanUiPresentation.FieldState.READY) {
+            foreground = Color.rgb(23, 132, 93);
+            background = Color.rgb(232, 247, 240);
+        } else if (state == ScanUiPresentation.FieldState.ATTENTION) {
+            foreground = Color.rgb(180, 120, 18);
+            background = Color.rgb(255, 246, 224);
+        } else if (state == ScanUiPresentation.FieldState.LOCATED) {
+            foreground = Color.rgb(47, 102, 237);
+            background = Color.rgb(235, 241, 255);
+        } else {
+            foreground = Color.rgb(100, 116, 139);
+            background = Color.TRANSPARENT;
+        }
+        field.icon.setColorFilter(foreground);
+        field.status.setText(ScanUiPresentation.fieldStatus(state));
+        field.status.setTextColor(foreground);
+        field.root.setBackground(background == Color.TRANSPARENT
+                ? null
+                : rounded(background, dp(6), 0));
+    }
+
+    private void updateModeButtons() {
+        if (automaticModeButton == null || dateModeButton == null) {
+            return;
+        }
+        if (barcodeLookupOnly) {
+            automaticModeButton.setText("扫码查找商品");
+            automaticModeButton.setVisibility(View.VISIBLE);
+            dateModeButton.setVisibility(View.GONE);
+            automaticModeButton.setTextColor(Color.rgb(23, 33, 43));
+            automaticModeButton.setTypeface(Typeface.DEFAULT, Typeface.BOLD);
+            automaticModeButton.setBackground(rounded(Color.WHITE, dp(7), 0));
+            if (productProgressView != null) {
+                productProgressView.root.setVisibility(View.GONE);
+            }
+            if (dateProgressView != null) {
+                dateProgressView.root.setVisibility(View.GONE);
+            }
+            if (reviewResultButton != null) {
+                reviewResultButton.setVisibility(View.GONE);
+            }
+            return;
+        }
+        automaticModeButton.setText("自动");
+        dateModeButton.setVisibility(View.VISIBLE);
+        if (productProgressView != null) {
+            productProgressView.root.setVisibility(View.VISIBLE);
+        }
+        if (dateProgressView != null) {
+            dateProgressView.root.setVisibility(View.VISIBLE);
+        }
+        if (reviewResultButton != null) {
+            reviewResultButton.setVisibility(compactScannerLayout ? View.GONE : View.VISIBLE);
+        }
+        styleModeButton(automaticModeButton, !dateOnlyMode);
+        styleModeButton(dateModeButton, dateOnlyMode);
+    }
+
+    private void styleModeButton(Button button, boolean selected) {
+        button.setTextColor(selected ? Color.rgb(23, 33, 43) : Color.rgb(100, 116, 139));
+        button.setTypeface(Typeface.DEFAULT, selected ? Typeface.BOLD : Typeface.NORMAL);
+        button.setBackground(selected
+                ? rounded(Color.WHITE, dp(7), 0)
+                : rounded(Color.TRANSPARENT, dp(7), 0));
+    }
+
+    private void showConfirmationScreen() {
+        ScanUiPresentation.State state = currentUiPresentation();
+        if (!state.hasReviewableResult) {
+            Toast.makeText(this, "还没有可核对的字段", Toast.LENGTH_SHORT).show();
+            return;
+        }
+        liveCameraResultFrozen = true;
+        if (cameraBound || videoReplayActive) {
+            recognitionGeneration++;
+        }
+        if (cameraBound) {
+            stopCamera();
+        }
+        if (videoReplayActive) {
+            stopVideoReplay();
+        }
+        confirmationVisible = true;
+        if (scannerScreen != null) {
+            scannerScreen.setVisibility(View.GONE);
+        }
+        if (confirmationScreen != null) {
+            confirmationScreen.setVisibility(View.VISIBLE);
+        }
+        setLightSystemBars(true);
+        renderKeyframes();
+        updatePresentationUi(latestSnapshot);
+    }
+
+    private void showScannerScreen() {
+        confirmationVisible = false;
+        if (confirmationScreen != null) {
+            confirmationScreen.setVisibility(View.GONE);
+        }
+        if (scannerScreen != null) {
+            scannerScreen.setVisibility(View.VISIBLE);
+        }
+        setLightSystemBars(false);
+        List<SessionKeyframe> keyframes = keyframeSnapshot();
+        if (!cameraBound && !videoReplayActive && !keyframes.isEmpty()) {
+            showEvidenceFrame(keyframes.get(0), false);
+        }
+        updatePresentationUi(latestSnapshot);
+    }
+
+    private void setLightSystemBars(boolean light) {
+        Window window = getWindow();
+        window.setStatusBarColor(light ? Color.WHITE : Color.rgb(15, 23, 29));
+        window.setNavigationBarColor(light ? Color.WHITE : Color.rgb(15, 23, 29));
+        int flags = window.getDecorView().getSystemUiVisibility();
+        if (light) {
+            flags |= View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR;
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                flags |= View.SYSTEM_UI_FLAG_LIGHT_NAVIGATION_BAR;
+            }
+        } else {
+            flags &= ~View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR;
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                flags &= ~View.SYSTEM_UI_FLAG_LIGHT_NAVIGATION_BAR;
+            }
+        }
+        window.getDecorView().setSystemUiVisibility(flags);
+    }
+
+    private void requestDateFocus() {
+        statusBadge.setText("日期特写");
+        statusText.setText("让喷码、拓印或激光日期尽量占满框");
+        if (camera != null && previewView != null
+                && previewView.getWidth() > 0 && previewView.getHeight() > 0) {
+            startFocusAndMetering(
+                    camera,
+                    previewView.getWidth() / 2f,
+                    previewView.getHeight() * 0.48f,
+                    true
+            );
+        }
+    }
+
+    private void toggleTorch() {
+        if (camera == null || !camera.getCameraInfo().hasFlashUnit()) {
+            Toast.makeText(this, "当前相机不支持手电筒", Toast.LENGTH_SHORT).show();
+            return;
+        }
+        torchEnabled = !torchEnabled;
+        camera.getCameraControl().enableTorch(torchEnabled);
+        torchButton.setContentDescription(torchEnabled ? "关闭手电筒" : "打开手电筒");
+        torchButton.setBackground(rounded(
+                torchEnabled ? Color.rgb(47, 102, 237) : Color.argb(56, 255, 255, 255),
+                dp(8),
+                0
+        ));
+    }
+
+    private void showScanHelp() {
+        new AlertDialog.Builder(this)
+                .setTitle("怎样更快识别")
+                .setMessage("先对准商品正面；找到名称或条码后，再切到日期特写。"
+                        + "\n\n日期发糊时轻点文字并稍后退；反光时倾斜手机，不要让灯光正对包装。"
+                        + "\n\n识别结果只会进入核对页，不会自动保存。")
+                .setPositiveButton("知道了", null)
+                .show();
+    }
+
+    private void showConfirmationMenu() {
+        final String[] actions = isDebuggable()
+                ? new String[] {"查看全部文字", "识别诊断（测试版）"}
+                : new String[] {"查看全部文字"};
+        new AlertDialog.Builder(this)
+                .setTitle("更多识别信息")
+                .setItems(actions, new DialogInterface.OnClickListener() {
+                    @Override
+                    public void onClick(DialogInterface dialog, int which) {
+                        if (which == 0) {
+                            showRawTextDialog();
+                        } else {
+                            showDiagnosticsDialog();
+                        }
+                    }
+                })
+                .setNegativeButton("取消", null)
+                .show();
+    }
+
+    private void showProductReview() {
+        UnifiedRecognitionStabilizer.Snapshot snapshot = latestSnapshot;
+        if (snapshot != null && snapshot.rankedPackagingCandidates.size() > 1) {
+            showProductAlternatives(snapshot.rankedPackagingCandidates);
+            return;
+        }
+        if (showEvidenceForField(RecognitionEvidence.FIELD_PRODUCT_NAME)) {
+            return;
+        }
+        Toast.makeText(this, "暂无商品名称识别依据", Toast.LENGTH_SHORT).show();
+    }
+
+    private boolean showEvidenceForField(String field) {
+        SessionKeyframe best = null;
+        double bestConfidence = -1d;
+        for (SessionKeyframe keyframe : keyframeSnapshot()) {
+            for (RecognitionEvidence.Region region : keyframe.evidence.regions) {
+                if (field.equals(region.field) && region.confidence > bestConfidence) {
+                    best = keyframe;
+                    bestConfidence = region.confidence;
+                }
+            }
+        }
+        if (best == null) {
+            return false;
+        }
+        showEvidenceFrame(best);
+        return true;
+    }
+
+    private void updateKnownProductBanner(UnifiedRecognitionStabilizer.Snapshot snapshot) {
+        if (knownProductBanner == null) {
+            return;
+        }
+        String barcode = snapshot == null || !snapshot.hasStableBarcode()
+                ? ""
+                : FoodItem.cleanText(snapshot.stableBarcode);
+        if (barcode.length() == 0) {
+            knownProductBanner.setVisibility(View.GONE);
+            return;
+        }
+        if (!barcode.equals(cachedLocalMatchBarcode)) {
+            cachedLocalMatchBarcode = barcode;
+            cachedLocalMatchCount = new FoodStore(this)
+                    .loadProductProfileIndex()
+                    .findByBarcode(barcode)
+                    .size();
+        }
+        if (cachedLocalMatchCount <= 0) {
+            knownProductBanner.setVisibility(View.GONE);
+            return;
+        }
+        knownProductBanner.setText(cachedLocalMatchCount == 1
+                ? "已找到 1 个本地商品档案 · 下一步可作为新批次补货"
+                : "已找到 " + cachedLocalMatchCount + " 个本地商品档案 · 下一步选择补货对象");
+        knownProductBanner.setVisibility(View.VISIBLE);
+    }
+    private void requestExitRecognition() {
+        if (!currentUiPresentation().hasReviewableResult) {
+            setResult(RESULT_CANCELED);
+            finish();
+            return;
+        }
+        new AlertDialog.Builder(this)
+                .setTitle("退出识别？")
+                .setMessage("当前已识别字段还没有填入录入表单。")
+                .setNegativeButton("继续识别", null)
+                .setPositiveButton("退出", new DialogInterface.OnClickListener() {
+                    @Override
+                    public void onClick(DialogInterface dialog, int which) {
+                        setResult(RESULT_CANCELED);
+                        finish();
+                    }
+                })
+                .show();
+    }
     private void showRecognitionSourceDialog() {
         new AlertDialog.Builder(this)
                 .setTitle("继续识别")
@@ -669,21 +1522,23 @@ public final class DateOcrScanActivity extends ComponentActivity {
     }
 
     private void setRecognitionComplete(boolean complete) {
-        if (cameraSourceButton == null || videoSourceButton == null
-                || imageSourceButton == null || restartRecognitionButton == null) {
-            return;
+        updatePresentationUi(latestSnapshot);
+        if (complete && !barcodeLookupOnly && currentUiPresentation().hasReviewableResult) {
+            showConfirmationScreen();
         }
-        int sourceVisibility = complete ? View.GONE : View.VISIBLE;
-        cameraSourceButton.setVisibility(sourceVisibility);
-        videoSourceButton.setVisibility(View.GONE);
-        imageSourceButton.setVisibility(View.GONE);
-        restartRecognitionButton.setVisibility(complete ? View.VISIBLE : View.GONE);
     }
-
     private void showInputChoiceState() {
         stopCamera();
         stopVideoReplay();
         resetRecognitionState();
+        confirmationVisible = false;
+        if (confirmationScreen != null) {
+            confirmationScreen.setVisibility(View.GONE);
+        }
+        if (scannerScreen != null) {
+            scannerScreen.setVisibility(View.VISIBLE);
+        }
+        setLightSystemBars(false);
         if (previewView != null) {
             previewView.setVisibility(View.VISIBLE);
         }
@@ -732,6 +1587,9 @@ public final class DateOcrScanActivity extends ComponentActivity {
     }
 
     private void showCameraSurface() {
+        if (torchButton != null) {
+            torchButton.setVisibility(View.GONE);
+        }
         if (previewView != null) {
             previewView.setVisibility(View.VISIBLE);
         }
@@ -885,6 +1743,9 @@ public final class DateOcrScanActivity extends ComponentActivity {
         stopVideoReplay();
         resetRecognitionState();
         videoReplayActive = true;
+        if (torchButton != null) {
+            torchButton.setVisibility(View.GONE);
+        }
         if (previewView != null) {
             previewView.setVisibility(View.GONE);
         }
@@ -1178,14 +2039,9 @@ public final class DateOcrScanActivity extends ComponentActivity {
         runOnUiThread(new Runnable() {
             @Override
             public void run() {
-                statusBadge.setText("高帧扫描");
-                statusText.setText(
-                        "已扫描 " + Math.min(scannedFrames, candidateFrames)
-                                + "/" + candidateFrames
-                                + " 帧，精选 " + analyzedFrames
-                                + "/" + expectedAnalyzedFrames
-                                + " 帧识别中文包装和日期。"
-                );
+                boolean hasAnalyzedFrame = analyzedFrames > 0;
+                statusBadge.setText(ScanUiPresentation.replayHeadline(hasAnalyzedFrame));
+                statusText.setText(ScanUiPresentation.replayMessage(hasAnalyzedFrame));
             }
         });
     }
@@ -1229,6 +2085,9 @@ public final class DateOcrScanActivity extends ComponentActivity {
         stopCamera();
         stopVideoReplay();
         resetRecognitionState();
+        if (torchButton != null) {
+            torchButton.setVisibility(View.GONE);
+        }
         if (previewView != null) {
             previewView.setVisibility(View.GONE);
         }
@@ -4695,13 +5554,19 @@ public final class DateOcrScanActivity extends ComponentActivity {
                     }
                     bindCameraUseCases(cameraProvider);
                     cameraBound = true;
+                    if (torchButton != null) {
+                        torchButton.setVisibility(camera != null
+                                && camera.getCameraInfo().hasFlashUnit()
+                                ? View.VISIBLE
+                                : View.GONE);
+                    }
                     statusBadge.setText("相机");
                     setCameraFrameState("相机已连接，等待第一帧", false);
                     statusText.setText(barcodeLookupOnly
                             ? "请对准商品条码，连续两帧一致后会自动查找。"
                             : dateOnlyMode
                             ? "实时扫描已启动；取景框会显示对焦、清晰度和中文识别进度。"
-                            : "高帧扫描已启动，正在优先识别中文商品名、条码和包装日期。");
+                            : "相机已就绪，正在识别中文商品名、条码和包装日期。");
                 } catch (Exception error) {
                     showCameraUnavailable("相机启动失败，请检查相机权限或重新打开应用。");
                     Toast.makeText(DateOcrScanActivity.this, "相机启动失败", Toast.LENGTH_SHORT).show();
@@ -4935,21 +5800,16 @@ public final class DateOcrScanActivity extends ComponentActivity {
         if (cameraHud == null) {
             return;
         }
-        String focus = FoodItem.cleanText(cameraFocusState);
-        String frame = FoodItem.cleanText(cameraFrameState);
-        String text = (focus.length() == 0 ? "自动对焦" : focus)
-                + "\n"
-                + (frame.length() == 0 ? "等待相机画面" : frame);
-        if (isDebuggable()) {
-            text += "\n" + diagnostics.compactHud();
-        }
-        cameraHud.setText(text);
+        cameraHud.setText(ScanUiPresentation.cameraMessage(
+                cameraFocusState,
+                cameraFrameState
+        ));
         boolean previewVisible = previewView != null
                 && previewView.getVisibility() == View.VISIBLE
-                && !videoReplayActive;
+                && !videoReplayActive
+                && !confirmationVisible;
         cameraHud.setVisibility(previewVisible && !showingEvidenceFrame ? View.VISIBLE : View.GONE);
     }
-
     private void stopCamera() {
         cameraBound = false;
         if (previewView != null) {
@@ -4960,6 +5820,15 @@ public final class DateOcrScanActivity extends ComponentActivity {
             cameraProvider = null;
         }
         camera = null;
+        torchEnabled = false;
+        if (torchButton != null) {
+            torchButton.setContentDescription("打开手电筒");
+            torchButton.setBackground(rounded(
+                    Color.argb(56, 255, 255, 255),
+                    dp(8),
+                    0
+            ));
+        }
         clearPendingCameraFrame();
     }
 
@@ -5650,6 +6519,15 @@ public final class DateOcrScanActivity extends ComponentActivity {
                 ));
             }
         }
+        if (regions.isEmpty()) {
+            RecognitionEvidence.Region genericText = genericTextRegion(
+                    observations,
+                    frameQuality
+            );
+            if (genericText != null) {
+                regions.add(genericText);
+            }
+        }
         if (regions.isEmpty() || frameQuality < 0.30d) {
             return;
         }
@@ -5686,6 +6564,53 @@ public final class DateOcrScanActivity extends ComponentActivity {
         offerSessionKeyframe(new SessionKeyframe(evidenceFrame, retained, frameCandidate));
     }
 
+    private RecognitionEvidence.Region genericTextRegion(
+            List<PackagingTextAnalyzer.Observation> observations,
+            double frameQuality
+    ) {
+        if (observations == null || observations.isEmpty()) {
+            return null;
+        }
+        PackagingTextAnalyzer.Observation best = null;
+        String bestText = "";
+        double bestScore = Double.NEGATIVE_INFINITY;
+        for (PackagingTextAnalyzer.Observation observation : observations) {
+            String cleaned = RecognitionTextCleaner.cleanForPackagingOcr(observation.text);
+            if (cleaned.length() < 2) {
+                continue;
+            }
+            double area = Math.max(0d, observation.right - observation.left)
+                    * Math.max(0d, observation.bottom - observation.top);
+            double model = Double.isNaN(observation.modelConfidence)
+                    ? 0.5d
+                    : RecognitionEvidence.clamp01(observation.modelConfidence);
+            double score = (Math.min(0.12d, area) * 4d)
+                    + (model * 0.35d)
+                    + (Math.min(20, cleaned.length()) / 100d);
+            if (best == null || score > bestScore) {
+                best = observation;
+                bestText = cleaned;
+                bestScore = score;
+            }
+        }
+        if (best == null) {
+            return null;
+        }
+        return new RecognitionEvidence.Region(
+                RecognitionEvidence.FIELD_TEXT_REGION,
+                snippet(bestText, 40),
+                observationRect(best),
+                "文字定位",
+                best.modelConfidence,
+                RecognitionEvidence.fusedConfidence(
+                        best.modelConfidence,
+                        frameQuality,
+                        0.55d,
+                        1,
+                        1
+                )
+        );
+    }
     private RecognitionEvidence.NormalizedRect bestIncompleteDateTailRect(
             List<PackagingTextAnalyzer.Observation> observations
     ) {
@@ -6280,7 +7205,10 @@ public final class DateOcrScanActivity extends ComponentActivity {
         if (RecognitionEvidence.FIELD_EXPIRY_DATE.equals(strongest.field)) {
             return RecognitionFrameSelector.EVIDENCE_EXPIRY_DATE;
         }
-        return RecognitionFrameSelector.EVIDENCE_BARCODE;
+        if (RecognitionEvidence.FIELD_BARCODE.equals(strongest.field)) {
+            return RecognitionFrameSelector.EVIDENCE_BARCODE;
+        }
+        return RecognitionFrameSelector.EVIDENCE_NONE;
     }
 
     private int keyframeFieldOrder(String field) {
@@ -6293,20 +7221,18 @@ public final class DateOcrScanActivity extends ComponentActivity {
         if (RecognitionEvidence.FIELD_EXPIRY_DATE.equals(field)) {
             return 2;
         }
-        return 3;
+        if (RecognitionEvidence.FIELD_TEXT_REGION.equals(field)) {
+            return 3;
+        }
+        return 4;
     }
-
     private void renderKeyframesAsync() {
         runOnUiThread(new Runnable() {
             @Override
             public void run() {
                 renderKeyframes();
                 renderProductCandidates(latestSnapshot);
-                if (productionDateValue != null) {
-                    productionDateValue.setText(compactDateSummary(
-                            DateOcrResultPayload.toDraft(latestSnapshot.stableDateVote)
-                    ));
-                }
+                updatePresentationUi(latestSnapshot);
             }
         });
     }
@@ -6409,38 +7335,12 @@ public final class DateOcrScanActivity extends ComponentActivity {
         fillButton.setAlpha(fillable ? 1f : 0.45f);
 
         updateStatus(snapshot);
+        updatePresentationUi(snapshot);
         updateResultSheetHeight(snapshot);
     }
 
     private void updateResultSheetHeight(UnifiedRecognitionStabilizer.Snapshot snapshot) {
-        if (resultSheet == null) {
-            return;
-        }
-        int desiredDp = 260;
-        if (productCandidateScroll != null
-                && productCandidateScroll.getVisibility() == View.VISIBLE) {
-            desiredDp += 40;
-        }
-        if (keyframeScroll != null && keyframeScroll.getVisibility() == View.VISIBLE) {
-            desiredDp += 100;
-        }
-        if (snapshot != null && snapshot.hasStableDateCandidate()) {
-            desiredDp += 60;
-        }
-        if (snapshot != null
-                && snapshot.hasStablePackagingName()
-                && (keyframeScroll == null || keyframeScroll.getVisibility() != View.VISIBLE)) {
-            desiredDp += 20;
-        }
-        desiredDp = Math.max(260, Math.min(440, desiredDp));
-        float fontScale = Math.max(1f, getResources().getConfiguration().fontScale);
-        desiredDp += Math.round(Math.min(0.4f, fontScale - 1f) * 120f);
-        int maxHeight = Math.round(getResources().getDisplayMetrics().heightPixels * 0.72f);
-        ViewGroup.LayoutParams params = resultSheet.getLayoutParams();
-        if (params != null) {
-            params.height = Math.min(dp(desiredDp), maxHeight);
-            resultSheet.setLayoutParams(params);
-        }
+        // D1b keeps the camera sheet stable so recognition cannot resize the preview.
     }
 
     private void promoteCompletionTranscriptEvidence(
@@ -6779,6 +7679,33 @@ public final class DateOcrScanActivity extends ComponentActivity {
         return 0;
     }
 
+    private void renderEmptyEvidence() {
+        keyframeTitle.setVisibility(View.VISIBLE);
+        keyframeScroll.setVisibility(View.VISIBLE);
+        keyframeContainer.removeAllViews();
+        TextView empty = new TextView(this);
+        empty.setText("尚未保留清晰关键帧\n继续扫描后会在这里显示识别依据");
+        empty.setTextColor(Color.rgb(100, 116, 139));
+        empty.setTextSize(13);
+        empty.setGravity(Gravity.CENTER);
+        empty.setBackground(rounded(Color.rgb(240, 243, 247), dp(8), 0));
+        keyframeContainer.addView(empty, fixed(280, 88));
+        updateResultSheetHeight(latestSnapshot);
+    }
+
+    private int evidenceDialogHeight() {
+        int available = getResources().getDisplayMetrics().heightPixels;
+        return Math.min(dp(430), Math.max(dp(240), Math.round(available * 0.56f)));
+    }
+    private String evidenceQualityText(double confidence) {
+        if (confidence >= 0.78d) {
+            return "清楚";
+        }
+        if (confidence >= 0.62d) {
+            return "可用";
+        }
+        return "请核对";
+    }
     private void renderKeyframes() {
         if (keyframeContainer == null || keyframeTitle == null || keyframeScroll == null) {
             return;
@@ -6786,9 +7713,7 @@ public final class DateOcrScanActivity extends ComponentActivity {
         keyframeContainer.removeAllViews();
         List<SessionKeyframe> keyframes = keyframeSnapshot();
         if (keyframes.isEmpty()) {
-            keyframeTitle.setVisibility(View.GONE);
-            keyframeScroll.setVisibility(View.GONE);
-            updateResultSheetHeight(latestSnapshot);
+            renderEmptyEvidence();
             return;
         }
         List<SessionKeyframe> displayKeyframes = new ArrayList<SessionKeyframe>();
@@ -6813,9 +7738,7 @@ public final class DateOcrScanActivity extends ComponentActivity {
             }
         }
         if (displayKeyframes.isEmpty()) {
-            keyframeTitle.setVisibility(View.GONE);
-            keyframeScroll.setVisibility(View.GONE);
-            updateResultSheetHeight(latestSnapshot);
+            renderEmptyEvidence();
             return;
         }
         keyframeTitle.setVisibility(View.VISIBLE);
@@ -6838,7 +7761,7 @@ public final class DateOcrScanActivity extends ComponentActivity {
             RecognitionEvidence.Region primary = keyframe.primaryRegion();
             TextView label = new TextView(this);
             label.setText(fieldLabel(primary.field) + " · "
-                    + RecognitionEvidence.confidenceLabel(primary.confidence));
+                    + evidenceQualityText(primary.confidence));
             label.setTextColor(Color.WHITE);
             label.setTextSize(14);
             label.setGravity(Gravity.CENTER);
@@ -6894,9 +7817,9 @@ public final class DateOcrScanActivity extends ComponentActivity {
         content.setPadding(dp(8), dp(4), dp(8), 0);
 
         TextView summary = new TextView(this);
-        summary.setText(fieldLabel(primary.field) + " · "
-                + RecognitionEvidence.confidenceLabel(primary.confidence)
-                + "\n关闭后会回到刚才的识别结果，当前候选不会清空。");
+        summary.setText(fieldLabel(primary.field) + " · 画面"
+                + evidenceQualityText(primary.confidence)
+                + "\n关闭后会回到刚才的识别结果，当前字段不会清空。");
         summary.setTextColor(Color.rgb(54, 65, 58));
         summary.setTextSize(15);
         summary.setLineSpacing(0f, 1.08f);
@@ -6928,7 +7851,7 @@ public final class DateOcrScanActivity extends ComponentActivity {
         ));
         content.addView(evidenceFrame, new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
-                dp(430)
+                evidenceDialogHeight()
         ));
 
         evidenceDialog = new AlertDialog.Builder(this)
@@ -6963,8 +7886,8 @@ public final class DateOcrScanActivity extends ComponentActivity {
         if (updateStatusText) {
             RecognitionEvidence.Region primary = keyframe.primaryRegion();
             statusBadge.setText("证据帧");
-            statusText.setText(fieldLabel(primary.field) + " · 可信度 "
-                    + RecognitionEvidence.confidenceLabel(primary.confidence));
+            statusText.setText(fieldLabel(primary.field) + " · 画面 "
+                    + evidenceQualityText(primary.confidence));
         }
     }
 
@@ -6978,9 +7901,11 @@ public final class DateOcrScanActivity extends ComponentActivity {
         if (RecognitionEvidence.FIELD_EXPIRY_DATE.equals(field)) {
             return "有效期";
         }
-        return "条码";
+        if (RecognitionEvidence.FIELD_BARCODE.equals(field)) {
+            return "条码";
+        }
+        return "包装文字";
     }
-
     private String compactDateSummary(FoodItem draft) {
         List<String> values = new ArrayList<String>();
         if (draft.productionDate.length() > 0) {
@@ -7051,8 +7976,7 @@ public final class DateOcrScanActivity extends ComponentActivity {
     private void updateStatus(UnifiedRecognitionStabilizer.Snapshot snapshot) {
         if (videoReplayActive && videoExpectedFrames > 0 && videoAnalyzedFrames < videoExpectedFrames) {
             statusBadge.setText("分析中");
-            statusText.setText("已分析 " + videoAnalyzedFrames + "/" + videoExpectedFrames
-                    + " 帧，正在挑选清晰证据。");
+            statusText.setText("正在挑选清晰画面并合并识别字段。");
             return;
         }
         if (selectedPackagingName.length() > 0) {
@@ -7236,6 +8160,10 @@ public final class DateOcrScanActivity extends ComponentActivity {
         UnifiedRecognitionStabilizer.Snapshot snapshot = latestSnapshot == null
                 ? stabilizer.snapshot()
                 : latestSnapshot;
+        if (dateOnlyMode && !snapshot.hasStableDateCandidate()) {
+            Toast.makeText(this, "本批次日期还没有稳定结果", Toast.LENGTH_SHORT).show();
+            return;
+        }
         if (!snapshot.hasFillableCandidate() && selectedPackagingName.length() == 0) {
             Toast.makeText(this, "还没有可填入字段", Toast.LENGTH_SHORT).show();
             return;
@@ -7672,6 +8600,17 @@ public final class DateOcrScanActivity extends ComponentActivity {
         }
     }
 
+    private static final class ScanFieldView {
+        final LinearLayout root;
+        final ImageView icon;
+        final TextView status;
+
+        ScanFieldView(LinearLayout root, ImageView icon, TextView status) {
+            this.root = root;
+            this.icon = icon;
+            this.status = status;
+        }
+    }
     private final class RecognitionGuideOverlay extends View {
         static final int FOCUS_NONE = 0;
         static final int FOCUS_RUNNING = 1;
@@ -7921,6 +8860,9 @@ public final class DateOcrScanActivity extends ComponentActivity {
             }
             if (RecognitionEvidence.FIELD_EXPIRY_DATE.equals(field)) {
                 return Color.rgb(103, 183, 255);
+            }
+            if (RecognitionEvidence.FIELD_TEXT_REGION.equals(field)) {
+                return Color.rgb(99, 148, 255);
             }
             return Color.rgb(96, 221, 224);
         }

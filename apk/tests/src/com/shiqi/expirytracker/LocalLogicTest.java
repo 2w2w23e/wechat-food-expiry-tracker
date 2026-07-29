@@ -44,6 +44,75 @@ public final class LocalLogicTest {
                 assertEquals("设置", AppNavigation.label(AppNavigation.SETTINGS));
             }
         });
+        test("ScanUiPresentation separates located, stable, and ready fields", new TestCase() {
+            public void run() {
+                ScanUiPresentation.State empty = ScanUiPresentation.from(
+                        false, false, false, false, false, false, false
+                );
+                assertFalse(empty.ready, "empty automatic scan should not be ready");
+                assertEquals(2, empty.requiredCount);
+                assertEquals(ScanUiPresentation.FieldState.SEARCHING, empty.date);
+
+                ScanUiPresentation.State partial = ScanUiPresentation.from(
+                        false, true, false, false, true, true, false
+                );
+                assertFalse(partial.ready, "barcode without date should remain partial");
+                assertEquals(1, partial.recognizedCount);
+                assertTrue(partial.hasReviewableResult, "partial result must remain reviewable");
+                assertEquals(ScanUiPresentation.FieldState.LOCATED, partial.productName);
+                assertEquals("优先识别日期", partial.primaryScanAction);
+
+                ScanUiPresentation.State ready = ScanUiPresentation.from(
+                        false, false, true, true, true, true, false
+                );
+                assertTrue(ready.ready, "name plus date should enter confirmation");
+                assertEquals(2, ready.recognizedCount);
+
+                ScanUiPresentation.State dateOnly = ScanUiPresentation.from(
+                        true, false, false, true, false, true, false
+                );
+                assertTrue(dateOnly.ready, "date-only replenishment should require only a date");
+                assertEquals(1, dateOnly.requiredCount);
+
+                ScanUiPresentation.State conflict = ScanUiPresentation.from(
+                        false, true, false, false, true, true, true
+                );
+                assertEquals(ScanUiPresentation.FieldState.ATTENTION, conflict.date);
+                assertEquals("请核对", ScanUiPresentation.fieldStatus(conflict.date));
+            }
+        });
+        test("ScanUiPresentation keeps internal frame counts out of camera guidance", new TestCase() {
+            public void run() {
+                assertEquals(
+                        "包装反光，请稍微倾斜手机",
+                        ScanUiPresentation.cameraMessage(
+                                "连续自动对焦",
+                                "包装反光 · 已分析 18 帧"
+                        )
+                );
+                assertEquals(
+                        "已看到文字，正在读取",
+                        ScanUiPresentation.cameraMessage(
+                                "本次对焦已完成",
+                                "已读到中文文字 · 正在确认日期"
+                        )
+                );
+                String message = ScanUiPresentation.cameraMessage(
+                        "连续自动对焦",
+                        "画面清晰 · 中文识别 21 帧"
+                );
+                assertFalse(message.contains("21"), "frame count must not reach normal UI");
+                assertEquals("正在找文字", ScanUiPresentation.replayHeadline(false));
+                assertEquals(
+                        "已找到有用画面，正在核对中文商品名、条码和日期。",
+                        ScanUiPresentation.replayMessage(true)
+                );
+                assertFalse(
+                        ScanUiPresentation.replayMessage(true).contains("帧"),
+                        "replay internals must stay out of normal UI"
+                );
+            }
+        });
         test("DateRules validates strict yyyy-MM-dd dates", new TestCase() {
             public void run() {
                 assertTrue(DateRules.isValidDateString("2024-02-29"), "leap day should be valid");
