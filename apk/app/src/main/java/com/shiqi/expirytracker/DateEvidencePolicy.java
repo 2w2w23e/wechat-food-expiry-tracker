@@ -158,7 +158,7 @@ final class DateEvidencePolicy {
         );
     }
 
-    private static boolean isReliableCalculatedDate(DateOcrFrameVoter.VoteResult vote) {
+    static boolean isReliableCalculatedDate(DateOcrFrameVoter.VoteResult vote) {
         return vote != null
                 && !vote.hasConflict
                 && vote.productionDate != null

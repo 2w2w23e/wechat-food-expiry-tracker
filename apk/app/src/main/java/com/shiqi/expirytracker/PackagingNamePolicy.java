@@ -23,7 +23,22 @@ final class PackagingNamePolicy {
     private PackagingNamePolicy() {}
 
     static String normalize(String value) {
-        return RecognitionTextCleaner.intelligentProductNameCandidate(value);
+        String normalized = RecognitionTextCleaner.intelligentProductNameCandidate(value);
+        String dosageName = RecognitionTextCleaner.extractPackagedDosageName(normalized);
+        int dosageStart = normalized.indexOf(dosageName);
+        if (dosageName.length() == 0 || dosageStart <= 0) {
+            return normalized;
+        }
+        String prefix = normalized.substring(0, dosageStart);
+        for (int index = 0; index < prefix.length(); index++) {
+            char current = prefix.charAt(index);
+            if ((current >= 'A' && current <= 'Z')
+                    || (current >= 'a' && current <= 'z')
+                    || Character.isDigit(current)) {
+                return dosageName;
+            }
+        }
+        return normalized;
     }
 
     static boolean isPlausible(String value) {

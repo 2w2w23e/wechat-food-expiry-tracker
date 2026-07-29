@@ -6,7 +6,7 @@
 
 ## 构建
 
-当前 APK 版本号：`versionName 0.4.1`，`versionCode 31`。每次生成新的可交付 APK 时，都需要同步提升 `apk/app/build.gradle` 和 `AndroidManifest.xml` 里的 `versionName` 和 `versionCode`。
+当前 APK 版本号：`versionName 0.4.2`，`versionCode 32`。每次生成新的可交付 APK 时，都需要同步提升 `apk/app/build.gradle` 和 `AndroidManifest.xml` 里的 `versionName` 和 `versionCode`。
 
 当前最低 Android 版本为 API 24（Android 7.0）。当前 debug APK 实测约 220 MB；离线模型只保留当前链路需要的关键文件，可交付 APK 的硬上限为 1 GB。
 
@@ -127,3 +127,4 @@ apk/build/outputs/apk/shiqi-android-release.apk
 - V0.3.16 签名覆盖、识别依据返回、继续相机状态保留和实时文字框证据见 `../docs/qa/2026-07-28-v0316-camera-state-signing-qa.md`。
 - V0.4.0 四目的地外壳、完整 CRUD、Excel 往返、JSON 分享、覆盖安装保数和多尺寸视觉证据见 `../docs/qa/2026-07-29-redesign-v2-b1-android-shell.md`。
 - V0.4.1 指定失败视频的药品名字段晋升、结果页到新增表单、覆盖安装保数和 360 x 800 视觉证据见 `../docs/qa/2026-07-29-redesign-v2-c1-ocr.md`。
+- V0.4.2 有界 ROI、低对比度日期快速路径、四组冻结样本速度回归和字段优先结果页见 `../docs/qa/2026-07-30-redesign-v2-c2-roi-speed.md`。

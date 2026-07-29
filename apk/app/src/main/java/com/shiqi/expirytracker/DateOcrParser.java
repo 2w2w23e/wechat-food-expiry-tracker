@@ -81,6 +81,11 @@ final class DateOcrParser {
                     + "([月日天门曰目冃节1])?(?![\\p{IsHan}\\d])",
             Pattern.CASE_INSENSITIVE
     );
+    private static final Pattern OCR_DAMAGED_SHORT_SHELF_LIFE = Pattern.compile(
+            "(保\\s*期|质\\s*期|保)\\s*[:：]?\\s*(\\d{1,3})\\s*(个\\s*月|月)(?:月)?"
+                    + "(?![\\p{IsHan}\\d])",
+            Pattern.CASE_INSENSITIVE
+    );
     private static final Pattern OCR_MISSING_MONTH_CLASSIFIER = Pattern.compile(
             "(?<!\\d)((?:1[0-9]|2[0-4]|[1-9]))\\s*[1Il|]\\s*月(?!\\d)",
             Pattern.CASE_INSENSITIVE
@@ -125,6 +130,7 @@ final class DateOcrParser {
         promoteOcrDamagedCompactDateRange(text, productionDates, expiryDates);
         recoverNoisyLaserProduction(text, productionDates, referenceDate);
         collectShelfLives(text, shelfLives);
+        collectOcrDamagedShortShelfLives(text, shelfLives, productionDates);
         collectOcrDamagedMonthShelfLives(
                 text,
                 shelfLives,
@@ -667,6 +673,32 @@ final class DateOcrParser {
         }
     }
 
+    private static void collectOcrDamagedShortShelfLives(
+            String text,
+            List<ShelfLifeCandidate> shelfLives,
+            List<DateCandidate> productionDates
+    ) {
+        Matcher matcher = OCR_DAMAGED_SHORT_SHELF_LIFE.matcher(text);
+        while (matcher.find()) {
+            int value = parsePositiveInt(matcher.group(2));
+            String unit = normalizeShelfLifeUnit(matcher.group(3));
+            String context = nearbyText(text, matcher.start(), matcher.end(), 30);
+            if (productionDates.isEmpty()
+                    || AGE_CONTEXT.matcher(context).find()
+                    || NON_SHELF_PERIOD_CONTEXT.matcher(context).find()
+                    || DAILY_FREQUENCY_CONTEXT.matcher(context).find()
+                    || !isPlausibleShelfLife(value, unit)) {
+                continue;
+            }
+            shelfLives.add(new ShelfLifeCandidate(
+                    matcher.group(0),
+                    value,
+                    unit,
+                    context,
+                    0.78d
+            ));
+        }
+    }
     private static void collectOcrDamagedMonthShelfLives(
             String text,
             List<ShelfLifeCandidate> shelfLives,

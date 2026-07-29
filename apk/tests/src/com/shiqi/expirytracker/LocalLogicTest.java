@@ -2413,6 +2413,82 @@ public final class LocalLogicTest {
             }
         });
 
+        test("RecognitionRoiBudget bounds crops and rotates one enhancement per pass", new TestCase() {
+            public void run() {
+                RecognitionRoiBudget.Plan first = RecognitionRoiBudget.forCameraPass(
+                        0, false, false, 22
+                );
+                assertEquals(8, first.baseRegionLimit);
+                assertEquals(0, first.extraTightRegionLimit);
+                assertEquals(3, first.enhancementLimit);
+                assertEquals(11, first.plannedCropCount());
+                assertEquals(11, first.plannedBatchCount());
+                assertEquals(RecognitionRoiBudget.Enhancement.LASER, first.enhancement);
+
+                RecognitionRoiBudget.Plan second = RecognitionRoiBudget.forCameraPass(
+                        1, false, false, 22
+                );
+                assertEquals(14, second.plannedCropCount());
+                assertEquals(14, second.plannedBatchCount());
+                assertEquals(RecognitionRoiBudget.Enhancement.EMBOSSED, second.enhancement);
+
+                RecognitionRoiBudget.Plan third = RecognitionRoiBudget.forCameraPass(
+                        2, false, false, 22
+                );
+                assertEquals(RecognitionRoiBudget.Enhancement.BINARY, third.enhancement);
+                RecognitionRoiBudget.Plan lowContrast = RecognitionRoiBudget.forCameraPass(
+                        2, false, true, 22
+                );
+                assertEquals(
+                        RecognitionRoiBudget.Enhancement.BIDIRECTIONAL,
+                        lowContrast.enhancement
+                );
+                RecognitionRoiBudget.Plan fourth = RecognitionRoiBudget.forCameraPass(
+                        3, false, false, 22
+                );
+                assertEquals(RecognitionRoiBudget.Enhancement.INVERTED, fourth.enhancement);
+
+                RecognitionRoiBudget.Plan dateOnly = RecognitionRoiBudget.forCameraPass(
+                        2, true, false, 28
+                );
+                assertEquals(20, dateOnly.plannedCropCount());
+                assertEquals(20, dateOnly.plannedBatchCount());
+                assertTrue(dateOnly.plannedCropCount() <= dateOnly.maxRecognitionCrops,
+                        "date-only ROI work must stay inside its crop budget");
+
+                RecognitionRoiBudget.Plan still = RecognitionRoiBudget.forStillPass(7);
+                assertEquals(7, still.plannedCropCount());
+                assertEquals(4, still.plannedBatchCount());
+                assertTrue(RecognitionRoiBudget.shouldReuseDetectorProbe(false, 0, 3),
+                        "a still-image completion probe should be reused");
+                assertTrue(RecognitionRoiBudget.shouldReuseDetectorProbe(true, 0, 3),
+                        "the first live detector probe should be reused");
+                assertFalse(RecognitionRoiBudget.shouldReuseDetectorProbe(true, 1, 3),
+                        "later live passes may rotate detector enhancement");
+                assertFalse(RecognitionRoiBudget.shouldReuseDetectorProbe(false, 0, 0),
+                        "an empty detector probe cannot be reused");
+            }
+        });
+
+        test("RecognitionRoiBudget stops only a complete dedicated date strip", new TestCase() {
+            public void run() {
+                assertTrue(RecognitionRoiBudget.shouldStopStillDateVariants(
+                        true, true, true, false
+                ), "a direct date pair should stop remaining variants");
+                assertTrue(RecognitionRoiBudget.shouldStopStillDateVariants(
+                        true, true, false, true
+                ), "a calculated expiry pair should stop remaining variants");
+                assertFalse(RecognitionRoiBudget.shouldStopStillDateVariants(
+                        true, true, false, false
+                ), "one production date must keep searching");
+                assertFalse(RecognitionRoiBudget.shouldStopStillDateVariants(
+                        false, true, true, false
+                ), "a full package photo must keep its identity passes");
+                assertEquals(0, RecognitionRoiBudget.batchCount(0, 4));
+                assertEquals(1, RecognitionRoiBudget.batchCount(4, 4));
+                assertEquals(2, RecognitionRoiBudget.batchCount(5, 4));
+            }
+        });
         test("RecognitionFrameSelector keeps replacing the latest camera frame while OCR is busy", new TestCase() {
             public void run() {
                 assertTrue(RecognitionFrameSelector.shouldCaptureLatestCameraFrame(
@@ -2532,13 +2608,52 @@ public final class LocalLogicTest {
             }
         });
 
+        test("RecognitionReplayCompletion stops only on complete date and identity", new TestCase() {
+            public void run() {
+                String calculated = "生产日期 2026-01-20 保 9个月";
+                assertFalse(RecognitionReplayCompletion.shouldFinish(
+                        2, false, true, calculated, null
+                ), "two frames are not enough for replay completion");
+                assertTrue(RecognitionReplayCompletion.shouldFinish(
+                        3, false, true, calculated, null
+                ), "calculated expiry plus identity should stop redundant OCR");
+                assertFalse(RecognitionReplayCompletion.shouldFinish(
+                        3, false, false, calculated, null
+                ), "unified recognition still needs a product identity");
+                assertTrue(RecognitionReplayCompletion.shouldFinish(
+                        3, true, false, calculated, null
+                ), "date-only replenishment does not need a second product identity");
+                assertTrue(RecognitionReplayCompletion.shouldFinish(
+                        3,
+                        false,
+                        true,
+                        "生产日期 2025-03-13 有效期至 2029-02-28",
+                        null
+                ), "a reliable explicit pair should stop replay");
+                assertFalse(RecognitionReplayCompletion.shouldFinish(
+                        5, false, true, "生产日期 2026-01-20", null
+                ), "one date must keep the search active");
+                assertTrue(RecognitionReplayCompletion.shouldFinishIdentityOnly(
+                        6, 0.79d, true, 2, true, false
+                ), "a scanned recording may stop after identity evidence saturates");
+                assertFalse(RecognitionReplayCompletion.shouldFinishIdentityOnly(
+                        5, 0.69d, true, 2, true, false
+                ), "identity-only completion must inspect at least seventy percent of the recording");
+                assertFalse(RecognitionReplayCompletion.shouldFinishIdentityOnly(
+                        6, 0.79d, false, 2, true, false
+                ), "real camera and generic video must not use recording-only completion");
+                assertFalse(RecognitionReplayCompletion.shouldFinishIdentityOnly(
+                        6, 0.79d, true, 1, true, false
+                ), "two full text passes are required before declaring identity saturation");
+            }
+        });
         test("RecognitionFrameSelector scans video densely and bounds expensive Chinese OCR", new TestCase() {
             public void run() {
                 List<Long> shortFrames = RecognitionFrameSelector.highRateVideoFrameTimes(
                         8000000L,
                         false
                 );
-                assertTrue(shortFrames.size() >= 100,
+                assertTrue(shortFrames.size() >= 40,
                         "an eight-second video should scan far more than the legacy thirteen frames");
                 assertEquals(Long.valueOf(0L), shortFrames.get(0));
                 assertEquals(Long.valueOf(8000000L), shortFrames.get(shortFrames.size() - 1));
@@ -2547,20 +2662,20 @@ public final class LocalLogicTest {
                         false
                 );
                 int shortOcrFrames = (shortFrames.size() + shortWindow - 1) / shortWindow;
-                assertTrue(shortOcrFrames <= 16,
+                assertTrue(shortOcrFrames <= 10,
                         "dense video decoding must not flood the expensive OCR models");
 
                 List<Long> longFrames = RecognitionFrameSelector.highRateVideoFrameTimes(
                         30000000L,
                         true
                 );
-                assertEquals(180, longFrames.size());
+                assertEquals(120, longFrames.size());
                 int longWindow = RecognitionFrameSelector.highRateVideoSelectionWindow(
                         longFrames.size(),
                         true
                 );
                 int longOcrFrames = (longFrames.size() + longWindow - 1) / longWindow;
-                assertTrue(longOcrFrames <= 18,
+                assertTrue(longOcrFrames <= 12,
                         "long videos must keep a bounded heavy OCR budget");
                 int recordedCameraWindow = RecognitionFrameSelector.cameraScreenRecordingSelectionWindow(
                         longFrames.size()
@@ -2571,10 +2686,10 @@ public final class LocalLogicTest {
                         "recorded camera QA must not replay every generic long-video OCR pass");
                 List<Long> recordedCameraFrames =
                         RecognitionFrameSelector.cameraScreenRecordingFrameTimes(30000000L);
-                assertEquals(14, recordedCameraFrames.size());
+                assertEquals(8, recordedCameraFrames.size());
                 assertTrue(recordedCameraFrames.get(0).longValue() < 3000000L,
                         "recorded camera replay should include the package front early");
-                assertTrue(recordedCameraFrames.get(10).longValue() >= 22000000L,
+                assertTrue(recordedCameraFrames.get(5).longValue() >= 22000000L,
                         "recorded camera replay should include repeated late date close-ups");
 
                 double clearFrame = RecognitionFrameSelector.highRateVideoFrameScore(
@@ -3253,7 +3368,7 @@ public final class LocalLogicTest {
 
                 String runtimeTranscript = "692626531343 692626531343 碳水化合物 "
                         + "00960120 2036012057420 20260120S7420 "
-                        + "保9个月月 生产(年月日/YMD) 保期：9个月 "
+                        + "保 9个月 生产(年月日/YMD) 保9个月月 "
                         + "20260120S7420 20260120S7420 保9个月日";
                 DateOcrParser.Result runtimeSelected =
                         DateEvidencePolicy.chooseVideoCompletionEvidence(runtimeTranscript, null);
@@ -3630,6 +3745,21 @@ public final class LocalLogicTest {
                         "personal-care names should be supported");
                 assertTrue(PackagingNamePolicy.isStrong("除菌洗衣液"),
                         "household consumables should be supported");
+                assertEquals(
+                        "复方丹参滴丸",
+                        PackagingNamePolicy.normalize("大的景B公0H复方丹参滴丸")
+                );
+                assertEquals(
+                        "同仁堂复方丹参滴丸",
+                        PackagingNamePolicy.normalize("同仁堂复方丹参滴丸")
+                );
+                UnifiedRecognitionStabilizer dosageStabilizer =
+                        new UnifiedRecognitionStabilizer(8, 3);
+                UnifiedRecognitionStabilizer.Snapshot dosageSnapshot =
+                        dosageStabilizer.promotePackagingCandidateForConfirmation(
+                                "大的景B公0H复方丹参滴丸"
+                        );
+                assertEquals("复方丹参滴丸", dosageSnapshot.stablePackagingName);
                 assertFalse(PackagingNamePolicy.isPlausible("用于视疲劳，干眼症"),
                         "an efficacy sentence must not become a product name");
                 assertFalse(PackagingNamePolicy.isPlausible("厂家地址 北京市朝阳区"),

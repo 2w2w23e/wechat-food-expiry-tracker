@@ -200,7 +200,7 @@ final class UnifiedRecognitionStabilizer {
     }
 
     Snapshot promotePackagingCandidateForConfirmation(String candidate) {
-        String normalized = RecognitionTextCleaner.intelligentProductNameCandidate(candidate);
+        String normalized = PackagingNamePolicy.normalize(candidate);
         if (RecognitionTextCleaner.productNameScore(normalized) > 0
                 && PackagingNamePolicy.isPlausible(normalized)
                 && !RecognitionTextCleaner.isLikelyMarketingSlogan(normalized)) {
@@ -240,7 +240,7 @@ final class UnifiedRecognitionStabilizer {
         if ((labeledStrong || canonicalStrong || repeatedStrong || exceptionalSingle)
                 && clearLead
                 && !RecognitionTextCleaner.isLikelyMarketingSlogan(leader.text)) {
-            lockedPackagingName = leader.text;
+            lockedPackagingName = PackagingNamePolicy.normalize(leader.text);
         }
         return snapshot();
     }
@@ -422,7 +422,7 @@ final class UnifiedRecognitionStabilizer {
             return;
         }
         if (singleFrameConfirmation) {
-            lockedPackagingName = ranked.get(0).text;
+            lockedPackagingName = PackagingNamePolicy.normalize(ranked.get(0).text);
             return;
         }
         if (lockedPackagingName.length() > 0) {
@@ -434,14 +434,14 @@ final class UnifiedRecognitionStabilizer {
                     && leader.votes >= PACKAGING_NAME_LOCK_VOTES
                     && (leader.votes >= lockedVotes + 2
                     || (lockedScore > 0d && leader.score >= lockedScore * 1.30d))) {
-                lockedPackagingName = leader.text;
+                lockedPackagingName = PackagingNamePolicy.normalize(leader.text);
             }
             return;
         }
         for (PackagingTextAnalyzer.Candidate candidate : ranked) {
             if (candidate.votes >= PACKAGING_NAME_LOCK_VOTES
                     && !RecognitionTextCleaner.isLikelyMarketingSlogan(candidate.text)) {
-                lockedPackagingName = candidate.text;
+                lockedPackagingName = PackagingNamePolicy.normalize(candidate.text);
                 return;
             }
         }
