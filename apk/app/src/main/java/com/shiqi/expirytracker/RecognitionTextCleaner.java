@@ -141,7 +141,7 @@ final class RecognitionTextCleaner {
         return PackagingNamePolicy.isStrong(value);
     }
 
-    private static String extractPackagedDosageName(String rawText) {
+    static String extractPackagedDosageName(String rawText) {
         String text = FoodItem.cleanText(rawText);
         Matcher matcher = PACKAGED_DOSAGE_NAME.matcher(text);
         String best = "";

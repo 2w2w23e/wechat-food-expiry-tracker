@@ -62,6 +62,8 @@ $MainSources = @(
   'DateOcrFrameVoter.java',
   'RecognitionDiagnostics.java',
   'RecognitionFrameSelector.java',
+  'RecognitionRoiBudget.java',
+  'RecognitionReplayCompletion.java',
   'CameraOcrFeedback.java',
   'DateOcrResultPayload.java',
   'RecognitionTextCleaner.java',
@@ -102,6 +104,7 @@ try {
   Write-Host 'Compiling APK local Java logic tests (Android SDK not required)...'
   $JavacArgs = @(
     '-encoding', 'UTF-8',
+    '-Xlint:-options',
     '-source', '8',
     '-target', '8',
     '-d', $Classes

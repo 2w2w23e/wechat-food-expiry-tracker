@@ -1852,7 +1852,6 @@ public final class MainActivity extends Activity {
         if (!BarcodeUtils.isSupportedProductCode(draft.barcode)
                 || !showKnownBarcodeAction(draft.barcode, draft)) {
             showFoodForm(draft, false);
-            toast("已填入识别候选，请检查后保存");
         }
     }
 
