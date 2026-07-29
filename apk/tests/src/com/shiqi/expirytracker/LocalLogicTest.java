@@ -25,6 +25,25 @@ public final class LocalLogicTest {
     }
 
     private void run() {
+        test("AppNavigation keeps scan transient and restores persistent destinations", new TestCase() {
+            public void run() {
+                assertEquals(AppNavigation.OVERVIEW, AppNavigation.restoreDestination(-1));
+                assertEquals(AppNavigation.OVERVIEW, AppNavigation.restoreDestination(AppNavigation.SCAN));
+                assertEquals(AppNavigation.INVENTORY, AppNavigation.restoreDestination(AppNavigation.INVENTORY));
+                assertEquals(AppNavigation.SETTINGS, AppNavigation.restoreDestination(AppNavigation.SETTINGS));
+                assertEquals(
+                        AppNavigation.INVENTORY,
+                        AppNavigation.persistentDestinationAfterSelection(
+                                AppNavigation.INVENTORY,
+                                AppNavigation.SCAN
+                        )
+                );
+                assertEquals("总览", AppNavigation.label(AppNavigation.OVERVIEW));
+                assertEquals("库存", AppNavigation.label(AppNavigation.INVENTORY));
+                assertEquals("扫描", AppNavigation.label(AppNavigation.SCAN));
+                assertEquals("设置", AppNavigation.label(AppNavigation.SETTINGS));
+            }
+        });
         test("DateRules validates strict yyyy-MM-dd dates", new TestCase() {
             public void run() {
                 assertTrue(DateRules.isValidDateString("2024-02-29"), "leap day should be valid");

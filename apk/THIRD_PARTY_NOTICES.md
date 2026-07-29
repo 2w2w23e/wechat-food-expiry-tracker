@@ -74,3 +74,11 @@ Project: https://github.com/microsoft/onnxruntime
 
 Project: https://github.com/PaddlePaddle/PaddleOCR
 Model documentation: https://paddlepaddle.github.io/PaddleX/latest/module_usage/tutorials/ocr_modules/text_recognition.html
+
+## Google Material Design Icons
+
+- Assets: `ic_v2_overview`, `ic_v2_inventory`, `ic_v2_scan`, `ic_v2_settings`
+- License: Apache License 2.0
+- Use: local Android VectorDrawable navigation and scan-action icons.
+
+Project: https://github.com/google/material-design-icons

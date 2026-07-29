@@ -49,6 +49,7 @@ $Java = Resolve-JavaTool 'java'
 
 $MainSources = @(
   'DateRules.java',
+  'AppNavigation.java',
   'FoodItem.java',
   'Option.java',
   'FoodData.java',

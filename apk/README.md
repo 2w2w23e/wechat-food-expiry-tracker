@@ -6,7 +6,7 @@
 
 ## 构建
 
-当前 APK 版本号：`versionName 0.3.17`，`versionCode 20`。每次生成新的可交付 APK 时，都需要同步提升 `apk/app/build.gradle` 和 `AndroidManifest.xml` 里的 `versionName` 和 `versionCode`。
+当前 APK 版本号：`versionName 0.4.0`，`versionCode 30`。每次生成新的可交付 APK 时，都需要同步提升 `apk/app/build.gradle` 和 `AndroidManifest.xml` 里的 `versionName` 和 `versionCode`。
 
 当前最低 Android 版本为 API 24（Android 7.0）。当前 debug APK 实测约 220 MB；离线模型只保留当前链路需要的关键文件，可交付 APK 的硬上限为 1 GB。
 
@@ -62,6 +62,9 @@ apk/build/outputs/apk/shiqi-android-release.apk
 
 ## 当前支持
 
+- V2 四目的地外壳：总览、库存、扫描、设置；底部导航固定，扫描是主操作，Excel、JSON 和提醒集中在设置
+- 总览优先显示今天到期、7 天内、已过期、优先处理和提醒摘要，不再堆叠所有管理操作
+- 库存批次使用紧凑卡片；减少 1 和补货保持外层直达，编辑、完成、恢复和删除保留在更多
 - 食品列表展示
 - 新增、编辑、删除食品
 - 生产日期 + 保质期计算 `expiryDate`
@@ -122,3 +125,4 @@ apk/build/outputs/apk/shiqi-android-release.apk
 - 低对比、反光、弧面、运动模糊和字符残缺仍可能导致误识别；真实样本必须通过截图或录屏做视觉 QA，不能只以单元测试或模型原文作为 PASS。
 - 当前多模型变更的规则、支持格式、样本状态和剩余风险见 `../docs/APK_OCR_DATE_FORMAT_MATRIX.md`。
 - V0.3.16 签名覆盖、识别依据返回、继续相机状态保留和实时文字框证据见 `../docs/qa/2026-07-28-v0316-camera-state-signing-qa.md`。
+- V0.4.0 四目的地外壳、完整 CRUD、Excel 往返、JSON 分享、覆盖安装保数和多尺寸视觉证据见 `../docs/qa/2026-07-29-redesign-v2-b1-android-shell.md`。
