@@ -6,7 +6,7 @@
 
 ## 构建
 
-当前 APK 版本号：`versionName 0.4.2`，`versionCode 32`。每次生成新的可交付 APK 时，都需要同步提升 `apk/app/build.gradle` 和 `AndroidManifest.xml` 里的 `versionName` 和 `versionCode`。
+当前 APK 版本号：`versionName 0.4.3`，`versionCode 33`。每次生成新的可交付 APK 时，都需要同步提升 `apk/app/build.gradle` 和 `AndroidManifest.xml` 里的 `versionName` 和 `versionCode`。
 
 当前最低 Android 版本为 API 24（Android 7.0）。当前 debug APK 实测约 220 MB；离线模型只保留当前链路需要的关键文件，可交付 APK 的硬上限为 1 GB。
 
@@ -64,7 +64,7 @@ apk/build/outputs/apk/shiqi-android-release.apk
 
 - V2 四目的地外壳：总览、库存、扫描、设置；底部导航固定，扫描是主操作，Excel、JSON 和提醒集中在设置
 - 总览优先显示今天到期、7 天内、已过期、优先处理和提醒摘要，不再堆叠所有管理操作
-- 库存批次使用紧凑卡片；减少 1 和补货保持外层直达，编辑、完成、恢复和删除保留在更多
+- 库存按商品档案分组：商品行显示在库批次数、总剩余量和最近到期日；减少 1 和补货外层直达，点击进入全屏详情后逐批次编辑、完成、恢复或删除
 - 食品列表展示
 - 新增、编辑、删除食品
 - 生产日期 + 保质期计算 `expiryDate`
@@ -128,3 +128,4 @@ apk/build/outputs/apk/shiqi-android-release.apk
 - V0.4.0 四目的地外壳、完整 CRUD、Excel 往返、JSON 分享、覆盖安装保数和多尺寸视觉证据见 `../docs/qa/2026-07-29-redesign-v2-b1-android-shell.md`。
 - V0.4.1 指定失败视频的药品名字段晋升、结果页到新增表单、覆盖安装保数和 360 x 800 视觉证据见 `../docs/qa/2026-07-29-redesign-v2-c1-ocr.md`。
 - V0.4.2 有界 ROI、低对比度日期快速路径、四组冻结样本速度回归和字段优先结果页见 `../docs/qa/2026-07-30-redesign-v2-c2-roi-speed.md`。
+- V0.4.3 商品档案分组库存、全屏批次详情、减量撤销、补货相机首屏、完整增改删和五尺寸视觉证据见 `../docs/qa/2026-07-30-redesign-v2-d1a-inventory-detail.md`。
