@@ -12,14 +12,18 @@ import android.content.pm.PackageManager;
 import android.content.res.ColorStateList;
 import android.graphics.Color;
 import android.graphics.Typeface;
+import android.graphics.drawable.Drawable;
 import android.graphics.drawable.GradientDrawable;
 import android.net.Uri;
 import android.os.Build;
 import android.os.Bundle;
 import android.text.Editable;
 import android.text.InputType;
+import android.text.SpannableString;
+import android.text.Spanned;
 import android.text.TextUtils;
 import android.text.TextWatcher;
+import android.text.style.ImageSpan;
 import android.view.Gravity;
 import android.view.MotionEvent;
 import android.view.View;
@@ -89,19 +93,29 @@ public final class MainActivity extends Activity {
     private static final String EXTRA_QA_REPLENISHMENT_VIDEO_PATH =
             "com.shiqi.expirytracker.QA_REPLENISHMENT_VIDEO_PATH";
 
-    private static final int COLOR_BG = Color.rgb(246, 247, 248);
+    private static final String STATE_DESTINATION = "main_destination_v2";
+    private static final int COLOR_BG = Color.rgb(244, 246, 248);
     private static final int COLOR_CARD = Color.WHITE;
-    private static final int COLOR_TEXT = Color.rgb(28, 34, 31);
-    private static final int COLOR_MUTED = Color.rgb(94, 103, 99);
-    private static final int COLOR_PRIMARY = Color.rgb(38, 104, 76);
-    private static final int COLOR_DANGER = Color.rgb(159, 53, 46);
-    private static final int COLOR_LINE = Color.rgb(224, 228, 226);
-    private static final int COLOR_SOFT = Color.rgb(239, 242, 241);
+    private static final int COLOR_TEXT = Color.rgb(23, 33, 43);
+    private static final int COLOR_MUTED = Color.rgb(100, 116, 139);
+    private static final int COLOR_PRIMARY = Color.rgb(47, 102, 237);
+    private static final int COLOR_PRIMARY_SOFT = Color.rgb(235, 241, 255);
+    private static final int COLOR_SUCCESS = Color.rgb(23, 132, 93);
+    private static final int COLOR_WARNING = Color.rgb(180, 120, 18);
+    private static final int COLOR_DANGER = Color.rgb(196, 71, 58);
+    private static final int COLOR_LINE = Color.rgb(221, 227, 234);
+    private static final int COLOR_SOFT = Color.rgb(240, 243, 247);
 
     private FoodStore store;
     private List<FoodItem> foods = new ArrayList<FoodItem>();
     private List<FoodItem> lastPersistedFoods = new ArrayList<FoodItem>();
     private FoodJsonTransfer.ExportFilter pendingJsonExportFilter;
+    private FrameLayout pageHost;
+    private final TextView[] navigationItems = new TextView[4];
+    private int currentDestination = AppNavigation.OVERVIEW;
+    private TextView overviewTodayValue;
+    private TextView overviewSoonValue;
+    private TextView overviewExpiredValue;
     private ScrollView mainScrollView;
     private LinearLayout stickySearchBar;
     private EditText pinnedSearchInput;
@@ -147,8 +161,13 @@ public final class MainActivity extends Activity {
         super.onCreate(savedInstanceState);
 
         Window window = getWindow();
-        window.setStatusBarColor(COLOR_BG);
-        window.setNavigationBarColor(COLOR_BG);
+        window.setStatusBarColor(Color.WHITE);
+        window.setNavigationBarColor(Color.WHITE);
+        currentDestination = AppNavigation.restoreDestination(
+                savedInstanceState == null
+                        ? AppNavigation.OVERVIEW
+                        : savedInstanceState.getInt(STATE_DESTINATION, AppNavigation.OVERVIEW)
+        );
 
         store = new FoodStore(this);
         qaForceNextImportSaveFailure = isDebuggable()
@@ -164,7 +183,6 @@ public final class MainActivity extends Activity {
         foods = reminderSnapshotSaveFailed ? loadedFoods : migratedFoods;
         lastPersistedFoods = copyFoods(foods);
         buildScreen();
-        renderFoods();
         setupReminderNotifications();
         scheduleQaRecognitionIfRequested();
         if (reminderSnapshotSaveFailed) {
@@ -184,42 +202,108 @@ public final class MainActivity extends Activity {
                 ViewGroup.LayoutParams.MATCH_PARENT
         ));
 
-        stickySearchBar = new LinearLayout(this);
-        stickySearchBar.setOrientation(LinearLayout.VERTICAL);
-        stickySearchBar.setPadding(dp(14), dp(8), dp(14), dp(6));
-        stickySearchBar.setBackgroundColor(COLOR_CARD);
-        stickySearchBar.setVisibility(View.GONE);
-        root.addView(stickySearchBar, matchWrap());
+        pageHost = new FrameLayout(this);
+        root.addView(pageHost, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                0,
+                1
+        ));
+        root.addView(buildBottomNavigation(), new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                dp(65)
+        ));
 
-        pinnedSearchInput = input("", "搜索食品", InputType.TYPE_CLASS_TEXT);
-        pinnedSearchInput.addTextChangedListener(new TextWatcher() {
-            @Override public void beforeTextChanged(CharSequence value, int start, int count, int after) { }
-            @Override public void onTextChanged(CharSequence value, int start, int before, int count) { }
-            @Override public void afterTextChanged(Editable value) {
-                applySearchText(value == null ? "" : value.toString(), pinnedSearchInput);
+        setContentView(screenRoot);
+        showDestination(currentDestination);
+    }
+
+    private View buildBottomNavigation() {
+        LinearLayout wrapper = new LinearLayout(this);
+        wrapper.setOrientation(LinearLayout.VERTICAL);
+        wrapper.setBackgroundColor(Color.WHITE);
+
+        View divider = new View(this);
+        divider.setBackgroundColor(COLOR_LINE);
+        wrapper.addView(divider, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                dp(1)
+        ));
+
+        LinearLayout navigation = new LinearLayout(this);
+        navigation.setOrientation(LinearLayout.HORIZONTAL);
+        navigation.setPadding(dp(4), dp(2), dp(4), dp(2));
+        wrapper.addView(navigation, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                dp(64)
+        ));
+
+        int[] destinations = new int[] {
+                AppNavigation.OVERVIEW,
+                AppNavigation.INVENTORY,
+                AppNavigation.SCAN,
+                AppNavigation.SETTINGS
+        };
+        int[] icons = new int[] {
+                R.drawable.ic_v2_overview,
+                R.drawable.ic_v2_inventory,
+                R.drawable.ic_v2_scan,
+                R.drawable.ic_v2_settings
+        };
+
+        for (int index = 0; index < destinations.length; index++) {
+            final int destination = destinations[index];
+            TextView item = navigationItem(AppNavigation.label(destination), icons[index], destination);
+            navigationItems[destination] = item;
+            navigation.addView(item, new LinearLayout.LayoutParams(0, dp(60), 1));
+        }
+        updateBottomNavigation();
+        return wrapper;
+    }
+
+    private TextView navigationItem(String label, int iconResource, final int destination) {
+        TextView item = text(label, 11, COLOR_MUTED, Typeface.NORMAL);
+        item.setGravity(Gravity.CENTER);
+        item.setMinHeight(dp(56));
+        item.setCompoundDrawablePadding(dp(3));
+        item.setContentDescription(label);
+        Drawable icon = getDrawable(iconResource).mutate();
+        icon.setTint(COLOR_MUTED);
+        item.setCompoundDrawablesWithIntrinsicBounds(null, icon, null, null);
+        item.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View view) {
+                selectDestination(destination);
             }
         });
-        stickySearchBar.addView(pinnedSearchInput, matchWrap());
+        return item;
+    }
 
-        activeFilterBar = new LinearLayout(this);
-        activeFilterBar.setOrientation(LinearLayout.VERTICAL);
-        activeFilterBar.setPadding(dp(14), dp(8), dp(14), dp(8));
-        activeFilterBar.setBackground(rounded(COLOR_CARD, 0, COLOR_LINE));
-        activeFilterBar.setVisibility(View.GONE);
-        root.addView(activeFilterBar, matchWrap());
+    private void selectDestination(int destination) {
+        int nextDestination = AppNavigation.persistentDestinationAfterSelection(
+                currentDestination,
+                destination
+        );
+        if (destination == AppNavigation.SCAN) {
+            startDateOcrScanner();
+            updateBottomNavigation();
+            return;
+        }
+        if (nextDestination == currentDestination) {
+            scrollToTop();
+            return;
+        }
+        showDestination(nextDestination);
+    }
+
+    private void showDestination(int destination) {
+        currentDestination = AppNavigation.restoreDestination(destination);
+        resetPageViews();
+        pageHost.removeAllViews();
 
         mainScrollView = new ScrollView(this);
+        mainScrollView.setFillViewport(true);
+        mainScrollView.setClipToPadding(false);
         mainScrollView.setBackgroundColor(COLOR_BG);
-        root.addView(mainScrollView, new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, 0, 1
-        ));
-        mainScrollView.setOnScrollChangeListener(new View.OnScrollChangeListener() {
-            @Override
-            public void onScrollChange(View view, int scrollX, int scrollY, int oldScrollX, int oldScrollY) {
-                updateBackToTopVisibility(scrollY);
-                updateStickyFilterVisibility(scrollY);
-            }
-        });
         mainScrollView.setOnTouchListener(new View.OnTouchListener() {
             @Override
             public boolean onTouch(View view, MotionEvent event) {
@@ -232,96 +316,207 @@ public final class MainActivity extends Activity {
 
         LinearLayout content = new LinearLayout(this);
         content.setOrientation(LinearLayout.VERTICAL);
-        content.setPadding(dp(16), dp(16), dp(16), dp(28));
+        content.setPadding(dp(16), dp(16), dp(16), dp(24));
         mainScrollView.addView(content, new ScrollView.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
                 ViewGroup.LayoutParams.WRAP_CONTENT
         ));
+        pageHost.addView(mainScrollView, new FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.MATCH_PARENT
+        ));
 
+        if (currentDestination == AppNavigation.INVENTORY) {
+            buildInventoryPage(content);
+        } else if (currentDestination == AppNavigation.SETTINGS) {
+            buildSettingsPage(content);
+        } else {
+            buildOverviewPage(content);
+        }
+
+        updateBottomNavigation();
+        renderFoods();
+    }
+
+    private void resetPageViews() {
+        stickySearchBar = null;
+        pinnedSearchInput = null;
+        filterCard = null;
+        advancedFilterBody = null;
+        filterToggleButton = null;
+        dailyBriefingContainer = null;
+        listContainer = null;
+        activeFilterBar = null;
+        activeFilterChipContainer = null;
+        statusFilterContainer = null;
+        categoryOpenButton = null;
+        locationOpenButton = null;
+        backToTopButton = null;
+        statsText = null;
+        reminderStatusText = null;
+        reminderPermissionButton = null;
+        reminderSettingsButton = null;
+        activeFilterSummary = null;
+        searchInput = null;
+        overviewTodayValue = null;
+        overviewSoonValue = null;
+        overviewExpiredValue = null;
+    }
+
+    private void updateBottomNavigation() {
+        for (int destination = 0; destination < navigationItems.length; destination++) {
+            TextView item = navigationItems[destination];
+            if (item == null) {
+                continue;
+            }
+            boolean selected = destination == currentDestination;
+            int color = selected ? COLOR_PRIMARY : COLOR_MUTED;
+            item.setTextColor(color);
+            item.setTypeface(Typeface.DEFAULT, selected ? Typeface.BOLD : Typeface.NORMAL);
+            Drawable[] drawables = item.getCompoundDrawables();
+            if (drawables[1] != null) {
+                drawables[1].setTint(color);
+            }
+        }
+    }
+
+    private void addPageHeader(
+            LinearLayout content,
+            String titleText,
+            String subtitleText,
+            View action
+    ) {
         LinearLayout heading = new LinearLayout(this);
         heading.setOrientation(LinearLayout.HORIZONTAL);
-        heading.setGravity(android.view.Gravity.BOTTOM);
+        heading.setGravity(Gravity.CENTER_VERTICAL);
         content.addView(heading, matchWrap());
 
-        TextView title = text("食期管家", 26, COLOR_TEXT, Typeface.BOLD);
-        heading.addView(title, weightWrap(1));
+        LinearLayout titleGroup = new LinearLayout(this);
+        titleGroup.setOrientation(LinearLayout.VERTICAL);
+        heading.addView(titleGroup, weightWrap(1));
 
+        TextView title = text(titleText, 25, COLOR_TEXT, Typeface.BOLD);
+        titleGroup.addView(title, matchWrap());
+
+        TextView subtitle = text(subtitleText, 13, COLOR_MUTED, Typeface.NORMAL);
+        subtitle.setPadding(0, dp(3), 0, 0);
+        titleGroup.addView(subtitle, matchWrap());
+
+        if (action != null) {
+            heading.addView(action, withMargins(wrapWrap(), dp(10), 0, 0, 0));
+        }
+    }
+
+    private void buildOverviewPage(LinearLayout content) {
+        String dateLabel = new SimpleDateFormat("M月d日 EEEE", Locale.CHINA).format(new Date());
         TextView localBadge = text("仅本机", 12, COLOR_MUTED, Typeface.BOLD);
-        localBadge.setGravity(android.view.Gravity.CENTER);
-        localBadge.setPadding(dp(9), dp(4), dp(9), dp(4));
+        localBadge.setGravity(Gravity.CENTER);
+        localBadge.setPadding(dp(10), 0, dp(10), 0);
+        localBadge.setMinHeight(dp(48));
         localBadge.setBackground(rounded(COLOR_SOFT, dp(8), 0));
-        heading.addView(localBadge, wrapWrap());
+        addPageHeader(content, "总览", dateLabel, localBadge);
 
-        TextView subtitle = text("按到期时间管理，需要优先处理的食品一眼可见", 13, COLOR_MUTED, Typeface.NORMAL);
-        subtitle.setPadding(0, dp(4), 0, dp(14));
-        content.addView(subtitle, matchWrap());
+        LinearLayout summaryRow = new LinearLayout(this);
+        summaryRow.setOrientation(LinearLayout.HORIZONTAL);
+        summaryRow.setBaselineAligned(false);
+        content.addView(summaryRow, withMargins(matchWrap(), 0, dp(18), 0, 0));
 
-        dailyBriefingContainer = new LinearLayout(this);
-        dailyBriefingContainer.setOrientation(LinearLayout.VERTICAL);
-        content.addView(dailyBriefingContainer, withMargins(matchWrap(), 0, 0, 0, dp(10)));
+        overviewTodayValue = text("0", 24, COLOR_TEXT, Typeface.BOLD);
+        overviewSoonValue = text("0", 24, COLOR_TEXT, Typeface.BOLD);
+        overviewExpiredValue = text("0", 24, COLOR_DANGER, Typeface.BOLD);
+        summaryRow.addView(summaryMetric("今天到期", overviewTodayValue), withMargins(weightWrap(1), 0, 0, dp(6), 0));
+        summaryRow.addView(summaryMetric("7 天内", overviewSoonValue), withMargins(weightWrap(1), 0, 0, dp(6), 0));
+        summaryRow.addView(summaryMetric("已过期", overviewExpiredValue), weightWrap(1));
 
-        LinearLayout actionRow = new LinearLayout(this);
-        actionRow.setOrientation(LinearLayout.HORIZONTAL);
-        actionRow.setGravity(android.view.Gravity.CENTER_VERTICAL);
-        content.addView(actionRow, matchWrap());
-
-        Button scanButton = button("拍照识别标签", COLOR_PRIMARY);
+        Button scanButton = button("扫描包装并识别", COLOR_PRIMARY);
+        setButtonIcon(scanButton, R.drawable.ic_v2_scan, Color.WHITE);
+        scanButton.setMinHeight(dp(52));
         scanButton.setOnClickListener(new View.OnClickListener() {
             @Override public void onClick(View view) { startDateOcrScanner(); }
         });
-        actionRow.addView(scanButton, withMargins(weightWrap(1), 0, 0, dp(8), 0));
+        content.addView(scanButton, withMargins(matchWrap(), 0, dp(14), 0, dp(8)));
 
-        Button findByBarcodeButton = outlineButton("扫描商品条码");
-        findByBarcodeButton.setOnClickListener(new View.OnClickListener() {
-            @Override public void onClick(View view) { startBarcodeScanner(); }
-        });
-        actionRow.addView(findByBarcodeButton, weightWrap(1));
+        LinearLayout quickRow = new LinearLayout(this);
+        quickRow.setOrientation(LinearLayout.HORIZONTAL);
+        content.addView(quickRow, withMargins(matchWrap(), 0, 0, 0, dp(14)));
 
-        LinearLayout utilityRow = new LinearLayout(this);
-        utilityRow.setOrientation(LinearLayout.HORIZONTAL);
-        utilityRow.setGravity(android.view.Gravity.CENTER_VERTICAL);
-        content.addView(utilityRow, withMargins(matchWrap(), 0, dp(8), 0, 0));
-
-        Button addButton = utilityButton("手动记录");
+        Button addButton = outlineButton("手动新增");
         addButton.setOnClickListener(new View.OnClickListener() {
             @Override public void onClick(View view) { showFoodForm(null); }
         });
-        utilityRow.addView(addButton, withMargins(weightWrap(1), 0, 0, dp(8), 0));
+        quickRow.addView(addButton, withMargins(weightWrap(1), 0, 0, dp(8), 0));
 
-        Button importButton = utilityButton("导入 Excel");
-        importButton.setOnClickListener(new View.OnClickListener() {
-            @Override public void onClick(View view) { startExcelImport(); }
+        Button barcodeButton = outlineButton("扫码查找");
+        barcodeButton.setOnClickListener(new View.OnClickListener() {
+            @Override public void onClick(View view) { startBarcodeScanner(); }
         });
-        utilityRow.addView(importButton, withMargins(weightWrap(1), 0, 0, dp(8), 0));
+        quickRow.addView(barcodeButton, weightWrap(1));
 
-        Button exportButton = utilityButton("导出 Excel");
-        exportButton.setOnClickListener(new View.OnClickListener() {
-            @Override public void onClick(View view) { startExcelExport(); }
+        addSectionHeader(content, "优先处理", "查看全部", new View.OnClickListener() {
+            @Override public void onClick(View view) { showDestination(AppNavigation.INVENTORY); }
         });
-        utilityRow.addView(exportButton, weightWrap(1));
+        listContainer = new LinearLayout(this);
+        listContainer.setOrientation(LinearLayout.VERTICAL);
+        content.addView(listContainer, matchWrap());
 
-        Button jsonTransferButton = outlineButton("快速换机（JSON）");
-        jsonTransferButton.setOnClickListener(new View.OnClickListener() {
-            @Override public void onClick(View view) { showJsonTransferMenu(); }
+        addSectionHeader(content, "提醒摘要", "", null);
+        dailyBriefingContainer = new LinearLayout(this);
+        dailyBriefingContainer.setOrientation(LinearLayout.VERTICAL);
+        content.addView(dailyBriefingContainer, matchWrap());
+    }
+
+    private LinearLayout summaryMetric(String labelText, TextView valueView) {
+        LinearLayout metric = card();
+        metric.setPadding(dp(10), dp(10), dp(10), dp(10));
+        metric.addView(valueView, matchWrap());
+        TextView labelView = text(labelText, 12, COLOR_MUTED, Typeface.NORMAL);
+        labelView.setPadding(0, dp(3), 0, 0);
+        metric.addView(labelView, matchWrap());
+        return metric;
+    }
+
+    private void addSectionHeader(
+            LinearLayout content,
+            String titleText,
+            String actionText,
+            View.OnClickListener action
+    ) {
+        LinearLayout header = new LinearLayout(this);
+        header.setOrientation(LinearLayout.HORIZONTAL);
+        header.setGravity(Gravity.CENTER_VERTICAL);
+        header.setPadding(0, dp(10), 0, dp(6));
+        content.addView(header, matchWrap());
+
+        TextView title = text(titleText, 16, COLOR_TEXT, Typeface.BOLD);
+        header.addView(title, weightWrap(1));
+        if (action != null && FoodItem.cleanText(actionText).length() > 0) {
+            TextView actionView = text(actionText, 13, COLOR_PRIMARY, Typeface.BOLD);
+            actionView.setGravity(Gravity.CENTER);
+            actionView.setMinHeight(dp(48));
+            actionView.setMinWidth(dp(64));
+            actionView.setOnClickListener(action);
+            header.addView(actionView, wrapWrap());
+        }
+    }
+
+    private void buildInventoryPage(LinearLayout content) {
+        Button addButton = button("新增", COLOR_PRIMARY);
+        addButton.setMinWidth(dp(76));
+        addButton.setOnClickListener(new View.OnClickListener() {
+            @Override public void onClick(View view) { showFoodForm(null); }
         });
-        content.addView(jsonTransferButton, withMargins(matchWrap(), 0, dp(8), 0, dp(2)));
-
-        content.addView(reminderCard(), withMargins(matchWrap(), 0, 0, 0, dp(10)));
-
-        statsText = text("", 14, COLOR_TEXT, Typeface.BOLD);
-        statsText.setPadding(0, dp(4), 0, dp(8));
-        content.addView(statsText, matchWrap());
+        addPageHeader(content, "库存", "按最终日期排序，批次独立管理", addButton);
 
         filterCard = new LinearLayout(this);
         filterCard.setOrientation(LinearLayout.VERTICAL);
-        content.addView(filterCard, withMargins(matchWrap(), 0, 0, 0, dp(12)));
+        content.addView(filterCard, withMargins(matchWrap(), 0, dp(16), 0, 0));
 
         LinearLayout searchRow = new LinearLayout(this);
         searchRow.setOrientation(LinearLayout.HORIZONTAL);
-        searchRow.setGravity(android.view.Gravity.CENTER_VERTICAL);
+        searchRow.setGravity(Gravity.CENTER_VERTICAL);
         filterCard.addView(searchRow, matchWrap());
 
-        searchInput = input("", "搜索食品", InputType.TYPE_CLASS_TEXT);
+        searchInput = input(searchQuery, "搜索名称、条码或位置", InputType.TYPE_CLASS_TEXT);
         searchInput.addTextChangedListener(new TextWatcher() {
             @Override public void beforeTextChanged(CharSequence value, int start, int count, int after) { }
             @Override public void onTextChanged(CharSequence value, int start, int before, int count) { }
@@ -331,7 +526,7 @@ public final class MainActivity extends Activity {
         });
         searchRow.addView(searchInput, withMargins(weightWrap(1), 0, 0, dp(8), 0));
 
-        filterToggleButton = utilityButton("筛选");
+        filterToggleButton = outlineButton(filterPanelExpanded ? "收起" : "筛选");
         filterToggleButton.setOnClickListener(new View.OnClickListener() {
             @Override
             public void onClick(View view) {
@@ -340,12 +535,19 @@ public final class MainActivity extends Activity {
                 filterToggleButton.setText(filterPanelExpanded ? "收起" : "筛选");
             }
         });
-        searchRow.addView(filterToggleButton, new LinearLayout.LayoutParams(dp(76), dp(44)));
+        searchRow.addView(filterToggleButton, new LinearLayout.LayoutParams(dp(76), dp(48)));
+
+        activeFilterBar = new LinearLayout(this);
+        activeFilterBar.setOrientation(LinearLayout.VERTICAL);
+        activeFilterBar.setPadding(dp(12), dp(8), dp(12), dp(8));
+        activeFilterBar.setBackground(rounded(COLOR_PRIMARY_SOFT, dp(8), 0));
+        activeFilterBar.setVisibility(View.GONE);
+        filterCard.addView(activeFilterBar, withMargins(matchWrap(), 0, dp(8), 0, 0));
 
         advancedFilterBody = new LinearLayout(this);
         advancedFilterBody.setOrientation(LinearLayout.VERTICAL);
         advancedFilterBody.setPadding(0, dp(4), 0, 0);
-        advancedFilterBody.setVisibility(View.GONE);
+        advancedFilterBody.setVisibility(filterPanelExpanded ? View.VISIBLE : View.GONE);
         filterCard.addView(advancedFilterBody, matchWrap());
 
         advancedFilterBody.addView(label("状态"), matchWrap());
@@ -355,7 +557,7 @@ public final class MainActivity extends Activity {
 
         advancedFilterBody.addView(label("分类"), matchWrap());
         categoryOpenButton = outlineButton("");
-        categoryOpenButton.setGravity(android.view.Gravity.CENTER_VERTICAL);
+        categoryOpenButton.setGravity(Gravity.CENTER_VERTICAL);
         categoryOpenButton.setOnClickListener(new View.OnClickListener() {
             @Override public void onClick(View view) { toggleCategoryPanel(); }
         });
@@ -363,30 +565,148 @@ public final class MainActivity extends Activity {
 
         advancedFilterBody.addView(label("存放位置"), matchWrap());
         locationOpenButton = outlineButton("");
-        locationOpenButton.setGravity(android.view.Gravity.CENTER_VERTICAL);
+        locationOpenButton.setGravity(Gravity.CENTER_VERTICAL);
         locationOpenButton.setOnClickListener(new View.OnClickListener() {
             @Override public void onClick(View view) { toggleLocationPanel(); }
         });
         advancedFilterBody.addView(locationOpenButton, matchWrap());
 
+        statsText = text("", 13, COLOR_MUTED, Typeface.BOLD);
+        statsText.setPadding(0, 0, 0, dp(8));
+        content.addView(statsText, matchWrap());
+
         listContainer = new LinearLayout(this);
         listContainer.setOrientation(LinearLayout.VERTICAL);
         content.addView(listContainer, matchWrap());
-
-        backToTopButton = new Button(this);
-        backToTopButton.setVisibility(View.GONE);
-        screenRoot.addView(backToTopButton, new FrameLayout.LayoutParams(1, 1));
-
         renderFilterControls();
-        setContentView(screenRoot);
+    }
+
+    private void buildSettingsPage(LinearLayout content) {
+        addPageHeader(content, "设置", "提醒、导入导出与本地数据", null);
+
+        addSectionHeader(content, "提醒与通知", "", null);
+        content.addView(reminderCard(), matchWrap());
+
+        addSectionHeader(content, "本地数据", "", null);
+        content.addView(settingsActionRow(
+                "导入 Excel",
+                "批量新增、校验或覆盖商品批次",
+                android.R.drawable.ic_menu_edit,
+                new View.OnClickListener() {
+                    @Override public void onClick(View view) { startExcelImport(); }
+                }
+        ), matchWrap());
+        content.addView(settingsActionRow(
+                "导出 Excel",
+                "导出完整商品、条码和批次信息",
+                android.R.drawable.ic_menu_save,
+                new View.OnClickListener() {
+                    @Override public void onClick(View view) { startExcelExport(); }
+                }
+        ), matchWrap());
+        content.addView(settingsActionRow(
+                "JSON 快速换机",
+                "按日期筛选后保存或调用系统分享",
+                android.R.drawable.ic_menu_share,
+                new View.OnClickListener() {
+                    @Override public void onClick(View view) { showJsonTransferMenu(); }
+                }
+        ), matchWrap());
+
+        TextView localNotice = text(
+                "库存和识别结果保存在本机。升级安装会沿用原数据；卸载应用前请先导出备份。",
+                13,
+                COLOR_SUCCESS,
+                Typeface.NORMAL
+        );
+        localNotice.setLineSpacing(dp(2), 1.0f);
+        localNotice.setPadding(dp(12), dp(10), dp(12), dp(10));
+        localNotice.setBackground(rounded(Color.rgb(233, 247, 240), dp(8), Color.rgb(184, 222, 204)));
+        content.addView(localNotice, withMargins(matchWrap(), 0, dp(16), 0, 0));
+
+        TextView version = text(
+                appVersionLabel(),
+                12,
+                COLOR_MUTED,
+                Typeface.NORMAL
+        );
+        version.setGravity(Gravity.CENTER);
+        version.setPadding(0, dp(20), 0, dp(8));
+        content.addView(version, matchWrap());
+    }
+
+    private String appVersionLabel() {
+        try {
+            String versionName = getPackageManager()
+                    .getPackageInfo(getPackageName(), 0)
+                    .versionName;
+            return "食期管家 " + versionName + " · Android 本地版";
+        } catch (PackageManager.NameNotFoundException ignored) {
+            return "食期管家 · Android 本地版";
+        }
+    }
+
+    private View settingsActionRow(
+            String titleText,
+            String subtitleText,
+            int iconResource,
+            View.OnClickListener listener
+    ) {
+        LinearLayout row = new LinearLayout(this);
+        row.setOrientation(LinearLayout.HORIZONTAL);
+        row.setGravity(Gravity.CENTER_VERTICAL);
+        row.setMinimumHeight(dp(64));
+        row.setPadding(dp(12), dp(8), dp(10), dp(8));
+        row.setBackground(rounded(Color.WHITE, 0, COLOR_LINE));
+        row.setOnClickListener(listener);
+        row.setContentDescription(titleText);
+
+        TextView icon = text("", 1, COLOR_PRIMARY, Typeface.NORMAL);
+        icon.setGravity(Gravity.CENTER);
+        Drawable drawable = getDrawable(iconResource).mutate();
+        drawable.setTint(COLOR_PRIMARY);
+        icon.setCompoundDrawablesWithIntrinsicBounds(null, drawable, null, null);
+        row.addView(icon, new LinearLayout.LayoutParams(dp(40), dp(48)));
+
+        LinearLayout copy = new LinearLayout(this);
+        copy.setOrientation(LinearLayout.VERTICAL);
+        row.addView(copy, withMargins(weightWrap(1), dp(4), 0, dp(6), 0));
+
+        TextView title = text(titleText, 15, COLOR_TEXT, Typeface.BOLD);
+        copy.addView(title, matchWrap());
+        TextView subtitle = text(subtitleText, 12, COLOR_MUTED, Typeface.NORMAL);
+        subtitle.setPadding(0, dp(2), 0, 0);
+        copy.addView(subtitle, matchWrap());
+
+        TextView chevron = text("›", 22, COLOR_MUTED, Typeface.NORMAL);
+        chevron.setGravity(Gravity.CENTER);
+        row.addView(chevron, new LinearLayout.LayoutParams(dp(24), dp(48)));
+        return row;
+    }
+
+    private void setButtonIcon(Button button, int iconResource, int tint) {
+        button.setTextAlignment(View.TEXT_ALIGNMENT_GRAVITY);
+        button.setGravity(Gravity.CENTER);
+        Drawable icon = getDrawable(iconResource).mutate();
+        icon.setTint(tint);
+        icon.setBounds(0, 0, dp(18), dp(18));
+        SpannableString content = new SpannableString("\uFFFC  " + button.getText());
+        content.setSpan(
+                new ImageSpan(icon, ImageSpan.ALIGN_BASELINE),
+                0,
+                1,
+                Spanned.SPAN_EXCLUSIVE_EXCLUSIVE
+        );
+        button.setText(content);
     }
 
     private View reminderCard() {
         LinearLayout row = new LinearLayout(this);
         row.setOrientation(LinearLayout.HORIZONTAL);
         row.setGravity(android.view.Gravity.CENTER_VERTICAL);
+        row.setMinimumHeight(dp(64));
         row.setPadding(dp(12), dp(8), dp(10), dp(8));
-        row.setBackground(rounded(COLOR_SOFT, dp(8), 0));
+        row.setBackground(rounded(COLOR_CARD, dp(8), COLOR_LINE));
         row.setOnClickListener(new View.OnClickListener() {
             @Override public void onClick(View view) { showReminderSettingsDialog(); }
         });
@@ -403,8 +723,8 @@ public final class MainActivity extends Activity {
         row.addView(reminderStatusText, weightWrap(1));
 
         reminderPermissionButton = utilityButton("授权");
-        reminderPermissionButton.setMinHeight(dp(32));
-        reminderPermissionButton.setMinimumHeight(0);
+        reminderPermissionButton.setMinHeight(dp(48));
+        reminderPermissionButton.setMinimumHeight(dp(48));
         reminderPermissionButton.setPadding(dp(10), 0, dp(10), 0);
         reminderPermissionButton.setOnClickListener(new View.OnClickListener() {
             @Override
@@ -598,6 +918,21 @@ public final class MainActivity extends Activity {
         updateReminderStatus();
         renderFoods();
         toast(reminderSettings.enabled ? "提醒设置已保存" : "提醒已关闭，食品数据仍保留");
+    }
+
+    @Override
+    protected void onSaveInstanceState(Bundle outState) {
+        outState.putInt(STATE_DESTINATION, currentDestination);
+        super.onSaveInstanceState(outState);
+    }
+
+    @Override
+    public void onBackPressed() {
+        if (currentDestination != AppNavigation.OVERVIEW) {
+            showDestination(AppNavigation.OVERVIEW);
+            return;
+        }
+        super.onBackPressed();
     }
 
     @Override
@@ -1665,7 +2000,7 @@ public final class MainActivity extends Activity {
         briefingView.addView(title, matchWrap());
 
         if (briefing.isEmpty()) {
-            TextView empty = text(reminderSettings.enabled ? "没有需要优先处理的食品" : "提醒已关闭，食品仍按日期排序", 15, COLOR_TEXT, Typeface.BOLD);
+            TextView empty = text(reminderSettings.enabled ? "没有需要优先处理的商品" : "提醒已关闭，商品仍按日期排序", 15, COLOR_TEXT, Typeface.BOLD);
             empty.setPadding(0, dp(3), 0, 0);
             briefingView.addView(empty, matchWrap());
         } else {
@@ -1703,6 +2038,132 @@ public final class MainActivity extends Activity {
     }
 
     private void renderFoods() {
+        if (currentDestination == AppNavigation.OVERVIEW) {
+            renderOverview();
+            return;
+        }
+        if (currentDestination == AppNavigation.SETTINGS) {
+            updateReminderStatus();
+            return;
+        }
+        renderInventoryFoods();
+    }
+
+    private void renderOverview() {
+        if (listContainer == null) {
+            return;
+        }
+
+        int today = 0;
+        int soon = 0;
+        int expired = 0;
+        for (FoodItem food : foods) {
+            if (food.isFinished) {
+                continue;
+            }
+            String status = DateRules.getExpiryStatus(food.expiryDate);
+            if (DateRules.STATUS_TODAY.equals(status)) {
+                today++;
+            } else if (DateRules.STATUS_SOON.equals(status)) {
+                soon++;
+            } else if (DateRules.STATUS_EXPIRED.equals(status)) {
+                expired++;
+            }
+        }
+        if (overviewTodayValue != null) {
+            overviewTodayValue.setText(String.valueOf(today));
+        }
+        if (overviewSoonValue != null) {
+            overviewSoonValue.setText(String.valueOf(soon));
+        }
+        if (overviewExpiredValue != null) {
+            overviewExpiredValue.setText(String.valueOf(expired));
+        }
+
+        renderDailyBriefing();
+        listContainer.removeAllViews();
+        List<FoodItem> priorityFoods = overviewPriorityFoods();
+        if (priorityFoods.isEmpty()) {
+            listContainer.addView(emptyGuideCard(), matchWrap());
+            return;
+        }
+
+        int limit = Math.min(4, priorityFoods.size());
+        for (int index = 0; index < limit; index++) {
+            listContainer.addView(
+                    overviewFoodRow(priorityFoods.get(index)),
+                    withMargins(matchWrap(), 0, 0, 0, dp(8))
+            );
+        }
+    }
+
+    private List<FoodItem> overviewPriorityFoods() {
+        List<FoodItem> result = new ArrayList<FoodItem>();
+        for (FoodItem food : foods) {
+            if (!food.isFinished) {
+                result.add(food);
+            }
+        }
+        Collections.sort(result, new Comparator<FoodItem>() {
+            @Override
+            public int compare(FoodItem left, FoodItem right) {
+                int statusCompare = statusRank(foodStatus(left)) - statusRank(foodStatus(right));
+                if (statusCompare != 0) {
+                    return statusCompare;
+                }
+                boolean leftValid = DateRules.isValidDateString(left.expiryDate);
+                boolean rightValid = DateRules.isValidDateString(right.expiryDate);
+                if (leftValid && rightValid) {
+                    return left.expiryDate.compareTo(right.expiryDate);
+                }
+                if (leftValid) {
+                    return -1;
+                }
+                if (rightValid) {
+                    return 1;
+                }
+                return left.name.compareTo(right.name);
+            }
+        });
+        return result;
+    }
+
+    private View overviewFoodRow(final FoodItem food) {
+        LinearLayout row = card();
+        row.setPadding(dp(12), dp(10), dp(12), dp(10));
+        row.setOnClickListener(new View.OnClickListener() {
+            @Override public void onClick(View view) { showFoodDetail(food); }
+        });
+
+        LinearLayout top = new LinearLayout(this);
+        top.setOrientation(LinearLayout.HORIZONTAL);
+        top.setGravity(Gravity.CENTER_VERTICAL);
+        row.addView(top, matchWrap());
+
+        TextView name = text(food.name, 16, COLOR_TEXT, Typeface.BOLD);
+        name.setMaxLines(2);
+        name.setEllipsize(TextUtils.TruncateAt.END);
+        top.addView(name, weightWrap(1));
+
+        TextView status = text(FoodData.statusLabel(foodStatus(food)), 12, statusColor(food), Typeface.BOLD);
+        status.setGravity(Gravity.CENTER);
+        status.setPadding(dp(8), dp(3), dp(8), dp(3));
+        status.setBackground(rounded(statusBgColor(food), dp(8), 0));
+        top.addView(status, wrapWrap());
+
+        String dateText = isNoExpiryFood(food) ? "无过期时间" : emptyFallback(food.expiryDate, "日期待补充");
+        TextView meta = text(
+                dateText + " · 剩余 " + formatNumber(food.remainingQuantity) + " " + displayUnit(food.unit),
+                13,
+                COLOR_MUTED,
+                Typeface.NORMAL
+        );
+        meta.setPadding(0, dp(5), 0, 0);
+        row.addView(meta, matchWrap());
+        return row;
+    }
+
+    private void renderInventoryFoods() {
         if (listContainer == null || statsText == null || activeFilterBar == null) {
             return;
         }
@@ -1710,30 +2171,31 @@ public final class MainActivity extends Activity {
         normalizeFilterSelections();
         listContainer.removeAllViews();
         statsText.setText(buildStatsText());
-        renderDailyBriefing();
-        renderActiveFilterBar();
+        boolean hasActiveFilters = FoodItem.cleanText(searchQuery).length() > 0
+                || statusFilterActive
+                || categoryFilterActive
+                || locationFilterActive;
+        activeFilterBar.setVisibility(hasActiveFilters ? View.VISIBLE : View.GONE);
+        if (hasActiveFilters) {
+            renderActiveFilterBar();
+        }
 
         List<FoodItem> visibleFoods = filteredSortedFoods();
-
         if (foods.isEmpty()) {
             listContainer.addView(emptyGuideCard(), matchWrap());
             return;
         }
-
         if (visibleFoods.isEmpty()) {
-            String emptyText = FoodItem.cleanText(searchQuery).length() > 0
-                    ? "当前筛选和搜索下没有食品"
-                    : "当前筛选下没有食品";
-            TextView empty = text(emptyText, 16, COLOR_MUTED, Typeface.NORMAL);
-            empty.setGravity(android.view.Gravity.CENTER);
-            empty.setPadding(dp(12), dp(26), dp(12), dp(26));
+            TextView empty = text("当前搜索和筛选下没有商品", 15, COLOR_MUTED, Typeface.NORMAL);
+            empty.setGravity(Gravity.CENTER);
+            empty.setPadding(dp(12), dp(28), dp(12), dp(28));
             empty.setBackground(rounded(COLOR_CARD, dp(8), COLOR_LINE));
             listContainer.addView(empty, matchWrap());
             return;
         }
 
         for (FoodItem food : visibleFoods) {
-            listContainer.addView(foodCard(food), withMargins(matchWrap(), 0, 0, 0, dp(12)));
+            listContainer.addView(foodCard(food), withMargins(matchWrap(), 0, 0, 0, dp(10)));
         }
     }
 
@@ -2745,10 +3207,10 @@ public final class MainActivity extends Activity {
         button.setAllCaps(false);
         button.setMinWidth(0);
         button.setMinimumWidth(0);
-        button.setMinHeight(dp(38));
+        button.setMinHeight(dp(48));
         button.setMinimumHeight(0);
         button.setPadding(dp(12), 0, dp(12), 0);
-        button.setTextColor(selected ? Color.WHITE : Color.rgb(55, 67, 62));
+        button.setTextColor(selected ? Color.WHITE : COLOR_TEXT);
         button.setBackground(rounded(selected ? COLOR_PRIMARY : COLOR_SOFT, dp(8), 0));
         return button;
     }
@@ -2760,11 +3222,11 @@ public final class MainActivity extends Activity {
         button.setAllCaps(false);
         button.setMinWidth(0);
         button.setMinimumWidth(0);
-        button.setMinHeight(dp(30));
+        button.setMinHeight(dp(48));
         button.setMinimumHeight(0);
         button.setPadding(dp(10), 0, dp(10), 0);
         button.setTextColor(COLOR_PRIMARY);
-        button.setBackgroundTintList(ColorStateList.valueOf(Color.rgb(231, 243, 233)));
+        button.setBackgroundTintList(ColorStateList.valueOf(COLOR_PRIMARY_SOFT));
         if (listener != null) {
             button.setOnClickListener(listener);
         }
@@ -2776,10 +3238,8 @@ public final class MainActivity extends Activity {
         int today = 0;
         int soon = 0;
         int expired = 0;
-        int finished = 0;
         for (FoodItem food : foods) {
             if (food.isFinished) {
-                finished++;
                 continue;
             }
 
@@ -2796,8 +3256,7 @@ public final class MainActivity extends Activity {
             }
         }
 
-        return "在库 " + active + " 件 · 临期 " + soon + " · 已过期 " + expired
-                + "\n今日到期 " + today + " · 已用完 " + finished;
+        return "在库 " + active + " · 今日 " + today + " · 临期 " + soon + " · 过期 " + expired;
     }
 
     private interface FilterButtonBinder {
@@ -2966,7 +3425,7 @@ public final class MainActivity extends Activity {
 
     private View emptyGuideCard() {
         LinearLayout card = card();
-        TextView heading = text("还没有食品", 18, COLOR_TEXT, Typeface.BOLD);
+        TextView heading = text("还没有商品", 18, COLOR_TEXT, Typeface.BOLD);
         card.addView(heading, matchWrap());
 
         TextView copy = text("识别包装或手动新增，保存前都可以确认和修改。", 14, COLOR_MUTED, Typeface.NORMAL);
@@ -2988,8 +3447,8 @@ public final class MainActivity extends Activity {
 
     private View foodCard(final FoodItem food) {
         final ReminderPlan reminderPlan = ReminderPolicy.planFor(food, reminderSettings);
-        LinearLayout card = card();
-        card.setOnClickListener(new View.OnClickListener() {
+        LinearLayout item = card();
+        item.setOnClickListener(new View.OnClickListener() {
             @Override
             public void onClick(View view) {
                 showFoodDetail(food);
@@ -2998,55 +3457,68 @@ public final class MainActivity extends Activity {
 
         LinearLayout top = new LinearLayout(this);
         top.setOrientation(LinearLayout.HORIZONTAL);
-        top.setGravity(android.view.Gravity.CENTER_VERTICAL);
-        card.addView(top, matchWrap());
+        top.setGravity(Gravity.CENTER_VERTICAL);
+        item.addView(top, matchWrap());
 
-        TextView name = text(food.name, 18, COLOR_TEXT, Typeface.BOLD);
+        TextView name = text(food.name, 16, COLOR_TEXT, Typeface.BOLD);
         name.setMaxLines(2);
         name.setEllipsize(TextUtils.TruncateAt.END);
         top.addView(name, weightWrap(1));
 
-        TextView status = text(FoodData.statusLabel(foodStatus(food)), 13, statusColor(food), Typeface.BOLD);
-        status.setGravity(android.view.Gravity.CENTER);
-        status.setPadding(dp(8), dp(4), dp(8), dp(4));
-        status.setBackground(rounded(statusBgColor(food), dp(12), 0));
+        TextView status = text(FoodData.statusLabel(foodStatus(food)), 12, statusColor(food), Typeface.BOLD);
+        status.setGravity(Gravity.CENTER);
+        status.setPadding(dp(8), dp(3), dp(8), dp(3));
+        status.setBackground(rounded(statusBgColor(food), dp(8), 0));
         top.addView(status, wrapWrap());
 
-        TextView meta = text(
-                FoodData.categoryLabel(food.category) + " · " +
-                        FoodData.storageLabel(food.storageMethod) + " · " +
-                        FoodData.locationLabel(food.location) + " · 剩余 " +
-                        formatNumber(food.remainingQuantity) + "/" + formatNumber(food.quantity) + " " + displayUnit(food.unit),
-                14,
+        TextView category = text(
+                FoodData.categoryLabel(food.category) + " · "
+                        + FoodData.locationLabel(food.location),
+                13,
                 COLOR_MUTED,
                 Typeface.NORMAL
         );
-        meta.setPadding(0, dp(6), 0, 0);
-        meta.setMaxLines(2);
-        card.addView(meta, matchWrap());
+        category.setPadding(0, dp(5), 0, 0);
+        category.setMaxLines(1);
+        category.setEllipsize(TextUtils.TruncateAt.END);
+        item.addView(category, matchWrap());
+
+        LinearLayout dateRow = new LinearLayout(this);
+        dateRow.setOrientation(LinearLayout.HORIZONTAL);
+        dateRow.setGravity(Gravity.CENTER_VERTICAL);
+        dateRow.setPadding(0, dp(6), 0, dp(4));
+        item.addView(dateRow, matchWrap());
 
         String dateLine = isNoExpiryFood(food)
-                ? "已生产时长：" + DateRules.productionAgeLabel(food.productionDate)
-                : "最终可食用日期：" + food.expiryDate;
-        TextView expiry = text(dateLine, 15, COLOR_TEXT, Typeface.NORMAL);
-        expiry.setPadding(0, dp(6), 0, dp(4));
-        card.addView(expiry, matchWrap());
+                ? "无过期时间"
+                : "最终日期 " + emptyFallback(food.expiryDate, "待补充");
+        TextView expiry = text(dateLine, 14, COLOR_TEXT, Typeface.BOLD);
+        dateRow.addView(expiry, weightWrap(1));
 
-        String afterOpenLine = afterOpenCardLine(food);
-        if (afterOpenLine.length() > 0) {
-            TextView afterOpen = text(afterOpenLine, 14, COLOR_MUTED, Typeface.NORMAL);
-            afterOpen.setPadding(0, 0, 0, dp(6));
-            card.addView(afterOpen, matchWrap());
+        TextView quantity = text(
+                "剩余 " + formatNumber(food.remainingQuantity) + "/" + formatNumber(food.quantity)
+                        + " " + displayUnit(food.unit),
+                13,
+                COLOR_MUTED,
+                Typeface.NORMAL
+        );
+        dateRow.addView(quantity, wrapWrap());
+
+        if (FoodItem.cleanText(reminderPlan.cardHint).length() > 0) {
+            TextView reminderHint = text(
+                    reminderPlan.cardHint,
+                    12,
+                    food.isFinished ? COLOR_MUTED : COLOR_PRIMARY,
+                    Typeface.NORMAL
+            );
+            reminderHint.setMaxLines(2);
+            reminderHint.setEllipsize(TextUtils.TruncateAt.END);
+            reminderHint.setPadding(0, 0, 0, dp(8));
+            item.addView(reminderHint, matchWrap());
         }
-
-        TextView reminderHint = text(reminderPlan.cardHint, 14, food.isFinished ? COLOR_MUTED : COLOR_PRIMARY, Typeface.BOLD);
-        reminderHint.setLineSpacing(dp(2), 1.0f);
-        reminderHint.setPadding(0, 0, 0, dp(8));
-        card.addView(reminderHint, matchWrap());
 
         LinearLayout quickActions = new LinearLayout(this);
         quickActions.setOrientation(LinearLayout.HORIZONTAL);
-
         if (!food.isFinished) {
             Button decreaseOne = outlineButton("减少 1");
             decreaseOne.setOnClickListener(new FoodActionClickListener(food, FOOD_ACTION_DECREASE_ONE));
@@ -3057,11 +3529,11 @@ public final class MainActivity extends Activity {
         replenish.setOnClickListener(new FoodActionClickListener(food, FOOD_ACTION_REPLENISH));
         quickActions.addView(replenish, withMargins(weightWrap(1), 0, 0, dp(6), 0));
 
-        Button more = utilityButton("更多操作");
+        Button more = utilityButton("更多");
         more.setOnClickListener(new FoodActionClickListener(food, FOOD_ACTION_MORE));
         quickActions.addView(more, weightWrap(1));
-        card.addView(quickActions, matchWrap());
-        return card;
+        item.addView(quickActions, matchWrap());
+        return item;
     }
 
     private int statusColor(FoodItem food) {
@@ -3070,10 +3542,10 @@ public final class MainActivity extends Activity {
             return COLOR_DANGER;
         }
         if (DateRules.STATUS_TODAY.equals(status)) {
-            return Color.rgb(152, 86, 26);
+            return COLOR_WARNING;
         }
         if (DateRules.STATUS_SOON.equals(status)) {
-            return Color.rgb(136, 112, 31);
+            return COLOR_WARNING;
         }
         if (DateRules.STATUS_UNKNOWN.equals(status)) {
             return Color.rgb(74, 80, 89);
@@ -3081,7 +3553,7 @@ public final class MainActivity extends Activity {
         if (DateRules.STATUS_FINISHED.equals(status)) {
             return Color.rgb(74, 80, 89);
         }
-        return COLOR_PRIMARY;
+        return COLOR_SUCCESS;
     }
 
     private int statusBgColor(FoodItem food) {
@@ -3090,10 +3562,10 @@ public final class MainActivity extends Activity {
             return Color.rgb(253, 235, 232);
         }
         if (DateRules.STATUS_TODAY.equals(status)) {
-            return Color.rgb(255, 241, 220);
+            return Color.rgb(255, 246, 224);
         }
         if (DateRules.STATUS_SOON.equals(status)) {
-            return Color.rgb(250, 244, 211);
+            return Color.rgb(255, 246, 224);
         }
         if (DateRules.STATUS_UNKNOWN.equals(status)) {
             return Color.rgb(241, 243, 246);
@@ -3101,7 +3573,7 @@ public final class MainActivity extends Activity {
         if (DateRules.STATUS_FINISHED.equals(status)) {
             return Color.rgb(241, 243, 246);
         }
-        return Color.rgb(231, 241, 232);
+        return Color.rgb(232, 247, 240);
     }
 
     private void showFoodDetail(final FoodItem food) {
@@ -4125,7 +4597,7 @@ public final class MainActivity extends Activity {
 
     private void clearSearchFocusForUserScroll() {
         View focused = getCurrentFocus();
-        if (focused != searchInput && focused != pinnedSearchInput) {
+        if (focused == null || (focused != searchInput && focused != pinnedSearchInput)) {
             return;
         }
 
@@ -4190,7 +4662,7 @@ public final class MainActivity extends Activity {
         button.setTextColor(Color.WHITE);
         button.setTextSize(15);
         button.setAllCaps(false);
-        button.setMinHeight(dp(46));
+        button.setMinHeight(dp(48));
         button.setBackground(rounded(color, dp(8), 0));
         return button;
     }
@@ -4201,7 +4673,7 @@ public final class MainActivity extends Activity {
         button.setTextColor(COLOR_PRIMARY);
         button.setTextSize(14);
         button.setAllCaps(false);
-        button.setMinHeight(dp(44));
+        button.setMinHeight(dp(48));
         button.setBackground(rounded(Color.WHITE, dp(8), COLOR_LINE));
         return button;
     }
@@ -4209,13 +4681,13 @@ public final class MainActivity extends Activity {
     private Button utilityButton(String value) {
         Button button = new Button(this);
         button.setText(value);
-        button.setTextColor(Color.rgb(55, 67, 62));
+        button.setTextColor(COLOR_TEXT);
         button.setTextSize(13);
         button.setAllCaps(false);
         button.setMinWidth(0);
         button.setMinimumWidth(0);
-        button.setMinHeight(dp(40));
-        button.setMinimumHeight(0);
+        button.setMinHeight(dp(48));
+        button.setMinimumHeight(dp(48));
         button.setPadding(dp(10), 0, dp(10), 0);
         button.setBackground(rounded(COLOR_SOFT, dp(8), 0));
         return button;
@@ -4230,7 +4702,7 @@ public final class MainActivity extends Activity {
         editText.setTextColor(COLOR_TEXT);
         editText.setHintTextColor(Color.rgb(128, 135, 132));
         editText.setTextSize(15);
-        editText.setMinHeight(dp(44));
+        editText.setMinHeight(dp(48));
         editText.setBackground(rounded(Color.WHITE, dp(6), COLOR_LINE));
         editText.setPadding(dp(10), 0, dp(10), 0);
         return editText;
@@ -4436,7 +4908,7 @@ public final class MainActivity extends Activity {
         adapter.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item);
         Spinner spinner = new Spinner(this);
         spinner.setAdapter(adapter);
-        spinner.setMinimumHeight(dp(44));
+        spinner.setMinimumHeight(dp(48));
         spinner.setPadding(dp(8), 0, dp(8), 0);
         spinner.setBackground(rounded(Color.WHITE, dp(8), COLOR_LINE));
         return spinner;
