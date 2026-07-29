@@ -283,6 +283,16 @@ final class FoodData {
             return 5;
         }
 
+        String batchId = normalizeSearchText(food.id);
+        if (batchId.length() > 0 && batchId.contains(query)) {
+            return 6;
+        }
+
+        String profileId = normalizeSearchText(food.productProfileId);
+        if (profileId.length() > 0 && profileId.contains(query)) {
+            return 7;
+        }
+
         String name = normalizeSearchText(food.name);
         int nameIndex = name.indexOf(query);
         if (nameIndex >= 0) {

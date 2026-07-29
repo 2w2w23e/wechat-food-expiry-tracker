@@ -1217,6 +1217,165 @@ public final class LocalLogicTest {
             }
         });
 
+        test("InventoryPresentation groups batches only by product profile", new TestCase() {
+            public void run() {
+                FoodItem first = food("Milk", "dairy", "refrigerated", "2026-07-01", "2026-08-01", 2);
+                first.id = "batch-a";
+                first.productProfileId = "profile-a";
+                first.barcode = "4006381333931";
+                assertTrue(FoodData.matchesFoodSearch(first, "batch-a"),
+                        "inventory search should match the immutable batch id");
+                assertTrue(FoodData.matchesFoodSearch(first, "profile-a"),
+                        "inventory search should match the product profile id");
+                FoodItem replenished = first.copyAsNewRecord("batch-b", "2026-07-20T08:00:00+0800");
+                replenished.expiryDate = "2026-09-01";
+                FoodItem otherProduct = food("Milk gift box", "dairy", "refrigerated", "2026-07-02", "2026-10-01", 1);
+                otherProduct.id = "batch-c";
+                otherProduct.productProfileId = "profile-b";
+                otherProduct.barcode = "4006381333931";
+
+                List<InventoryPresentation.ProductGroup> groups = InventoryPresentation.group(
+                        Arrays.asList(first, replenished, otherProduct)
+                );
+                assertEquals(2, groups.size());
+                InventoryPresentation.ProductGroup firstGroup =
+                        InventoryPresentation.find(Arrays.asList(first, replenished, otherProduct), "profile-a");
+                assertTrue(firstGroup != null, "profile-a should be grouped");
+                assertEquals(2, firstGroup.activeBatchCount);
+                assertEquals("batch-a", firstGroup.batches.get(0).id);
+                assertEquals("batch-b", firstGroup.batches.get(1).id);
+                InventoryPresentation.ProductGroup secondGroup =
+                        InventoryPresentation.find(Arrays.asList(first, replenished, otherProduct), "profile-b");
+                assertTrue(secondGroup != null, "same barcode must keep another profile");
+                assertEquals("Milk gift box", secondGroup.name);
+            }
+        });
+
+        test("InventoryPresentation orders active batches by expiry and unknown dates last", new TestCase() {
+            public void run() {
+                FoodItem later = food("Milk", "dairy", "refrigerated", "2026-07-01", "2026-09-01", 5);
+                later.id = "later";
+                later.productProfileId = "profile-order";
+                later.remainingQuantity = 4;
+                FoodItem unknown = later.copy();
+                unknown.id = "unknown";
+                unknown.expiryDate = "";
+                unknown.dateSource = "unknown";
+                unknown.quantity = 2;
+                unknown.remainingQuantity = 1;
+                FoodItem earlier = later.copy();
+                earlier.id = "earlier";
+                earlier.expiryDate = "2026-08-01";
+                earlier.quantity = 3;
+                earlier.remainingQuantity = 2;
+                FoodItem finished = earlier.copy();
+                finished.id = "finished";
+                finished.isFinished = true;
+                finished.remainingQuantity = 0;
+                finished.finishedAt = "2026-07-25T08:00:00+0800";
+
+                InventoryPresentation.ProductGroup group = InventoryPresentation.find(
+                        Arrays.asList(later, unknown, finished, earlier),
+                        "profile-order"
+                );
+                assertTrue(group != null, "group should exist");
+                assertEquals(Arrays.asList("earlier", "later", "unknown", "finished"), Arrays.asList(
+                        group.batches.get(0).id,
+                        group.batches.get(1).id,
+                        group.batches.get(2).id,
+                        group.batches.get(3).id
+                ));
+                assertEquals(3, group.activeBatchCount);
+                assertEquals(1, group.finishedBatchCount);
+                assertEquals(10.0, group.totalQuantity);
+                assertEquals(7.0, group.totalRemainingQuantity);
+                assertEquals("2026-08-01", group.nearestExpiryDate);
+            }
+        });
+
+        test("InventoryPresentation decrements the earliest active batch with stock", new TestCase() {
+            public void run() {
+                FoodItem emptyEarly = food("Milk", "dairy", "refrigerated", "2026-07-01", "2026-08-01", 1);
+                emptyEarly.id = "empty";
+                emptyEarly.productProfileId = "profile-decrement";
+                emptyEarly.remainingQuantity = 0;
+                FoodItem stockedLater = emptyEarly.copy();
+                stockedLater.id = "stocked";
+                stockedLater.expiryDate = "2026-08-02";
+                stockedLater.quantity = 3;
+                stockedLater.remainingQuantity = 2;
+                FoodItem finished = stockedLater.copy();
+                finished.id = "finished";
+                finished.expiryDate = "2026-07-31";
+                finished.isFinished = true;
+
+                InventoryPresentation.ProductGroup group = InventoryPresentation.find(
+                        Arrays.asList(stockedLater, finished, emptyEarly),
+                        "profile-decrement"
+                );
+                FoodItem target = group == null ? null : group.decrementTarget();
+                assertTrue(target != null, "stocked active batch should be selected");
+                assertEquals("stocked", target.id);
+            }
+        });
+
+        test("InventoryPresentation never merges unidentified legacy batches", new TestCase() {
+            public void run() {
+                FoodItem first = food("Milk", "dairy", "refrigerated", "", "2026-08-01", 1);
+                first.id = "legacy-a";
+                first.productProfileId = "";
+                first.barcode = "4006381333931";
+                FoodItem second = first.copy();
+                second.id = "legacy-b";
+
+                List<InventoryPresentation.ProductGroup> groups = InventoryPresentation.group(
+                        Arrays.asList(first, second)
+                );
+                assertEquals(2, groups.size());
+                assertFalse(groups.get(0).profileId.equals(groups.get(1).profileId),
+                        "missing profile ids must fall back to distinct batch keys");
+            }
+        });
+        test("InventoryPresentation displays distinguishable batch id suffixes", new TestCase() {
+            public void run() {
+                assertEquals("未编号", InventoryPresentation.displayBatchId(""));
+                assertEquals("batch-123", InventoryPresentation.displayBatchId("batch-123"));
+                assertEquals("…12345678", InventoryPresentation.displayBatchId(
+                        "food_aaaaaaaa-bbbb-cccc-dddd-12345678"
+                ));
+                assertFalse(
+                        InventoryPresentation.displayBatchId("food_common-prefix_first0001").equals(
+                                InventoryPresentation.displayBatchId("food_common-prefix_second002")
+                        ),
+                        "long ids sharing a prefix must stay visually distinguishable"
+                );
+            }
+        });
+        test("InventoryPresentation distinguishes explicit no-expiry from missing dates", new TestCase() {
+            public void run() {
+                FoodItem noExpiry = food("Salt", "condiment", "room_temp", "2026-07-01", "", 1);
+                noExpiry.id = "no-expiry-a";
+                noExpiry.productProfileId = "profile-no-expiry";
+                noExpiry.dateSource = "none";
+                FoodItem second = noExpiry.copy();
+                second.id = "no-expiry-b";
+
+                InventoryPresentation.ProductGroup group = InventoryPresentation.find(
+                        Arrays.asList(noExpiry, second),
+                        "profile-no-expiry"
+                );
+                assertTrue(group != null && group.allActiveNoExpiry,
+                        "all explicit no-expiry batches should not look like missing dates");
+
+                second.dateSource = "unknown";
+                group = InventoryPresentation.find(
+                        Arrays.asList(noExpiry, second),
+                        "profile-no-expiry"
+                );
+                assertFalse(group.allActiveNoExpiry,
+                        "one missing date must keep the product in date-review state");
+            }
+        });
         test("Replenishment creates an empty independent batch draft", new TestCase() {
             public void run() {
                 FoodItem source = food("Milk", "dairy", "refrigerated", "2026-07-01", "2026-07-20", 4);
