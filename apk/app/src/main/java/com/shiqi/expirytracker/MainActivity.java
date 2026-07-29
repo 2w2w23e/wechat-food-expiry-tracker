@@ -89,14 +89,14 @@ public final class MainActivity extends Activity {
     private static final String EXTRA_QA_REPLENISHMENT_VIDEO_PATH =
             "com.shiqi.expirytracker.QA_REPLENISHMENT_VIDEO_PATH";
 
-    private static final int COLOR_BG = Color.rgb(246, 247, 248);
-    private static final int COLOR_CARD = Color.WHITE;
-    private static final int COLOR_TEXT = Color.rgb(28, 34, 31);
-    private static final int COLOR_MUTED = Color.rgb(94, 103, 99);
-    private static final int COLOR_PRIMARY = Color.rgb(38, 104, 76);
-    private static final int COLOR_DANGER = Color.rgb(159, 53, 46);
-    private static final int COLOR_LINE = Color.rgb(224, 228, 226);
-    private static final int COLOR_SOFT = Color.rgb(239, 242, 241);
+    private static final int COLOR_BG = AppUiTokens.COLOR_BACKGROUND;
+    private static final int COLOR_CARD = AppUiTokens.COLOR_SURFACE;
+    private static final int COLOR_TEXT = AppUiTokens.COLOR_TEXT;
+    private static final int COLOR_MUTED = AppUiTokens.COLOR_TEXT_MUTED;
+    private static final int COLOR_PRIMARY = AppUiTokens.COLOR_PRIMARY;
+    private static final int COLOR_DANGER = AppUiTokens.COLOR_DANGER;
+    private static final int COLOR_LINE = AppUiTokens.COLOR_DIVIDER;
+    private static final int COLOR_SOFT = AppUiTokens.COLOR_SURFACE_MUTED;
 
     private FoodStore store;
     private List<FoodItem> foods = new ArrayList<FoodItem>();
@@ -250,7 +250,16 @@ public final class MainActivity extends Activity {
         localBadge.setGravity(android.view.Gravity.CENTER);
         localBadge.setPadding(dp(9), dp(4), dp(9), dp(4));
         localBadge.setBackground(rounded(COLOR_SOFT, dp(8), 0));
-        heading.addView(localBadge, wrapWrap());
+        heading.addView(localBadge, withMargins(wrapWrap(), dp(8), 0, 0, 0));
+
+        Button dataButton = utilityButton("");
+        dataButton.setContentDescription("打开数据管理");
+        setButtonIcon(dataButton, android.R.drawable.ic_menu_manage, COLOR_PRIMARY);
+        dataButton.setPadding(0, 0, 0, 0);
+        dataButton.setOnClickListener(new View.OnClickListener() {
+            @Override public void onClick(View view) { showDataManagementMenu(); }
+        });
+        heading.addView(dataButton, withMargins(fixed(48, 48), dp(8), 0, 0, 0));
 
         TextView subtitle = text("按到期时间管理，需要优先处理的食品一眼可见", 13, COLOR_MUTED, Typeface.NORMAL);
         subtitle.setPadding(0, dp(4), 0, dp(14));
@@ -260,51 +269,37 @@ public final class MainActivity extends Activity {
         dailyBriefingContainer.setOrientation(LinearLayout.VERTICAL);
         content.addView(dailyBriefingContainer, withMargins(matchWrap(), 0, 0, 0, dp(10)));
 
-        LinearLayout actionRow = new LinearLayout(this);
-        actionRow.setOrientation(LinearLayout.HORIZONTAL);
-        actionRow.setGravity(android.view.Gravity.CENTER_VERTICAL);
-        content.addView(actionRow, matchWrap());
-
-        Button scanButton = button("拍照识别标签", COLOR_PRIMARY);
+        Button scanButton = button("智能识别商品", COLOR_PRIMARY);
+        scanButton.setContentDescription("打开相机，自动识别条码、商品文字和日期");
+        setButtonIcon(scanButton, android.R.drawable.ic_menu_camera, Color.WHITE);
+        scanButton.setCompoundDrawablePadding(dp(7));
         scanButton.setOnClickListener(new View.OnClickListener() {
             @Override public void onClick(View view) { startDateOcrScanner(); }
         });
-        actionRow.addView(scanButton, withMargins(weightWrap(1), 0, 0, dp(8), 0));
-
-        Button findByBarcodeButton = outlineButton("扫描商品条码");
-        findByBarcodeButton.setOnClickListener(new View.OnClickListener() {
-            @Override public void onClick(View view) { startBarcodeScanner(); }
-        });
-        actionRow.addView(findByBarcodeButton, weightWrap(1));
+        content.addView(scanButton, matchWrap());
 
         LinearLayout utilityRow = new LinearLayout(this);
         utilityRow.setOrientation(LinearLayout.HORIZONTAL);
         utilityRow.setGravity(android.view.Gravity.CENTER_VERTICAL);
-        content.addView(utilityRow, withMargins(matchWrap(), 0, dp(8), 0, 0));
+        content.addView(utilityRow, withMargins(matchWrap(), 0, dp(10), 0, 0));
 
-        Button addButton = utilityButton("手动记录");
+        Button findByBarcodeButton = outlineButton("扫码找商品");
+        findByBarcodeButton.setContentDescription("扫描条码查找已有商品和批次");
+        setButtonIcon(findByBarcodeButton, android.R.drawable.ic_menu_search, COLOR_PRIMARY);
+        findByBarcodeButton.setCompoundDrawablePadding(dp(5));
+        findByBarcodeButton.setOnClickListener(new View.OnClickListener() {
+            @Override public void onClick(View view) { startBarcodeScanner(); }
+        });
+        utilityRow.addView(findByBarcodeButton, withMargins(weightWrap(1), 0, 0, dp(8), 0));
+
+        Button addButton = outlineButton("手动新增");
+        addButton.setContentDescription("不使用识别，手动新增商品");
+        setButtonIcon(addButton, android.R.drawable.ic_input_add, COLOR_PRIMARY);
+        addButton.setCompoundDrawablePadding(dp(5));
         addButton.setOnClickListener(new View.OnClickListener() {
             @Override public void onClick(View view) { showFoodForm(null); }
         });
-        utilityRow.addView(addButton, withMargins(weightWrap(1), 0, 0, dp(8), 0));
-
-        Button importButton = utilityButton("导入 Excel");
-        importButton.setOnClickListener(new View.OnClickListener() {
-            @Override public void onClick(View view) { startExcelImport(); }
-        });
-        utilityRow.addView(importButton, withMargins(weightWrap(1), 0, 0, dp(8), 0));
-
-        Button exportButton = utilityButton("导出 Excel");
-        exportButton.setOnClickListener(new View.OnClickListener() {
-            @Override public void onClick(View view) { startExcelExport(); }
-        });
-        utilityRow.addView(exportButton, weightWrap(1));
-
-        Button jsonTransferButton = outlineButton("快速换机（JSON）");
-        jsonTransferButton.setOnClickListener(new View.OnClickListener() {
-            @Override public void onClick(View view) { showJsonTransferMenu(); }
-        });
-        content.addView(jsonTransferButton, withMargins(matchWrap(), 0, dp(8), 0, dp(2)));
+        utilityRow.addView(addButton, weightWrap(1));
 
         content.addView(reminderCard(), withMargins(matchWrap(), 0, 0, 0, dp(10)));
 
@@ -941,6 +936,32 @@ public final class MainActivity extends Activity {
             return store.saveFoodsForQaForcedFailure(nextFoods);
         }
         return store.saveFoodsForImport(nextFoods);
+    }
+
+    private void showDataManagementMenu() {
+        new AlertDialog.Builder(this)
+                .setTitle("数据管理")
+                .setItems(
+                        new String[] {
+                                "导入 Excel",
+                                "导出 Excel",
+                                "快速换机（JSON）"
+                        },
+                        new DialogInterface.OnClickListener() {
+                            @Override
+                            public void onClick(DialogInterface dialog, int which) {
+                                if (which == 0) {
+                                    startExcelImport();
+                                } else if (which == 1) {
+                                    startExcelExport();
+                                } else {
+                                    showJsonTransferMenu();
+                                }
+                            }
+                        }
+                )
+                .setNegativeButton("取消", null)
+                .show();
     }
 
     private void showJsonTransferMenu() {
@@ -4219,6 +4240,17 @@ public final class MainActivity extends Activity {
         button.setPadding(dp(10), 0, dp(10), 0);
         button.setBackground(rounded(COLOR_SOFT, dp(8), 0));
         return button;
+    }
+
+    private void setButtonIcon(Button button, int drawableResource, int tint) {
+        android.graphics.drawable.Drawable icon = getResources().getDrawable(
+                drawableResource,
+                getTheme()
+        ).mutate();
+        int iconSize = dp(20);
+        icon.setBounds(0, 0, iconSize, iconSize);
+        icon.setTint(tint);
+        button.setCompoundDrawables(icon, null, null, null);
     }
 
     private EditText input(String value, String hint, int inputType) {

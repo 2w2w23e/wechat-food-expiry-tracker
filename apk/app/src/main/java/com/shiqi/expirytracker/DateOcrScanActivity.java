@@ -442,14 +442,14 @@ public final class DateOcrScanActivity extends ComponentActivity {
         topPanel.addView(statusBadge, fixed(88, 36));
 
         statusText = new TextView(this);
-        statusText.setTextColor(Color.rgb(82, 91, 86));
-        statusText.setTextSize(16);
-        statusText.setMaxLines(3);
-        statusText.setPadding(0, dp(1), 0, dp(2));
+        statusText.setTextColor(AppUiTokens.COLOR_TEXT_MUTED);
+        statusText.setTextSize(14);
+        statusText.setMaxLines(2);
+        statusText.setPadding(0, dp(2), 0, dp(6));
 
         LinearLayout bottomShell = new LinearLayout(this);
         bottomShell.setOrientation(LinearLayout.VERTICAL);
-        bottomShell.setBackground(rounded(Color.rgb(249, 250, 250), dp(8), 0));
+        bottomShell.setBackground(rounded(AppUiTokens.COLOR_SURFACE, dp(8), 0));
         resultSheet = bottomShell;
 
         ScrollView resultScroll = new ScrollView(this);
@@ -458,7 +458,7 @@ public final class DateOcrScanActivity extends ComponentActivity {
 
         LinearLayout bottomPanel = new LinearLayout(this);
         bottomPanel.setOrientation(LinearLayout.VERTICAL);
-        bottomPanel.setPadding(dp(14), dp(10), dp(14), dp(6));
+        bottomPanel.setPadding(dp(16), dp(10), dp(16), dp(6));
         resultScroll.addView(bottomPanel, new ScrollView.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
                 ViewGroup.LayoutParams.WRAP_CONTENT
@@ -468,9 +468,18 @@ public final class DateOcrScanActivity extends ComponentActivity {
                 0,
                 1f
         ));
+        float density = getResources().getDisplayMetrics().density;
+        int screenHeightDp = getResources().getConfiguration().screenHeightDp;
+        if (screenHeightDp <= 0) {
+            screenHeightDp = Math.round(
+                    getResources().getDisplayMetrics().heightPixels / Math.max(1f, density)
+            );
+        }
         float fontScale = Math.max(1f, getResources().getConfiguration().fontScale);
-        int desiredPanelDp = 370 + Math.round(Math.min(0.4f, fontScale - 1f) * 140f);
-        int maxPanelHeight = Math.round(getResources().getDisplayMetrics().heightPixels * 0.60f);
+        int basePanelDp = screenHeightDp <= 720 ? 340 : 320;
+        int desiredPanelDp = basePanelDp + Math.round(Math.min(0.4f, fontScale - 1f) * 110f);
+        float maxPanelRatio = screenHeightDp <= 720 ? 0.56f : 0.50f;
+        int maxPanelHeight = Math.round(getResources().getDisplayMetrics().heightPixels * maxPanelRatio);
         int panelHeight = Math.min(dp(desiredPanelDp), maxPanelHeight);
         FrameLayout.LayoutParams bottomParams = new FrameLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
@@ -484,7 +493,7 @@ public final class DateOcrScanActivity extends ComponentActivity {
         bottomPanel.addView(resultHeader, matchWrap());
 
         TextView resultTitle = new TextView(this);
-        resultTitle.setText("识别结果");
+        resultTitle.setText("已识别信息");
         resultTitle.setTextColor(Color.rgb(30, 35, 33));
         resultTitle.setTextSize(16);
         resultTitle.setTypeface(Typeface.DEFAULT, Typeface.BOLD);
@@ -498,6 +507,7 @@ public final class DateOcrScanActivity extends ComponentActivity {
             }
         });
         resultHeader.addView(rawButton, fixed(64, 48));
+        bottomPanel.addView(statusText, matchWrap());
 
         if (isDebuggable()) {
             Button diagnosticsButton = plainButton("诊断");
@@ -513,13 +523,12 @@ public final class DateOcrScanActivity extends ComponentActivity {
 
         productValue = new TextView(this);
         productValue.setText(dateOnlyMode ? "正在寻找日期文字" : "正在寻找商品名");
-        productValue.setTextColor(Color.rgb(24, 30, 27));
-        productValue.setTextSize(18);
+        productValue.setTextColor(AppUiTokens.COLOR_TEXT);
+        productValue.setTextSize(17);
         productValue.setTypeface(Typeface.DEFAULT, Typeface.BOLD);
-        productValue.setMaxLines(3);
-        productValue.setPadding(0, dp(3), 0, dp(1));
-        bottomPanel.addView(productValue, matchWrap());
-        bottomPanel.addView(statusText, matchWrap());
+        productValue.setMaxLines(2);
+        productValue.setPadding(0, dp(2), 0, dp(2));
+        bottomPanel.addView(resultFieldRow("商品", productValue), matchWrap());
 
         productCandidateScroll = new HorizontalScrollView(this);
         productCandidateScroll.setHorizontalScrollBarEnabled(false);
@@ -532,6 +541,12 @@ public final class DateOcrScanActivity extends ComponentActivity {
                 ViewGroup.LayoutParams.WRAP_CONTENT
         ));
         bottomPanel.addView(productCandidateScroll, fixedHeight(48));
+
+        productionDateValue = compactResultText();
+        bottomPanel.addView(resultFieldRow("日期", productionDateValue), matchWrap());
+
+        barcodeValue = compactResultText();
+        bottomPanel.addView(resultFieldRow("条码", barcodeValue), matchWrap());
 
         keyframeTitle = new TextView(this);
         keyframeTitle.setText("识别依据");
@@ -554,12 +569,6 @@ public final class DateOcrScanActivity extends ComponentActivity {
                 ViewGroup.LayoutParams.MATCH_PARENT
         ));
         bottomPanel.addView(keyframeScroll, fixedHeight(94));
-
-        barcodeValue = compactResultText();
-        bottomPanel.addView(barcodeValue, matchWrap());
-
-        productionDateValue = compactResultText();
-        bottomPanel.addView(productionDateValue, matchWrap());
 
         rawPreviewText = new TextView(this);
         rawPreviewText.setTextColor(Color.rgb(86, 99, 88));
@@ -630,6 +639,25 @@ public final class DateOcrScanActivity extends ComponentActivity {
         value.setMaxLines(5);
         value.setPadding(0, dp(2), 0, 0);
         return value;
+    }
+
+    private View resultFieldRow(String field, TextView value) {
+        LinearLayout row = new LinearLayout(this);
+        row.setOrientation(LinearLayout.HORIZONTAL);
+        row.setGravity(Gravity.TOP);
+        row.setPadding(0, dp(5), 0, dp(5));
+
+        TextView label = new TextView(this);
+        label.setText(field);
+        label.setTextColor(AppUiTokens.COLOR_TEXT_MUTED);
+        label.setTextSize(13);
+        label.setTypeface(Typeface.DEFAULT, Typeface.BOLD);
+        label.setGravity(Gravity.TOP);
+        label.setPadding(0, dp(3), dp(8), 0);
+        row.addView(label, fixed(52, AppUiTokens.MIN_TOUCH_TARGET_DP));
+
+        row.addView(value, weightWrap(1));
+        return row;
     }
 
     private void showRecognitionSourceDialog() {
@@ -1434,12 +1462,14 @@ public final class DateOcrScanActivity extends ComponentActivity {
             trustedBarcodeEvidence = BarcodeUtils.isSupportedProductCode(barcode);
             zxingAttempted = true;
         }
-        boolean runFullPaddleTextDetection = shouldRunPaddleTextDetection(
+        RecognitionPipelinePolicy.Decision detectorDecision = paddleTextDetectionDecision(
                 singleFrameConfirmation,
                 cameraLive,
                 frameMetrics
         );
+        boolean runFullPaddleTextDetection = detectorDecision.runTextDetector;
         boolean runLowContrastRecovery = cameraLive
+                && paddleModelsReady
                 && CameraOcrFeedback.shouldRunLowContrastRecovery(
                 analyzedFrameSequence,
                 lowContrastCameraPassesUsed,
@@ -1477,7 +1507,7 @@ public final class DateOcrScanActivity extends ComponentActivity {
                     barcodeTask = barcodeScanner.process(image);
                     variantTasks.add(barcodeTask);
                 }
-                if (variant.scanText && (!paddlePrimaryPass || variant.dateFocused)) {
+                if (variant.scanText && !paddlePrimaryPass) {
                     textTask = textRecognizer.process(image);
                     variantTasks.add(textTask);
                 }
@@ -1492,7 +1522,9 @@ public final class DateOcrScanActivity extends ComponentActivity {
                     awaitRecognitionTask(
                             Tasks.whenAllComplete(variantTasks),
                             "recognition-variant",
-                            6L
+                            RecognitionPipelinePolicy.mlKitTimeoutSeconds(
+                                    recognitionSource(cameraLive)
+                            )
                     );
                 }
                 if (barcodeTask != null && barcodeTask.isSuccessful()) {
@@ -1551,7 +1583,8 @@ public final class DateOcrScanActivity extends ComponentActivity {
                     );
                 }
             }
-            boolean targetedCameraDatePass = cameraLive
+            boolean targetedCameraDatePass = paddleModelsReady
+                    && cameraLive
                     && paddleDetectedLineCameraFramesUsed < (dateOnlyMode ? 5 : 3)
                     && (!hasCompleteCameraDateCandidate()
                     || hasDatePairObservation(textObservations))
@@ -1617,7 +1650,8 @@ public final class DateOcrScanActivity extends ComponentActivity {
                 detectedRegionEvidence = recognizePaddleTextRegionsForFrame(
                         bitmap,
                         cameraLive,
-                        cameraProbe
+                        cameraProbe,
+                        detectorDecision
                 );
                 if (cameraLive) {
                     paddleDetectionCameraFramesUsed++;
@@ -1686,7 +1720,7 @@ public final class DateOcrScanActivity extends ComponentActivity {
                     singleFrameConfirmation,
                     cameraLive,
                     frameMetrics.visualScore
-            )) {
+            ) && (!cameraLive || paddleModelsReady)) {
                 if (cameraLive) {
                     paddleCameraBandFramesUsed++;
                 } else if (videoReplayActive) {
@@ -1740,7 +1774,8 @@ public final class DateOcrScanActivity extends ComponentActivity {
         );
         if (!parsedFrame.productionDates.isEmpty()
                 && parsedFrame.expiryDates.isEmpty()
-                && focusedDateTailAttempts < 2) {
+                && focusedDateTailAttempts < 2
+                && (!cameraLive || paddleModelsReady)) {
             RecognitionEvidence.NormalizedRect dateTailRect = bestIncompleteDateTailRect(
                     textObservations
             );
@@ -2550,51 +2585,42 @@ public final class DateOcrScanActivity extends ComponentActivity {
         );
     }
 
-    private boolean shouldRunPaddleTextDetection(
+    private int recognitionSource(boolean cameraLive) {
+        return cameraLive
+                ? RecognitionPipelinePolicy.SOURCE_CAMERA
+                : videoReplayActive
+                ? RecognitionPipelinePolicy.SOURCE_VIDEO
+                : RecognitionPipelinePolicy.SOURCE_IMAGE;
+    }
+
+    private RecognitionPipelinePolicy.Decision paddleTextDetectionDecision(
             boolean singleFrameConfirmation,
             boolean cameraLive,
             LowContrastTextPreprocessor.FrameMetrics frameMetrics
     ) {
-        if (paddleTextDetectionEngine == null) {
-            return false;
-        }
-        if (singleFrameConfirmation) {
-            return true;
-        }
-        if (cameraLive && barcodeLookupOnly) {
-            return false;
-        }
-        if (cameraLive && !paddleModelsReady) {
-            return false;
-        }
-        if (cameraSimulationScreenRecording) {
-            return paddleDetectionCameraFramesUsed < 2
-                    && currentVideoFrameRatio >= 0.40d
-                    && currentVideoFrameRatio <= 0.88d
-                    && !hasCompleteCameraDateCandidate();
-        }
-        if (cameraLive) {
-            return RecognitionFrameSelector.shouldRunHeavyCameraOcr(
-                    analyzedFrameSequence,
-                    paddleDetectionCameraFramesUsed,
-                    frameMetrics.visualScore,
-                    frameMetrics.sharpness,
-                    frameMetrics.glareRatio,
-                    hasCompleteCameraDateCandidate(),
-                    dateOnlyMode
-            );
-        }
-        if (!videoReplayActive || !videoDetailFrame) {
-            return false;
-        }
-        if (longVideoProfile) {
-            return paddleDetectionVideoFramesUsed < 3
-                    && currentVideoFrameRatio >= 0.70d
-                    && currentVideoFrameRatio <= 0.88d;
-        }
-        return paddleDetectionVideoFramesUsed < 2
-                && currentVideoFrameRatio >= 0.84d
-                && currentVideoFrameRatio <= 0.91d;
+        int completedPasses = cameraLive
+                ? paddleDetectionCameraFramesUsed
+                : paddleDetectionVideoFramesUsed;
+        RecognitionPipelinePolicy.Decision decision = RecognitionPipelinePolicy.decide(
+                new RecognitionPipelinePolicy.Input(
+                        recognitionSource(cameraLive),
+                        paddleTextDetectionEngine != null
+                                && (!cameraLive || paddleModelsReady),
+                        cameraLive && barcodeLookupOnly,
+                        singleFrameConfirmation,
+                        !videoReplayActive || videoDetailFrame,
+                        cameraSimulationScreenRecording,
+                        hasCompleteCameraDateCandidate(),
+                        dateOnlyMode,
+                        analyzedFrameSequence,
+                        completedPasses,
+                        frameMetrics.visualScore,
+                        frameMetrics.sharpness,
+                        frameMetrics.glareRatio
+                )
+        );
+        diagnostics.value("detector_policy_reason", Integer.toString(decision.reason));
+        return decision;
     }
 
     private boolean hasCompleteCameraDateCandidate() {
@@ -2609,7 +2635,7 @@ public final class DateOcrScanActivity extends ComponentActivity {
     }
 
     private PaddleDateEvidence recognizePaddleTextRegions(Bitmap bitmap, boolean cameraLive) {
-        return recognizePaddleTextRegions(bitmap, cameraLive, 0, null);
+        return recognizePaddleTextRegions(bitmap, cameraLive, 0, null, null);
     }
 
     private PaddleDateEvidence recognizePaddleTextRegions(
@@ -2621,6 +2647,7 @@ public final class DateOcrScanActivity extends ComponentActivity {
                 bitmap,
                 cameraLive,
                 requestedMaxRegions,
+                null,
                 null
         );
     }
@@ -2628,8 +2655,24 @@ public final class DateOcrScanActivity extends ComponentActivity {
     private PaddleDateEvidence recognizePaddleTextRegions(
             Bitmap bitmap,
             boolean cameraLive,
+            List<PaddleTextDetectionEngine.TextRegion> preDetectedRegions,
+            RecognitionPipelinePolicy.Decision decision
+    ) {
+        return recognizePaddleTextRegions(
+                bitmap,
+                cameraLive,
+                0,
+                preDetectedRegions,
+                decision
+        );
+    }
+
+    private PaddleDateEvidence recognizePaddleTextRegions(
+            Bitmap bitmap,
+            boolean cameraLive,
             int requestedMaxRegions,
-            List<PaddleTextDetectionEngine.TextRegion> preDetectedRegions
+            List<PaddleTextDetectionEngine.TextRegion> preDetectedRegions,
+            RecognitionPipelinePolicy.Decision decision
     ) {
         PaddleTextDetectionEngine detector = paddleTextDetectionEngine;
         PaddleLineOcrEngine recognizer = paddleLineOcrEngine;
@@ -2638,7 +2681,9 @@ public final class DateOcrScanActivity extends ComponentActivity {
         }
 
         int cameraPass = paddleDetectionCameraFramesUsed;
-        int cameraInputSide = cameraSimulationScreenRecording
+        int cameraInputSide = decision != null && decision.detectorInputSide > 0
+                ? decision.detectorInputSide
+                : cameraSimulationScreenRecording
                 ? 1280
                 : cameraPass == 0 ? 960 : 1280;
         Bitmap detectorInput = bitmap;
@@ -2668,13 +2713,17 @@ public final class DateOcrScanActivity extends ComponentActivity {
                 detectedRegions.addAll(preDetectedRegions);
                 cameraInputSide = 640;
             } else {
-                int maxRegions = requestedMaxRegions > 0
+                int detectionRegionLimit = requestedMaxRegions > 0
                         ? requestedMaxRegions
-                        : cameraLive ? (dateOnlyMode ? 28 : 22) : videoReplayActive ? 10 : 24;
+                        : decision != null && decision.displayRegionLimit > 0
+                        ? decision.displayRegionLimit
+                        : cameraLive
+                        ? RecognitionPipelinePolicy.liveDisplayRegionLimit(dateOnlyMode)
+                        : videoReplayActive ? 24 : 32;
                 detectedRegions.addAll(detector.detect(
                         detectorInput,
-                        maxRegions,
-                        cameraLive ? cameraInputSide : 1280
+                        detectionRegionLimit,
+                        cameraInputSide
                 ));
             }
         } finally {
@@ -2689,25 +2738,20 @@ public final class DateOcrScanActivity extends ComponentActivity {
                 new ArrayList<PaddleTextDetectionEngine.TextRegion>();
         List<RecognitionEvidence.NormalizedRect> cropRects =
                 new ArrayList<RecognitionEvidence.NormalizedRect>();
-        int dateRegionCount = cameraLive
-                ? Math.min(dateOnlyMode ? 12 : 8, detectedRegions.size())
-                : detectedRegions.size();
+        int totalRecognitionBudget = requestedMaxRegions > 0
+                ? requestedMaxRegions
+                : decision != null && decision.recognitionRegionLimit > 0
+                ? decision.recognitionRegionLimit
+                : cameraLive ? (dateOnlyMode ? 12 : 8) : detectedRegions.size();
+        int enhancementReserve = cameraLive
+                ? Math.min(dateOnlyMode ? 4 : 3, Math.max(0, totalRecognitionBudget - 1))
+                : 0;
+        int baseRegionLimit = Math.max(1, totalRecognitionBudget - enhancementReserve);
+        int dateRegionCount = Math.min(baseRegionLimit, detectedRegions.size());
         for (int index = 0; index < dateRegionCount; index++) {
             PaddleTextDetectionEngine.TextRegion region = detectedRegions.get(index);
             regions.add(region);
             cropRects.add(region.contextRect());
-        }
-        if (cameraLive && cameraPass > 0) {
-            for (PaddleTextDetectionEngine.TextRegion region : detectedRegions) {
-                if (region.aspectRatio() < 4d || region.widthRatio() < 0.06d) {
-                    continue;
-                }
-                regions.add(region);
-                cropRects.add(region.tightTextRect());
-                if (regions.size() >= dateRegionCount + (dateOnlyMode ? 8 : 5)) {
-                    break;
-                }
-            }
         }
         long detectorElapsedMs = SystemClock.elapsedRealtime() - detectorStartedAt;
         diagnostics.timing("text_detector", detectorElapsedMs);
@@ -2736,7 +2780,16 @@ public final class DateOcrScanActivity extends ComponentActivity {
             int top = clamp((int) Math.floor(rect.top * imageHeight), 0, imageHeight - 1);
             int right = clamp((int) Math.ceil(rect.right * imageWidth), left + 1, imageWidth);
             int bottom = clamp((int) Math.ceil(rect.bottom * imageHeight), top + 1, imageHeight);
-            crops.add(Bitmap.createBitmap(bitmap, left, top, right - left, bottom - top));
+            Bitmap perspectiveCrop = PerspectiveTextCropper.crop(bitmap, regions.get(index));
+            crops.add(perspectiveCrop != null
+                    ? perspectiveCrop
+                    : Bitmap.createBitmap(
+                            bitmap,
+                            left,
+                            top,
+                            right - left,
+                            bottom - top
+                    ));
         }
 
         List<Bitmap> recognitionCrops = crops;
@@ -2747,52 +2800,23 @@ public final class DateOcrScanActivity extends ComponentActivity {
         }
         if (cameraLive && !crops.isEmpty()) {
             recognitionCrops = new ArrayList<Bitmap>(crops);
-            int augmentationLimit = cameraPass == 0
-                    ? (dateOnlyMode ? 4 : 3)
-                    : (dateOnlyMode ? 8 : 5);
-            for (int cropIndex = 0; cropIndex < crops.size(); cropIndex++) {
+            int augmentationLimit = Math.min(
+                    crops.size(),
+                    Math.max(0, totalRecognitionBudget - recognitionCrops.size())
+            );
+            for (int cropIndex = 0; cropIndex < augmentationLimit; cropIndex++) {
                 Bitmap crop = crops.get(cropIndex);
-                if (cropIndex >= augmentationLimit) {
-                    continue;
-                }
-                Bitmap primaryEnhanced = cameraPass == 1
+                Bitmap primaryEnhanced = lowContrastCameraPassesUsed > cameraPass
+                        ? LowContrastTextPreprocessor.enhanceBidirectionalDateStrokes(crop)
+                        : cameraPass % 3 == 1
                         ? LowContrastTextPreprocessor.enhanceEmbossedText(crop)
+                        : cameraPass % 3 == 2
+                        ? LowContrastTextPreprocessor.enhanceBidirectionalDateStrokes(crop)
                         : LowContrastTextPreprocessor.enhanceLaserPrintedText(crop);
                 if (primaryEnhanced != null) {
                     recognitionCrops.add(primaryEnhanced);
                     generatedRecognitionCrops.add(primaryEnhanced);
                     recognitionRegionIndexes.add(Integer.valueOf(cropIndex));
-                }
-                if (cameraPass >= 2) {
-                    Bitmap embossed = LowContrastTextPreprocessor.enhanceEmbossedText(crop);
-                    if (embossed != null) {
-                        recognitionCrops.add(embossed);
-                        generatedRecognitionCrops.add(embossed);
-                        recognitionRegionIndexes.add(Integer.valueOf(cropIndex));
-                    }
-                }
-                if (lowContrastCameraPassesUsed > cameraPass) {
-                    Bitmap bidirectional =
-                            LowContrastTextPreprocessor.enhanceBidirectionalDateStrokes(crop);
-                    if (bidirectional != null) {
-                        recognitionCrops.add(bidirectional);
-                        generatedRecognitionCrops.add(bidirectional);
-                        recognitionRegionIndexes.add(Integer.valueOf(cropIndex));
-                    }
-                }
-                if (cameraPass >= 2) {
-                    Bitmap binary = LowContrastTextPreprocessor.binarizeText(crop, false);
-                    if (binary != null) {
-                        recognitionCrops.add(binary);
-                        generatedRecognitionCrops.add(binary);
-                        recognitionRegionIndexes.add(Integer.valueOf(cropIndex));
-                    }
-                    Bitmap inverted = LowContrastTextPreprocessor.binarizeText(crop, true);
-                    if (inverted != null) {
-                        recognitionCrops.add(inverted);
-                        generatedRecognitionCrops.add(inverted);
-                        recognitionRegionIndexes.add(Integer.valueOf(cropIndex));
-                    }
                 }
             }
         }
@@ -2933,14 +2957,15 @@ public final class DateOcrScanActivity extends ComponentActivity {
     private PaddleDateEvidence recognizePaddleTextRegionsForFrame(
             Bitmap bitmap,
             boolean cameraLive,
-            CameraFrameProbe cameraProbe
+            CameraFrameProbe cameraProbe,
+            RecognitionPipelinePolicy.Decision decision
     ) {
         if (!appScreenRecordingDetected || bitmap == null || bitmap.isRecycled()) {
             return recognizePaddleTextRegions(
                     bitmap,
                     cameraLive,
-                    0,
-                    cameraProbe == null ? null : cameraProbe.regions
+                    cameraProbe == null ? null : cameraProbe.regions,
+                    decision
             );
         }
         double leftRatio = 0.04d;
@@ -2955,7 +2980,12 @@ public final class DateOcrScanActivity extends ComponentActivity {
         int height = clamp((int) Math.round(imageHeight * heightRatio), 1, imageHeight - top);
         Bitmap cameraContent = Bitmap.createBitmap(bitmap, left, top, width, height);
         try {
-            PaddleDateEvidence local = recognizePaddleTextRegions(cameraContent, cameraLive);
+            PaddleDateEvidence local = recognizePaddleTextRegions(
+                    cameraContent,
+                    cameraLive,
+                    null,
+                    decision
+            );
             if (local.text.length() == 0 && local.packagingText.length() == 0) {
                 return local;
             }
@@ -4936,7 +4966,7 @@ public final class DateOcrScanActivity extends ComponentActivity {
             long probeStartedAt = SystemClock.elapsedRealtime();
             regions.addAll(paddleTextDetectionEngine.detect(
                     frame,
-                    dateOnlyMode ? 16 : 12,
+                    RecognitionPipelinePolicy.liveDisplayRegionLimit(dateOnlyMode),
                     640
             ));
             long probeElapsedMs = SystemClock.elapsedRealtime() - probeStartedAt;
@@ -6215,8 +6245,8 @@ public final class DateOcrScanActivity extends ComponentActivity {
 
         if (barcodeValue != null) {
             barcodeValue.setText(snapshot.hasStableBarcode()
-                    ? "商品码  " + snapshot.stableBarcode + " · 已识别"
-                    : "商品码  暂未识别");
+                    ? snapshot.stableBarcode
+                    : "暂未识别");
         }
 
         if (productValue != null) {
@@ -6246,7 +6276,7 @@ public final class DateOcrScanActivity extends ComponentActivity {
         if (resultSheet == null) {
             return;
         }
-        int desiredDp = 260;
+        int desiredDp = 230;
         if (productCandidateScroll != null
                 && productCandidateScroll.getVisibility() == View.VISIBLE) {
             desiredDp += 40;
@@ -6255,17 +6285,17 @@ public final class DateOcrScanActivity extends ComponentActivity {
             desiredDp += 100;
         }
         if (snapshot != null && snapshot.hasStableDateCandidate()) {
-            desiredDp += 60;
+            desiredDp += 52;
         }
         if (snapshot != null
                 && snapshot.hasStablePackagingName()
                 && (keyframeScroll == null || keyframeScroll.getVisibility() != View.VISIBLE)) {
             desiredDp += 20;
         }
-        desiredDp = Math.max(260, Math.min(440, desiredDp));
+        desiredDp = Math.max(230, Math.min(360, desiredDp));
         float fontScale = Math.max(1f, getResources().getConfiguration().fontScale);
-        desiredDp += Math.round(Math.min(0.4f, fontScale - 1f) * 120f);
-        int maxHeight = Math.round(getResources().getDisplayMetrics().heightPixels * 0.72f);
+        desiredDp += Math.round(Math.min(0.4f, fontScale - 1f) * 100f);
+        int maxHeight = Math.round(getResources().getDisplayMetrics().heightPixels * 0.52f);
         ViewGroup.LayoutParams params = resultSheet.getLayoutParams();
         if (params != null) {
             params.height = Math.min(dp(desiredDp), maxHeight);
@@ -6782,18 +6812,10 @@ public final class DateOcrScanActivity extends ComponentActivity {
             values.add("保质期  " + draft.shelfLifeValue + shelfLifeSummaryUnit(draft.shelfLifeUnit));
         }
         if (draft.expiryDate.length() > 0) {
-            DateOcrFrameVoter.StableDate explicitExpiry = latestSnapshot == null
-                    || latestSnapshot.stableDateVote == null
-                    ? null
-                    : latestSnapshot.stableDateVote.expiryDate;
             String expiryLabel = "calculated".equals(draft.dateSource)
                     ? "系统计算到期日"
                     : "有效期";
-            if (explicitExpiry != null && DateOcrParser.isMonthOnlyExpiryRaw(explicitExpiry.raw)) {
-                values.add(expiryLabel + "  " + draft.expiryDate + "（包装标到月，按月末）");
-            } else {
-                values.add(expiryLabel + "  " + draft.expiryDate);
-            }
+            values.add(expiryLabel + "  " + draft.expiryDate);
         }
         if (values.isEmpty()) {
             return "日期暂未识别，请重新对准日期区域。";
@@ -6801,7 +6823,7 @@ public final class DateOcrScanActivity extends ComponentActivity {
         StringBuilder builder = new StringBuilder();
         double confidence = strongestDateEvidenceConfidence();
         if (confidence > 0d) {
-            builder.append("日期可信度  ")
+            builder.append("可信度  ")
                     .append(RecognitionEvidence.confidenceLabel(confidence))
                     .append('\n');
         }
@@ -7595,16 +7617,35 @@ public final class DateOcrScanActivity extends ComponentActivity {
                 if (firstRect == null) {
                     firstRect = rect;
                 }
+                double[] quad = region.quadrilateral();
+                android.graphics.Path path = new android.graphics.Path();
+                if (quad.length == 8) {
+                    for (int pointIndex = 0; pointIndex < 4; pointIndex++) {
+                        float x = offsetX
+                                + (float) (quad[pointIndex * 2] * liveImageWidth * scale);
+                        float y = offsetY
+                                + (float) (quad[(pointIndex * 2) + 1]
+                                * liveImageHeight * scale);
+                        if (pointIndex == 0) {
+                            path.moveTo(x, y);
+                        } else {
+                            path.lineTo(x, y);
+                        }
+                    }
+                    path.close();
+                } else {
+                    path.addRoundRect(rect, dp(4), dp(4), android.graphics.Path.Direction.CW);
+                }
                 int color = region.confidence >= 0.62d
                         ? Color.rgb(91, 232, 145)
                         : Color.rgb(255, 204, 82);
                 paint.setStyle(Paint.Style.FILL);
                 paint.setColor(Color.argb(24, Color.red(color), Color.green(color), Color.blue(color)));
-                canvas.drawRoundRect(rect, dp(4), dp(4), paint);
+                canvas.drawPath(path, paint);
                 paint.setStyle(Paint.Style.STROKE);
                 paint.setStrokeWidth(dp(2));
                 paint.setColor(color);
-                canvas.drawRoundRect(rect, dp(4), dp(4), paint);
+                canvas.drawPath(path, paint);
             }
             if (firstRect == null) {
                 return;
