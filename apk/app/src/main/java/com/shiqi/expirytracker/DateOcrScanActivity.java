@@ -3946,6 +3946,16 @@ public final class DateOcrScanActivity extends ComponentActivity {
         diagnostics.value("completion_fillable", Boolean.toString(snapshot.hasFillableCandidate()));
         diagnostics.value("completion_production", completionProduction);
         diagnostics.value("completion_expiry", completionExpiry);
+        diagnostics.value("completion_stable_name", snapshot.stablePackagingName);
+        diagnostics.value(
+                "completion_best_name",
+                snapshot.bestPackagingNameForConfirmation()
+        );
+        diagnostics.value("completion_selected_name", selectedPackagingName);
+        diagnostics.value(
+                "completion_lookup_name",
+                latestProductInfo == null ? "" : latestProductInfo.displayName()
+        );
         diagnosticEvent(
                 "replay.complete",
                 "frames=" + analyzedFrames
@@ -3964,6 +3974,11 @@ public final class DateOcrScanActivity extends ComponentActivity {
                         + " completionProduction=" + completionProduction
                         + " completionExpiry=" + completionExpiry
                         + " sessionName=" + sessionProductName
+                        + " stableName=" + snapshot.stablePackagingName
+                        + " bestName=" + snapshot.bestPackagingNameForConfirmation()
+                        + " selectedName=" + selectedPackagingName
+                        + " lookupName="
+                        + (latestProductInfo == null ? "" : latestProductInfo.displayName())
                         + " elapsedMs=" + completedElapsedMs
         );
     }
@@ -5252,7 +5267,7 @@ public final class DateOcrScanActivity extends ComponentActivity {
         handleRecognitionResult(
                 barcode,
                 rawText,
-                PackagingTextAnalyzer.analyze(observationsFromRawText(rawText)),
+                RecognitionFieldPromoter.candidatesFromTranscript(rawText),
                 singleFrameConfirmation
         );
     }
@@ -5318,9 +5333,6 @@ public final class DateOcrScanActivity extends ComponentActivity {
         if (expectedGeneration != recognitionGeneration) {
             return;
         }
-        String cleanedText = FoodItem.cleanText(rawText);
-        String printedBarcode = RecognitionTextCleaner.extractProductCodeFromOcr(cleanedText);
-        barcode = VerifiedBarcodeCatalog.preferCatalogBackedBarcode(barcode, printedBarcode);
         DateOcrParser.Result parsed = parsedOverride == null
                 ? DateOcrParser.parseFocusedWithDateOnlySupplement(
                 FoodItem.cleanText(dateRawText),
@@ -5331,22 +5343,23 @@ public final class DateOcrScanActivity extends ComponentActivity {
         if (expectedGeneration != recognitionGeneration) {
             return;
         }
-        latestSnapshot = UnifiedRecognitionStabilizer.retainStableEvidence(
+        RecognitionFieldPromoter.Promotion promotion = RecognitionFieldPromoter.promote(
+                stabilizer,
                 latestSnapshot,
-                stabilizer.addFrame(
                 barcode,
                 parsed,
-                cleanedText,
+                rawText,
                 packagingCandidates,
                 singleFrameConfirmation
-                )
         );
+        latestSnapshot = promotion.snapshot;
+        recordFieldPromotionDiagnostics(promotion);
         rememberSessionSnapshot(latestSnapshot);
 
-        if (cleanedText.length() > 0) {
-            latestRawText = cleanedText;
+        if (promotion.cleanedText.length() > 0) {
+            latestRawText = promotion.cleanedText;
             if (videoReplayActive && videoTranscriptText.length() < 32000) {
-                appendRecognizedText(videoTranscriptText, cleanedText);
+                appendRecognizedText(videoTranscriptText, promotion.cleanedText);
             }
         }
         final UnifiedRecognitionStabilizer.Snapshot snapshot = latestSnapshot;
@@ -5393,25 +5406,6 @@ public final class DateOcrScanActivity extends ComponentActivity {
         return days >= 0 && days <= (366 * 5);
     }
 
-    private List<PackagingTextAnalyzer.Observation> observationsFromRawText(String rawText) {
-        List<PackagingTextAnalyzer.Observation> observations =
-                new ArrayList<PackagingTextAnalyzer.Observation>();
-        String cleaned = RecognitionTextCleaner.cleanForPackagingOcr(rawText);
-        for (String line : cleaned.split("\\r?\\n")) {
-            String value = FoodItem.cleanText(line);
-            if (value.length() > 0) {
-                observations.add(new PackagingTextAnalyzer.Observation(
-                        value,
-                        0.035d,
-                        Math.min(0.9d, 0.12d + value.length() * 0.035d),
-                        0.5d,
-                        0.5d,
-                        0.55d
-                ));
-            }
-        }
-        return observations;
-    }
 
     private void rememberEvidenceFrame(
             Bitmap bitmap,
@@ -6282,31 +6276,53 @@ public final class DateOcrScanActivity extends ComponentActivity {
             return;
         }
         List<PackagingTextAnalyzer.Candidate> candidates =
-                PackagingTextAnalyzer.analyze(observationsFromRawText(cleaned), true);
-        String extractedName = RecognitionTextCleaner.extractProductNameFromOcr(cleaned);
-        if (RecognitionTextCleaner.productNameScore(extractedName) > 0) {
-            List<PackagingTextAnalyzer.Candidate> merged =
-                    new ArrayList<PackagingTextAnalyzer.Candidate>(candidates);
-            merged.add(new PackagingTextAnalyzer.Candidate(
-                    extractedName,
-                    Math.max(92d, RecognitionTextCleaner.productNameScore(extractedName)),
-                    2,
-                    java.util.Collections.singletonList(extractedName)
-            ));
-            candidates = merged;
-        }
+                RecognitionFieldPromoter.candidatesFromTranscript(cleaned);
         String barcode = RecognitionTextCleaner.extractProductCodeFromOcr(cleaned);
-        latestSnapshot = UnifiedRecognitionStabilizer.retainStableEvidence(
+        RecognitionFieldPromoter.Promotion promotion = RecognitionFieldPromoter.promote(
+                stabilizer,
                 latestSnapshot,
-                stabilizer.addFrame(
-                        barcode,
-                        dateEvidence,
-                        cleaned,
-                        candidates,
-                        true
-                )
+                barcode,
+                dateEvidence,
+                cleaned,
+                candidates,
+                true
         );
+        latestSnapshot = promotion.snapshot;
+        recordFieldPromotionDiagnostics(promotion);
         rememberSessionSnapshot(latestSnapshot);
+    }
+
+    private void recordFieldPromotionDiagnostics(
+            RecognitionFieldPromoter.Promotion promotion
+    ) {
+        if (promotion == null) {
+            return;
+        }
+        if (promotion.hasText()) {
+            diagnostics.increment("field_text_seen");
+        }
+        diagnostics.add("field_candidates", promotion.candidateCount);
+        diagnostics.value(
+                "field_candidates_latest",
+                Integer.toString(promotion.candidateCount)
+        );
+        if (promotion.barcodePromoted) {
+            diagnostics.increment("field_barcode_promoted");
+        }
+        if (promotion.namePromoted) {
+            diagnostics.increment("field_name_promoted");
+        }
+        if (promotion.datePromoted) {
+            diagnostics.increment("field_date_promoted");
+        }
+        diagnosticEvent(
+                "field.promote",
+                "text=" + promotion.hasText()
+                        + " candidates=" + promotion.candidateCount
+                        + " barcode=" + promotion.barcodePromoted
+                        + " name=" + promotion.namePromoted
+                        + " date=" + promotion.datePromoted
+        );
     }
 
     private DateOcrParser.Result datePairFromSessionEvidence(
@@ -6396,13 +6412,16 @@ public final class DateOcrScanActivity extends ComponentActivity {
         String bestName = "";
         double bestScore = 0d;
         if (bestSessionSnapshot != null) {
-            if (bestSessionSnapshot.hasStablePackagingName()) {
+            if (bestSessionSnapshot.hasStablePackagingName()
+                    && PackagingNamePolicy.isStrong(
+                    bestSessionSnapshot.stablePackagingName
+            )) {
                 bestName = bestSessionSnapshot.stablePackagingName;
                 bestScore = 200d + bestSessionSnapshot.packagingNameVotes;
             }
             for (PackagingTextAnalyzer.Candidate candidate
                     : bestSessionSnapshot.rankedPackagingCandidates) {
-                if (!RecognitionTextCleaner.isHighConfidenceFoodProductName(candidate.text)) {
+                if (!PackagingNamePolicy.isStrong(candidate.text)) {
                     continue;
                 }
                 double score = candidate.score + (Math.min(4, candidate.votes) * 12d);
@@ -6415,7 +6434,7 @@ public final class DateOcrScanActivity extends ComponentActivity {
         for (SessionKeyframe keyframe : keyframeSnapshot()) {
             for (RecognitionEvidence.Region region : keyframe.evidence.regions) {
                 if (!RecognitionEvidence.FIELD_PRODUCT_NAME.equals(region.field)
-                        || !RecognitionTextCleaner.isHighConfidenceFoodProductName(region.value)) {
+                        || !PackagingNamePolicy.isStrong(region.value)) {
                     continue;
                 }
                 double score = (region.confidence * 100d)
@@ -6427,7 +6446,7 @@ public final class DateOcrScanActivity extends ComponentActivity {
             }
         }
         String normalized = RecognitionTextCleaner.intelligentProductNameCandidate(bestName);
-        return normalized.length() > 0 ? normalized : bestName;
+        return PackagingNamePolicy.isStrong(normalized) ? normalized : "";
     }
 
     private void rememberSessionSnapshot(UnifiedRecognitionStabilizer.Snapshot snapshot) {
@@ -6499,9 +6518,22 @@ public final class DateOcrScanActivity extends ComponentActivity {
         productCandidateScroll.setVisibility(View.VISIBLE);
         final PackagingTextAnalyzer.Candidate recommended = snapshot.rankedPackagingCandidates.get(0);
         TextView confidence = compactResultText();
-        double fusedConfidence = productCandidateConfidence(recommended);
-        confidence.setText("商品名可信度 " + RecognitionEvidence.confidenceLabel(fusedConfidence)
-                + " · " + Math.max(1, recommended.votes) + "帧");
+        boolean stableRecommendation = snapshot.hasStablePackagingName()
+                && RecognitionTextCleaner.productNamesSimilar(
+                snapshot.stablePackagingName,
+                recommended.text
+        )
+                && PackagingNamePolicy.isStrong(recommended.text);
+        if (stableRecommendation) {
+            confidence.setText(snapshot.frameCount > 1
+                    ? "商品名多帧合并 · 请核对"
+                    : "商品名文字清晰 · 请核对");
+        } else {
+            double fusedConfidence = productCandidateConfidence(recommended);
+            confidence.setText("商品名建议 "
+                    + RecognitionEvidence.confidenceLabel(fusedConfidence)
+                    + " · 请核对");
+        }
         productCandidateContainer.addView(confidence, fixed(220, 48));
 
         if (snapshot.rankedPackagingCandidates.size() > 1) {
