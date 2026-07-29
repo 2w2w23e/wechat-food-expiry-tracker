@@ -4,21 +4,13 @@ import android.content.Context;
 import android.graphics.Bitmap;
 import android.util.Log;
 
-import org.opencv.core.Core;
 import org.opencv.core.CvType;
 import org.opencv.core.Mat;
-import org.opencv.core.MatOfPoint;
-import org.opencv.core.Point;
-import org.opencv.core.Rect;
-import org.opencv.core.Scalar;
-import org.opencv.imgproc.Imgproc;
 
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
 import java.nio.FloatBuffer;
-import java.util.ArrayList;
 import java.util.Collections;
-import java.util.Comparator;
 import java.util.List;
 
 import ai.onnxruntime.OnnxTensor;
@@ -30,8 +22,6 @@ final class PaddleTextDetectionEngine implements AutoCloseable {
     private static final String TAG = "ShiqiPaddleTextDet";
     private static final String MODEL_ASSET = "PP-OCRv6_small_det.onnx";
     private static final int MAX_INPUT_SIDE = 1280;
-    private static final float PIXEL_THRESHOLD = 0.20f;
-    private static final double BOX_THRESHOLD = 0.42d;
 
     private final Context applicationContext;
     private OrtEnvironment environment;
@@ -56,9 +46,6 @@ final class PaddleTextDetectionEngine implements AutoCloseable {
 
         Bitmap resized = null;
         Mat probability = new Mat();
-        Mat binary = new Mat();
-        Mat hierarchy = new Mat();
-        List<MatOfPoint> contours = new ArrayList<MatOfPoint>();
         try {
             ensureInitialized();
             if (session == null) {
@@ -96,58 +83,11 @@ final class PaddleTextDetectionEngine implements AutoCloseable {
                 probability.put(0, 0, flattened);
             }
 
-            Imgproc.threshold(probability, binary, PIXEL_THRESHOLD, 255d, Imgproc.THRESH_BINARY);
-            binary.convertTo(binary, CvType.CV_8UC1);
-            Imgproc.findContours(binary, contours, hierarchy, Imgproc.RETR_LIST, Imgproc.CHAIN_APPROX_SIMPLE);
-
-            List<TextRegion> regions = new ArrayList<TextRegion>();
-            for (MatOfPoint contour : contours) {
-                Rect rect = Imgproc.boundingRect(contour);
-                if (rect.width < 8 || rect.height < 3 || rect.area() < 18d
-                        || rect.area() > probability.total() * 0.40d) {
-                    continue;
-                }
-                double score = boxScore(probability, contour, rect);
-                if (score < BOX_THRESHOLD) {
-                    continue;
-                }
-                double left = rect.x / (double) probability.cols();
-                double top = rect.y / (double) probability.rows();
-                double right = (rect.x + rect.width) / (double) probability.cols();
-                double bottom = (rect.y + rect.height) / (double) probability.rows();
-                TextRegion candidate = new TextRegion(left, top, right, bottom, score);
-                if (!candidate.isPlausibleTextLine()) {
-                    continue;
-                }
-                regions.add(candidate);
-            }
-
-            Collections.sort(regions, new Comparator<TextRegion>() {
-                @Override
-                public int compare(TextRegion left, TextRegion right) {
-                    return Double.compare(right.priority(), left.priority());
-                }
-            });
-            List<TextRegion> selected = new ArrayList<TextRegion>();
-            for (TextRegion region : regions) {
-                if (isNearDuplicate(region, selected)) {
-                    continue;
-                }
-                selected.add(region);
-                if (selected.size() >= maxRegions) {
-                    break;
-                }
-            }
-            return selected;
+            return DbTextPostProcessor.process(probability, maxRegions);
         } catch (Throwable error) {
             Log.w(TAG, "PP-OCRv6 text detection failed", error);
             return Collections.emptyList();
         } finally {
-            for (MatOfPoint contour : contours) {
-                contour.release();
-            }
-            hierarchy.release();
-            binary.release();
             probability.release();
             if (resized != null && resized != source && !resized.isRecycled()) {
                 resized.recycle();
@@ -227,37 +167,6 @@ final class PaddleTextDetectionEngine implements AutoCloseable {
         return buffer;
     }
 
-    private double boxScore(Mat probability, MatOfPoint contour, Rect rect) {
-        Mat probabilityRoi = probability.submat(rect);
-        Mat mask = Mat.zeros(rect.height, rect.width, CvType.CV_8UC1);
-        Point[] sourcePoints = contour.toArray();
-        Point[] shiftedPoints = new Point[sourcePoints.length];
-        for (int index = 0; index < sourcePoints.length; index++) {
-            shiftedPoints[index] = new Point(
-                    sourcePoints[index].x - rect.x,
-                    sourcePoints[index].y - rect.y
-            );
-        }
-        MatOfPoint shifted = new MatOfPoint(shiftedPoints);
-        try {
-            Imgproc.fillPoly(mask, Collections.singletonList(shifted), new Scalar(255d));
-            return Core.mean(probabilityRoi, mask).val[0];
-        } finally {
-            shifted.release();
-            mask.release();
-            probabilityRoi.release();
-        }
-    }
-
-    private boolean isNearDuplicate(TextRegion candidate, List<TextRegion> selected) {
-        for (TextRegion existing : selected) {
-            if (candidate.iou(existing) >= 0.82d) {
-                return true;
-            }
-        }
-        return false;
-    }
-
     @Override
     public synchronized void close() {
         closed = true;
@@ -276,13 +185,46 @@ final class PaddleTextDetectionEngine implements AutoCloseable {
         final double right;
         final double bottom;
         final double confidence;
+        private final double[] quad;
 
         TextRegion(double left, double top, double right, double bottom, double confidence) {
+            this(
+                    left,
+                    top,
+                    right,
+                    bottom,
+                    confidence,
+                    new double[] {
+                            left, top,
+                            right, top,
+                            right, bottom,
+                            left, bottom
+                    }
+            );
+        }
+
+        TextRegion(
+                double left,
+                double top,
+                double right,
+                double bottom,
+                double confidence,
+                double[] quad
+        ) {
             this.left = RecognitionEvidence.clamp01(left);
             this.top = RecognitionEvidence.clamp01(top);
             this.right = RecognitionEvidence.clamp01(right);
             this.bottom = RecognitionEvidence.clamp01(bottom);
             this.confidence = RecognitionEvidence.clamp01(confidence);
+            this.quad = normalizeQuad(quad);
+        }
+
+        boolean hasQuadrilateral() {
+            return quad.length == 8;
+        }
+
+        double[] quadrilateral() {
+            return quad.clone();
         }
 
         RecognitionEvidence.NormalizedRect contextRect() {
@@ -332,18 +274,14 @@ final class PaddleTextDetectionEngine implements AutoCloseable {
             double width = right - left;
             double height = Math.max(0.001d, bottom - top);
             double aspect = width / height;
-            double centerY = (top + bottom) / 2d;
-            double centerX = (left + right) / 2d;
             double compactLine = Math.max(0d, Math.min(1d, (0.025d - height) / 0.018d));
-            double dateLineShape = Math.max(
+            double textLineShape = Math.max(
                     0d,
-                    1d - (Math.abs(Math.min(aspect, 18d) - 8d) / 10d)
+                    1d - (Math.abs(Math.min(aspect, 14d) - 6d) / 9d)
             );
             return confidence
-                    + (centerY * 0.18d)
-                    + (centerX * 0.10d)
-                    + (compactLine * 0.12d)
-                    + (dateLineShape * 0.08d);
+                    + (compactLine * 0.08d)
+                    + (textLineShape * 0.14d);
         }
 
         double iou(TextRegion other) {
@@ -357,6 +295,17 @@ final class PaddleTextDetectionEngine implements AutoCloseable {
             double otherArea = (other.right - other.left) * (other.bottom - other.top);
             double union = area + otherArea - overlap;
             return union <= 0d ? 0d : overlap / union;
+        }
+
+        private static double[] normalizeQuad(double[] source) {
+            if (source == null || source.length != 8) {
+                return new double[0];
+            }
+            double[] normalized = new double[8];
+            for (int index = 0; index < normalized.length; index++) {
+                normalized[index] = RecognitionEvidence.clamp01(source[index]);
+            }
+            return normalized;
         }
     }
 }
