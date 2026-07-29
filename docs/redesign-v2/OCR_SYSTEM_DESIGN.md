@@ -320,3 +320,23 @@ UI 映射：
 - [ExpirationDate dataset](https://huggingface.co/datasets/dimun/ExpirationDate)：Products-Real/Products-Synth 日期区域与转录。
 - [Efficient Expiration Date Recognition](https://www.mdpi.com/1999-4893/18/5/286)：移动端日期检测、DMY 拆分、13 种格式和 ExpDate/510-Date。
 - [Real-CE](https://openaccess.thecvf.com/content/ICCV2023/html/Ma_A_Benchmark_for_Chinese-English_Scene_Text_Image_Super-Resolution_ICCV_2023_paper.html)：中文场景文字超分辨率评测。
+
+## 14. C1 实施状态
+
+已实现：
+
+- `PackagingNamePolicy`：家庭包装物品的统一名称门禁。
+- `RecognitionFieldPromoter`：原始文字、语义候选、条码/日期约束和字段晋升。
+- 完成阶段强名称防回退。
+- 文字已见、候选数量和字段晋升的分层诊断。
+- 指定失败视频从结果页进入新增表单的完整视觉回归。
+
+指定视频已经从旧基线的 `name=false` 修复为稳定商品名 `复方硫酸软骨素滴眼液`，但最终回放仍约 41.33 秒。下一阶段优先做：
+
+1. 把帧质量、文字区域检测和 ROI 调度从 `DateOcrScanActivity` 继续拆出。
+2. 快通道只做最新帧、低分辨率定位和字段缺口判断。
+3. 慢通道只复识更优 ROI，并为日期和商品名保留独立预算。
+4. 对 CLAHE、黑帽、顶帽和自适应阈值变体先做便宜筛选，再进入 OCR。
+5. 在全部用户样本与公开日期集上比较现有 PP-OCRv6 small 和 PP-OCRv5 mobile；没有显著字段收益的模型不进入 APK。
+
+本轮状态是字段晋升 `PASS`，完整识别性能、低对比度日期和真实相机仍为 `PARTIAL`。

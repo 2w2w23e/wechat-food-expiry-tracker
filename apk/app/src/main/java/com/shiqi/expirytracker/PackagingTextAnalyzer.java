@@ -48,7 +48,7 @@ final class PackagingTextAnalyzer {
                     continue;
                 }
                 String candidateText = RecognitionTextCleaner.intelligentProductNameCandidate(line);
-                if (!RecognitionTextCleaner.isHighConfidenceFoodProductName(candidateText)) {
+                if (!PackagingNamePolicy.isStrong(candidateText)) {
                     continue;
                 }
                 int lexicalScore = RecognitionTextCleaner.productNameScore(candidateText);
@@ -67,7 +67,7 @@ final class PackagingTextAnalyzer {
                     String combined = RecognitionTextCleaner.intelligentProductNameCandidate(
                             nearbyBrand.text + candidateText
                     );
-                    if (RecognitionTextCleaner.isHighConfidenceFoodProductName(combined)) {
+                    if (PackagingNamePolicy.isStrong(combined)) {
                         int combinedScore = RecognitionTextCleaner.productNameScore(combined);
                         addEvidence(
                                 aggregates,
@@ -203,7 +203,7 @@ final class PackagingTextAnalyzer {
             for (String line : FoodItem.cleanText(observation.text).split("\\r?\\n")) {
                 String candidate = RecognitionTextCleaner.intelligentProductNameCandidate(line);
                 if (RecognitionTextCleaner.isLikelyStandaloneBrand(candidate)
-                        && !RecognitionTextCleaner.isHighConfidenceFoodProductName(candidate)) {
+                        && !PackagingNamePolicy.isStrong(candidate)) {
                     brands.add(new BrandObservation(candidate, observation));
                 }
             }
@@ -480,8 +480,8 @@ final class PackagingTextAnalyzer {
         }
 
         void add(String candidateText, double score, String sourceText) {
-            boolean currentCanonical = RecognitionTextCleaner.isCanonicalFoodName(text);
-            boolean incomingCanonical = RecognitionTextCleaner.isCanonicalFoodName(candidateText);
+            boolean currentCanonical = PackagingNamePolicy.isCanonical(text);
+            boolean incomingCanonical = PackagingNamePolicy.isCanonical(candidateText);
             if ((incomingCanonical && !currentCanonical)
                     || (incomingCanonical == currentCanonical
                     && (score > bestScore || (score == bestScore && candidateText.length() > text.length())))) {

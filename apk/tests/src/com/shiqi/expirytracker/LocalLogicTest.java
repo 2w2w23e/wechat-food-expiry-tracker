@@ -3620,6 +3620,154 @@ public final class LocalLogicTest {
             }
         });
 
+        test("PackagingNamePolicy accepts expiry-managed packaged goods without accepting instructions", new TestCase() {
+            public void run() {
+                assertTrue(
+                        PackagingNamePolicy.isStrong("复方硫酸软骨素滴眼液"),
+                        "a clearly printed medicine name should be eligible"
+                );
+                assertTrue(PackagingNamePolicy.isStrong("玻尿酸护手霜"),
+                        "personal-care names should be supported");
+                assertTrue(PackagingNamePolicy.isStrong("除菌洗衣液"),
+                        "household consumables should be supported");
+                assertFalse(PackagingNamePolicy.isPlausible("用于视疲劳，干眼症"),
+                        "an efficacy sentence must not become a product name");
+                assertFalse(PackagingNamePolicy.isPlausible("厂家地址 北京市朝阳区"),
+                        "packaging metadata must remain rejected");
+                assertFalse(PackagingNamePolicy.isPlausible("识别完成，请核对下方结果"),
+                        "recorded app UI must remain rejected");
+            }
+        });
+
+        test("RecognitionFieldPromoter fills the July 29 recognized transcript", new TestCase() {
+            public void run() {
+                String transcript = "复方硫酸软骨素滴眼液\n"
+                        + "用于视疲劳，干眼症\n"
+                        + "商品码 6917246211883";
+                List<PackagingTextAnalyzer.Candidate> candidates =
+                        RecognitionFieldPromoter.candidatesFromTranscript(transcript);
+                assertFalse(candidates.isEmpty(),
+                        "recognized packaging text must produce a semantic candidate");
+                assertEquals("复方硫酸软骨素滴眼液", candidates.get(0).text);
+
+                UnifiedRecognitionStabilizer stabilizer =
+                        new UnifiedRecognitionStabilizer(8, 3);
+                RecognitionFieldPromoter.Promotion promotion =
+                        RecognitionFieldPromoter.promote(
+                                stabilizer,
+                                null,
+                                "6917246211883",
+                                DateOcrParser.parse(""),
+                                transcript,
+                                candidates,
+                                true
+                        );
+
+                assertTrue(promotion.hasText(), "OCR text should remain observable");
+                assertTrue(promotion.namePromoted,
+                        "recognized product text must reach the confirmation draft");
+                assertTrue(promotion.barcodePromoted,
+                        "the checksum-valid retail barcode should remain available");
+                assertEquals(
+                        "复方硫酸软骨素滴眼液",
+                        promotion.snapshot.stablePackagingName
+                );
+                assertEquals("6917246211883", promotion.snapshot.stableBarcode);
+                assertTrue(promotion.snapshot.hasFillableCandidate(),
+                        "the user must be able to continue to review without manual typing");
+
+                RecognitionFieldPromoter.Promotion unchanged =
+                        RecognitionFieldPromoter.promote(
+                                stabilizer,
+                                promotion.snapshot,
+                                "6917246211883",
+                                DateOcrParser.parse(""),
+                                transcript,
+                                candidates,
+                                false
+                        );
+                assertFalse(unchanged.namePromoted,
+                        "an unchanged stable name must not be counted as newly promoted");
+                assertFalse(unchanged.barcodePromoted,
+                        "an unchanged stable barcode must not be counted as newly promoted");
+            }
+        });
+        test("RecognitionFieldPromoter rejects recorded HUD and repairs the July 29 fuzzy medicine name", new TestCase() {
+            public void run() {
+                String transcript = "已看到实时画面·正在识别，保留最新帧135\n"
+                        + "取帧135入选7 OCR6 丢旧89\n"
+                        + "可能女字区6 方呛改秋目素简眼液\n"
+                        + "可能女字区7 方硫酸软骨素泡眼测\n"
+                        + "可能文字区7 复方硫酸软骨素商眼液\n"
+                        + "用于视疲劳，干眼症\n"
+                        + "连续自动对焦·实时检查清晰度";
+
+                List<PackagingTextAnalyzer.Candidate> candidates =
+                        RecognitionFieldPromoter.candidatesFromTranscript(transcript);
+
+                assertFalse(candidates.isEmpty(),
+                        "fuzzy but repeated package text should produce one recommendation");
+                assertEquals(1, candidates.size());
+                assertEquals("复方硫酸软骨素滴眼液", candidates.get(0).text);
+                for (PackagingTextAnalyzer.Candidate candidate : candidates) {
+                    assertFalse(candidate.text.contains("实时画面"),
+                            "screen-recorded HUD must never reach the confirmation candidate");
+                    assertFalse(candidate.text.contains("最新帧"),
+                            "frame diagnostics must never reach the confirmation candidate");
+                }
+            }
+        });
+        test("UnifiedRecognitionStabilizer never lets replay HUD overwrite a strong product name", new TestCase() {
+            public void run() {
+                UnifiedRecognitionStabilizer stabilizer =
+                        new UnifiedRecognitionStabilizer(8, 3);
+                stabilizer.addFrame(
+                        "",
+                        DateOcrParser.parse(""),
+                        "复方硫酸软骨素滴眼液",
+                        Arrays.asList(new PackagingTextAnalyzer.Candidate(
+                                "复方硫酸软骨素滴眼液",
+                                160d
+                        )),
+                        true
+                );
+
+                UnifiedRecognitionStabilizer.Snapshot snapshot =
+                        stabilizer.promotePackagingCandidateForConfirmation(
+                                "画面偏糊 请稍后退井轻点日期· 已分析18帧"
+                        );
+
+                assertEquals("复方硫酸软骨素滴眼液", snapshot.stablePackagingName);
+            }
+        });
+        test("UnifiedRecognitionStabilizer keeps a promoted strong name over repeated fuzzy replay text", new TestCase() {
+            public void run() {
+                UnifiedRecognitionStabilizer stabilizer =
+                        new UnifiedRecognitionStabilizer(8, 3);
+                String fuzzyReplayText =
+                        "方呛改秋目素简眼液 方硫酸软骨素泡眼测";
+                for (int index = 0; index < 3; index++) {
+                    stabilizer.addFrame(
+                            "",
+                            DateOcrParser.parse(""),
+                            fuzzyReplayText,
+                            Arrays.asList(new PackagingTextAnalyzer.Candidate(
+                                    fuzzyReplayText,
+                                    180d
+                            )),
+                            false
+                    );
+                }
+
+                stabilizer.promotePackagingCandidateForConfirmation(
+                        "复方硫酸软骨素滴眼液"
+                );
+                UnifiedRecognitionStabilizer.Snapshot snapshot =
+                        stabilizer.promoteStrongPackagingCandidateForConfirmation();
+
+                assertEquals("复方硫酸软骨素滴眼液", snapshot.stablePackagingName);
+            }
+        });
         test("DateOcrFrameVoter prefers a repeated laser date pair over more weak single-date frames", new TestCase() {
             public void run() {
                 List<DateOcrParser.Result> frames = new ArrayList<DateOcrParser.Result>();

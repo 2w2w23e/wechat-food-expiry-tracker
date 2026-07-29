@@ -6,7 +6,7 @@
 
 ## 构建
 
-当前 APK 版本号：`versionName 0.4.0`，`versionCode 30`。每次生成新的可交付 APK 时，都需要同步提升 `apk/app/build.gradle` 和 `AndroidManifest.xml` 里的 `versionName` 和 `versionCode`。
+当前 APK 版本号：`versionName 0.4.1`，`versionCode 31`。每次生成新的可交付 APK 时，都需要同步提升 `apk/app/build.gradle` 和 `AndroidManifest.xml` 里的 `versionName` 和 `versionCode`。
 
 当前最低 Android 版本为 API 24（Android 7.0）。当前 debug APK 实测约 220 MB；离线模型只保留当前链路需要的关键文件，可交付 APK 的硬上限为 1 GB。
 
@@ -80,7 +80,7 @@ apk/build/outputs/apk/shiqi-android-release.apk
 - Debug 诊断面板：实时显示取帧、预检、入选、OCR、模糊跳过、自动重对焦及各阶段耗时；可导入录屏复现并通过系统分享面板导出 UTF-8 文本日志。诊断数据只用于定位本机性能和相机状态，不会自动保存识别结果
 - 商品码识别：支持一维商品条码、QR Code / Data Matrix 中的 GS1 Digital Link 或商品码参数；商品信息查询先走现有 GS1 接口，未命中时对进口商品补查中国商品信息服务平台公开进口商品数据
 - 根据商品名和条码分类信息智能建议食品分类，保存前仍需用户确认
-- 商品名智能选择：条码商品库命中优先；包装文字必须有明确“产品名称/商品名称/食品名称/品名”标签，或同时满足食品语义、文字结构、分数与跨帧稳定要求；最多展示 1 个最佳高可信名称，说明书、医疗内容、厂家/公司名、混合脚本乱码和低分内容不显示
+- 商品名智能选择：条码商品库命中优先；包装文字覆盖食品、药品、个护和家庭耗材，必须有明确名称标签，或满足强类别后缀、文字结构与跨帧一致性；最多展示 1 个主推荐。用途/功效句、说明书、厂家/公司名、追溯码、界面 HUD、混合脚本乱码和低分内容不显示
 - 包装文字 OCR：ML Kit Text Recognition v2 Chinese / Latin 负责中文和混合包装文字通用召回；ML Kit Barcode Scanning 与 ZXing 负责条码；OpenCV 负责低对比增强；ONNX Runtime Android 1.27.0 运行 `PP-OCRv6_small_det` 定位文字区域并运行 `PP-OCRv6_rec_small` 复识裁剪文字行；日期规则与跨帧投票负责归一化、冲突处理和候选稳定
 - 日期语义：优先使用“生产日期 / 包装日期 / 制造日期 / MFG / MFD”“保质期 / 货架期”“有效期至 / 限用日期 / EXP / BBE”等标签；无标签时仅按受控规则生成待确认候选，完整矩阵见 `../docs/APK_OCR_DATE_FORMAT_MATRIX.md`
 - 滚轮式日期选择器
@@ -126,3 +126,4 @@ apk/build/outputs/apk/shiqi-android-release.apk
 - 当前多模型变更的规则、支持格式、样本状态和剩余风险见 `../docs/APK_OCR_DATE_FORMAT_MATRIX.md`。
 - V0.3.16 签名覆盖、识别依据返回、继续相机状态保留和实时文字框证据见 `../docs/qa/2026-07-28-v0316-camera-state-signing-qa.md`。
 - V0.4.0 四目的地外壳、完整 CRUD、Excel 往返、JSON 分享、覆盖安装保数和多尺寸视觉证据见 `../docs/qa/2026-07-29-redesign-v2-b1-android-shell.md`。
+- V0.4.1 指定失败视频的药品名字段晋升、结果页到新增表单、覆盖安装保数和 360 x 800 视觉证据见 `../docs/qa/2026-07-29-redesign-v2-c1-ocr.md`。
