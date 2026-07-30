@@ -527,3 +527,12 @@ V2 重构不直接重写 4500 行以上的 `MainActivity` 和既有数据操作�
 四组冻结样本、识别后完整增改删、五种屏幕尺寸、短屏边界、核对返回、部分结果冻结、219 项本地逻辑测试、Lint、构建和覆盖安装保数均通过。最终版本为 `versionName 0.4.4`、`versionCode 34`，证据见 `docs/qa/2026-07-30-redesign-v2-d1b-scan-confirm.md`。
 
 真实手机镜头的对焦、曝光、连续帧率、温升和不同芯片性能仍为 `PARTIAL`；有效期至样本约 74.8 秒才得到完整结果，后续仍需优化缺失字段定向补扫和首个可用结果耗时。
+## 2026-07-30：V0.4.5 CameraX 采集层与最新帧所有权
+
+扫描 Activity 不再直接持有 CameraX provider、Preview、ImageAnalysis、`ImageProxy` 转换和焦点请求。`CameraXFrameSource` 统一管理相机生命周期、旋转、后置相机绑定、点按/中央 AF-AE-AWB、手电筒和停止解绑；分析器继续使用 `STRATEGY_KEEP_ONLY_LATEST` 并及时关闭每个 `ImageProxy`。
+
+完整 OCR 前增加独立 `LatestFrameProcessor`。它只持有一个尚未开始的最新 `Bitmap`，新帧替换旧帧时立即释放；会话 generation、停止、执行器拒绝和识别异常均清理帧所有权。连续模糊自动重对焦必须满足两次模糊证据、无 focus in-flight 和 1800ms 冷却，避免每个模糊帧都触发 AF/AE/AWB。
+
+视觉检查发现日期摘要最多两行却可能包含四行内容，保质期和最终日期会被省略。本轮取消摘要中的“可信度”占行，并允许生产日期、保质期和有效期完整换行。720 x 1280 与 1080 x 2400 均确认字段、证据和固定操作栏不重叠。
+
+219 项既有逻辑测试、5 项管线测试、Lint、构建、四组冻结样本、问题视频到新增表单、覆盖安装保数和 v2 签名通过。最终 APK 为 `versionName 0.4.5`、`versionCode 35`。AVD 在进入实时 CameraX 后再次出现系统 shell 冻结，只能重启 emulator/QEMU；因此 C1a 软件管线为 `PASS`，真实手机对焦、曝光、帧率和温升仍属于 C1b `PARTIAL`，不能由视频或 AVD 外推。

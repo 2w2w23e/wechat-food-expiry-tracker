@@ -66,6 +66,8 @@ $MainSources = @(
   'RecognitionRoiBudget.java',
   'RecognitionReplayCompletion.java',
   'CameraOcrFeedback.java',
+  'CameraFocusRecoveryPolicy.java',
+  'LatestFrameProcessor.java',
   'DateOcrResultPayload.java',
   'RecognitionTextCleaner.java',
   'PackagingNamePolicy.java',
@@ -115,6 +117,7 @@ try {
 
   Write-Host 'Running APK local Java logic tests...'
   Invoke-Checked $Java @('-cp', $Classes, 'com.shiqi.expirytracker.LocalLogicTest')
+  Invoke-Checked $Java @('-cp', $Classes, 'com.shiqi.expirytracker.CameraFramePipelineTest')
 } finally {
   if (Test-Path $TempRoot) {
     Remove-Item -LiteralPath $TempRoot -Recurse -Force
