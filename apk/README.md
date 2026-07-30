@@ -6,7 +6,7 @@
 
 ## 构建
 
-当前 APK 版本号：`versionName 0.4.4`，`versionCode 34`。每次生成新的可交付 APK 时，都需要同步提升 `apk/app/build.gradle` 和 `AndroidManifest.xml` 里的 `versionName` 和 `versionCode`。
+当前 APK 版本号：`versionName 0.4.5`，`versionCode 35`。每次生成新的可交付 APK 时，都需要同步提升 `apk/app/build.gradle` 和 `AndroidManifest.xml` 里的 `versionName` 和 `versionCode`。
 
 当前最低 Android 版本为 API 24（Android 7.0）。当前 debug APK 实测约 220 MB；离线模型只保留当前链路需要的关键文件，可交付 APK 的硬上限为 1 GB。
 
@@ -77,6 +77,7 @@ apk/build/outputs/apk/shiqi-android-release.apk
 - V2 扫描与核对：预览区保持为首要区域，条码、商品名和日期分别显示用户状态；进入核对页后冻结候选，查看关键帧证据或返回扫描都不会丢失当前结果
 - 视频识别增强：视频帧会使用全图、放大裁剪、中英文双 OCR、PP-OCRv6 日期行补充识别、多帧候选排序和 OpenCV CLAHE / 背景差分低对比增强；日期按多模型与多帧证据稳定后进入表单
 - 相机实时帧门控：每帧先检查清晰度、曝光、反光和文字区域，只保留首个、明显更好或超时兜底帧进入完整 OCR；识别繁忙时继续以 `KEEP_ONLY_LATEST` 语义替换待处理帧，不堆积旧画面
+- CameraX 采集层已从扫描 Activity 抽离；分析线程及时关闭 ImageProxy，识别线程只持有一个最新待处理 Bitmap，会话切换、执行器拒绝和识别异常均释放帧资源
 - 实时识别反馈：取景框显示 PP-OCRv6 检测到的可能文字区；发现有效画面时提示并轻震。查看识别依据使用可返回弹窗；继续相机识别默认保留已识别的商品名、条码、日期、保质期和关键帧
 - Debug 诊断面板：实时显示取帧、预检、入选、OCR、模糊跳过、自动重对焦及各阶段耗时；可导入录屏复现并通过系统分享面板导出 UTF-8 文本日志。诊断数据只用于定位本机性能和相机状态，不会自动保存识别结果
 - 商品码识别：支持一维商品条码、QR Code / Data Matrix 中的 GS1 Digital Link 或商品码参数；商品信息查询先走现有 GS1 接口，未命中时对进口商品补查中国商品信息服务平台公开进口商品数据
@@ -131,3 +132,4 @@ apk/build/outputs/apk/shiqi-android-release.apk
 - V0.4.2 有界 ROI、低对比度日期快速路径、四组冻结样本速度回归和字段优先结果页见 `../docs/qa/2026-07-30-redesign-v2-c2-roi-speed.md`。
 - V0.4.3 商品档案分组库存、全屏批次详情、减量撤销、补货相机首屏、完整增改删和五尺寸视觉证据见 `../docs/qa/2026-07-30-redesign-v2-d1a-inventory-detail.md`。
 - V0.4.4 全屏扫描、稳定核对、证据无损返回、四组冻结样本、完整增改删和五尺寸视觉证据见 `../docs/qa/2026-07-30-redesign-v2-d1b-scan-confirm.md`。
+- V0.4.5 CameraX 帧源、最新帧替换、对焦恢复、四组冻结样本、日期摘要视觉修正和覆盖安装证据见 ../docs/qa/2026-07-30-redesign-v2-c1a-camera-pipeline.md。

@@ -24,11 +24,8 @@ import android.os.Bundle;
 import android.os.Build;
 import android.os.SystemClock;
 import android.util.Log;
-import android.util.Size;
 import android.view.Gravity;
 import android.view.HapticFeedbackConstants;
-import android.view.MotionEvent;
-import android.view.Surface;
 import android.view.View;
 import android.view.ViewGroup;
 import android.view.Window;
@@ -45,23 +42,11 @@ import android.widget.TextView;
 import android.widget.Toast;
 
 import androidx.activity.ComponentActivity;
-import androidx.camera.core.Camera;
-import androidx.camera.core.CameraSelector;
-import androidx.camera.core.FocusMeteringAction;
-import androidx.camera.core.FocusMeteringResult;
-import androidx.camera.core.ImageAnalysis;
-import androidx.camera.core.ImageProxy;
-import androidx.camera.core.MeteringPoint;
-import androidx.camera.core.Preview;
-import androidx.camera.core.resolutionselector.ResolutionSelector;
-import androidx.camera.core.resolutionselector.ResolutionStrategy;
-import androidx.camera.lifecycle.ProcessCameraProvider;
 import androidx.camera.view.PreviewView;
 import androidx.core.content.FileProvider;
 
 import com.google.android.gms.tasks.Task;
 import com.google.android.gms.tasks.Tasks;
-import com.google.common.util.concurrent.ListenableFuture;
 import com.google.mlkit.vision.barcode.BarcodeScanner;
 import com.google.mlkit.vision.barcode.BarcodeScannerOptions;
 import com.google.mlkit.vision.barcode.BarcodeScanning;
@@ -150,13 +135,13 @@ public final class DateOcrScanActivity extends ComponentActivity {
     private ExecutorService cameraAnalyzerExecutor;
     private ExecutorService cameraExecutor;
     private ExecutorService modelWarmupExecutor;
+    private CameraXFrameSource cameraFrameSource;
+    private LatestFrameProcessor<Bitmap> latestCameraFrames;
     private TextRecognizer textRecognizer;
     private TextRecognizer latinTextRecognizer;
     private BarcodeScanner barcodeScanner;
     private PaddleLineOcrEngine paddleLineOcrEngine;
     private PaddleTextDetectionEngine paddleTextDetectionEngine;
-    private ProcessCameraProvider cameraProvider;
-    private Camera camera;
     private final UnifiedRecognitionStabilizer stabilizer = new UnifiedRecognitionStabilizer();
     private final RecognitionFrameSelector frameSelector = new RecognitionFrameSelector(1600L);
     private final RecognitionDiagnostics diagnostics = new RecognitionDiagnostics(600);
@@ -186,8 +171,7 @@ public final class DateOcrScanActivity extends ComponentActivity {
     private AlertDialog diagnosticsDialog;
     private TextView diagnosticsSummaryView;
     private volatile int recognitionGeneration;
-    private long lastAnalyzeAt;
-    private volatile boolean analysisInFlight;
+    private volatile long lastAnalyzeAt;
     private volatile boolean videoReplayActive;
     private volatile boolean barcodeLookupOnly;
     private volatile boolean dateOnlyMode;
@@ -209,16 +193,13 @@ public final class DateOcrScanActivity extends ComponentActivity {
     private volatile boolean cameraBound;
     private volatile boolean liveCameraResultFrozen;
     private Bitmap lastReplayFrame;
-    private final Object pendingCameraFrameLock = new Object();
-    private Bitmap pendingCameraFrame;
-    private long pendingCameraFrameTimestampUs;
-    private int pendingCameraFrameGeneration;
-    private boolean cameraRecognitionScheduled;
     private volatile boolean paddleModelsReady;
     private volatile int cameraFramesCaptured;
     private volatile long cameraLastStatusAtMs;
     private volatile String cameraFocusState = "自动对焦准备中";
     private volatile String cameraFrameState = "等待相机画面";
+    private final CameraFocusRecoveryPolicy focusRecoveryPolicy =
+            new CameraFocusRecoveryPolicy(2, 1800L);
     private double bestCameraVisualScore = -1d;
     private double bestCameraAcceptedScore = -1d;
     private long lastCameraProbeAtMs;
@@ -226,10 +207,6 @@ public final class DateOcrScanActivity extends ComponentActivity {
     private long lastCameraAcceptedSignature;
     private long lastValuableFramePromptAtMs;
     private int cameraProbeCount;
-    private int consecutiveBlurFrames;
-    private long lastAutomaticFocusAtMs;
-    private long latestFocusRequestId;
-    private volatile boolean focusRequestInFlight;
     private volatile double latestTextFocusXRatio = 0.5d;
     private volatile double latestTextFocusYRatio = 0.48d;
     private boolean confirmationVisible;
@@ -301,6 +278,7 @@ public final class DateOcrScanActivity extends ComponentActivity {
         }
 
         buildScreen();
+        initializeCameraPipeline();
         showInputChoiceState();
 
         String qaVideoPath = intent == null ? "" : FoodItem.cleanText(intent.getStringExtra(EXTRA_QA_VIDEO_PATH));
@@ -356,7 +334,6 @@ public final class DateOcrScanActivity extends ComponentActivity {
         if (analyzerExecutor != null) {
             analyzerExecutor.shutdownNow();
         }
-        clearPendingCameraFrame();
         if (recognitionExecutor != null) {
             recognitionExecutor.shutdownNow();
         }
@@ -769,6 +746,8 @@ public final class DateOcrScanActivity extends ComponentActivity {
         content.addView(fieldHeading, matchWrap());
 
         confirmationDateValue = reviewValue("尚未找到清楚日期");
+        confirmationDateValue.setMaxLines(4);
+        confirmationDateValue.setEllipsize(null);
         confirmationDateNote = reviewNote("继续对准喷码、拓印或激光日期");
         View dateRow = buildReviewRow(
                 R.drawable.ic_v2_calendar,
@@ -1352,24 +1331,22 @@ public final class DateOcrScanActivity extends ComponentActivity {
     private void requestDateFocus() {
         statusBadge.setText("日期特写");
         statusText.setText("让喷码、拓印或激光日期尽量占满框");
-        if (camera != null && previewView != null
-                && previewView.getWidth() > 0 && previewView.getHeight() > 0) {
-            startFocusAndMetering(
-                    camera,
-                    previewView.getWidth() / 2f,
-                    previewView.getHeight() * 0.48f,
-                    true
-            );
+        if (cameraFrameSource != null) {
+            cameraFrameSource.focusAtCenter(true, false);
         }
     }
 
     private void toggleTorch() {
-        if (camera == null || !camera.getCameraInfo().hasFlashUnit()) {
+        if (cameraFrameSource == null || !cameraFrameSource.hasFlashUnit()) {
             Toast.makeText(this, "当前相机不支持手电筒", Toast.LENGTH_SHORT).show();
             return;
         }
-        torchEnabled = !torchEnabled;
-        camera.getCameraControl().enableTorch(torchEnabled);
+        boolean nextTorchState = !torchEnabled;
+        if (!cameraFrameSource.setTorch(nextTorchState)) {
+            Toast.makeText(this, "手电筒开启失败，请重试", Toast.LENGTH_SHORT).show();
+            return;
+        }
+        torchEnabled = nextTorchState;
         torchButton.setContentDescription(torchEnabled ? "关闭手电筒" : "打开手电筒");
         torchButton.setBackground(rounded(
                 torchEnabled ? Color.rgb(47, 102, 237) : Color.argb(56, 255, 255, 255),
@@ -1562,13 +1539,8 @@ public final class DateOcrScanActivity extends ComponentActivity {
                 && previewView.getVisibility() == View.VISIBLE) {
             statusBadge.setText("相机");
             statusText.setText("相机正在继续识别，已有商品名、日期和条码不会被清空。");
-            if (camera != null && previewView.getWidth() > 0 && previewView.getHeight() > 0) {
-                startFocusAndMetering(
-                        camera,
-                        previewView.getWidth() / 2f,
-                        previewView.getHeight() * 0.48f,
-                        false
-                );
+            if (cameraFrameSource != null) {
+                cameraFrameSource.focusAtCenter(false, false);
             }
             return;
         }
@@ -1608,7 +1580,7 @@ public final class DateOcrScanActivity extends ComponentActivity {
     private void prepareCameraSurfacePreservingRecognition() {
         stopVideoReplay();
         recognitionGeneration++;
-        clearPendingCameraFrame();
+        resetLatestCameraFrames();
         showingEvidenceFrame = false;
         analyzedFrameSequence = 0;
         recognitionFirstFrameAtMs = 0L;
@@ -1616,7 +1588,6 @@ public final class DateOcrScanActivity extends ComponentActivity {
         paddleDetectionCameraFramesUsed = 0;
         paddleDetectedLineCameraFramesUsed = 0;
         lowContrastCameraPassesUsed = 0;
-        analysisInFlight = false;
         liveCameraResultFrozen = false;
         lastAnalyzeAt = 0L;
         cameraFramesCaptured = 0;
@@ -1624,6 +1595,7 @@ public final class DateOcrScanActivity extends ComponentActivity {
         cameraFocusState = "自动对焦准备中";
         cameraFrameState = "已保留原结果，等待新画面";
         resetCameraFrameGate();
+        focusRecoveryPolicy.reset();
         showCameraSurface();
         setRecognitionComplete(false);
         statusBadge.setText("继续识别");
@@ -5317,7 +5289,7 @@ public final class DateOcrScanActivity extends ComponentActivity {
         );
         diagnostics.reset(SystemClock.elapsedRealtime(), "reset");
         recognitionGeneration++;
-        clearPendingCameraFrame();
+        resetLatestCameraFrames();
         stabilizer.reset();
         latestSnapshot = stabilizer.snapshot();
         latestRawText = "";
@@ -5342,16 +5314,12 @@ public final class DateOcrScanActivity extends ComponentActivity {
         lowContrastCameraPassesUsed = 0;
         videoAnalyzedFrames = 0;
         videoExpectedFrames = 0;
-        analysisInFlight = false;
         liveCameraResultFrozen = false;
         lastAnalyzeAt = 0L;
         cameraFramesCaptured = 0;
         resetCameraFrameGate();
+        focusRecoveryPolicy.reset();
         cameraLastStatusAtMs = 0L;
-        consecutiveBlurFrames = 0;
-        lastAutomaticFocusAtMs = 0L;
-        latestFocusRequestId = 0L;
-        focusRequestInFlight = false;
         latestTextFocusXRatio = 0.5d;
         latestTextFocusYRatio = 0.48d;
         cameraFocusState = "自动对焦准备中";
@@ -5531,56 +5499,117 @@ public final class DateOcrScanActivity extends ComponentActivity {
         }
     }
 
-    private void startCamera() {
-        if (previewView == null || cameraExecutor == null || cameraAnalyzerExecutor == null) {
-            return;
-        }
-        diagnostics.setSource(SystemClock.elapsedRealtime(), "camera");
-        diagnosticEvent("camera.start", "request provider");
-
-        final int cameraGeneration = recognitionGeneration;
-        final ListenableFuture<ProcessCameraProvider> providerFuture = ProcessCameraProvider.getInstance(this);
-        providerFuture.addListener(new Runnable() {
-            @Override
-            public void run() {
-                try {
-                    if (cameraGeneration != recognitionGeneration) {
-                        return;
+    private void initializeCameraPipeline() {
+        latestCameraFrames = new LatestFrameProcessor<Bitmap>(
+                cameraExecutor,
+                new LatestFrameProcessor.Processor<Bitmap>() {
+                    @Override
+                    public void process(LatestFrameProcessor.Frame<Bitmap> frame) throws Exception {
+                        processLatestCameraFrame(frame);
                     }
-                    cameraProvider = providerFuture.get();
-                    if (!hasBackCamera(cameraProvider)) {
-                        showCameraUnavailable("未找到可用后置相机，请检查设备相机状态。");
-                        return;
+                },
+                new LatestFrameProcessor.Releaser<Bitmap>() {
+                    @Override
+                    public void release(Bitmap bitmap) {
+                        recycleBitmap(bitmap);
                     }
-                    bindCameraUseCases(cameraProvider);
-                    cameraBound = true;
-                    if (torchButton != null) {
-                        torchButton.setVisibility(camera != null
-                                && camera.getCameraInfo().hasFlashUnit()
-                                ? View.VISIBLE
-                                : View.GONE);
+                },
+                new LatestFrameProcessor.ErrorListener() {
+                    @Override
+                    public void onError(Throwable error) {
+                        Log.w("ShiqiRecognition", "Latest camera frame processing failed", error);
+                        diagnostics.increment("camera_worker_error");
+                        diagnosticEvent(
+                                "camera.worker.failed",
+                                error == null ? "unknown" : error.getClass().getSimpleName()
+                        );
                     }
-                    statusBadge.setText("相机");
-                    setCameraFrameState("相机已连接，等待第一帧", false);
-                    statusText.setText(barcodeLookupOnly
-                            ? "请对准商品条码，连续两帧一致后会自动查找。"
-                            : dateOnlyMode
-                            ? "实时扫描已启动；取景框会显示对焦、清晰度和中文识别进度。"
-                            : "相机已就绪，正在识别中文商品名、条码和包装日期。");
-                } catch (Exception error) {
-                    showCameraUnavailable("相机启动失败，请检查相机权限或重新打开应用。");
-                    Toast.makeText(DateOcrScanActivity.this, "相机启动失败", Toast.LENGTH_SHORT).show();
                 }
-            }
-        }, mainExecutor);
+        );
+        cameraFrameSource = new CameraXFrameSource(
+                this,
+                previewView,
+                cameraAnalyzerExecutor,
+                mainExecutor,
+                new CameraXFrameSource.Listener() {
+                    @Override
+                    public boolean shouldAcquireFrame(long nowMs) {
+                        LatestFrameProcessor<Bitmap> frames = latestCameraFrames;
+                        boolean busy = frames != null && frames.isBusy();
+                        if (!RecognitionFrameSelector.shouldCaptureLatestCameraFrame(
+                                cameraBound,
+                                nowMs,
+                                lastAnalyzeAt,
+                                CAMERA_CAPTURE_INTERVAL_MS,
+                                busy
+                        )) {
+                            return false;
+                        }
+                        lastAnalyzeAt = nowMs;
+                        return true;
+                    }
+
+                    @Override
+                    public void onFrame(Bitmap frame, long timestampUs) {
+                        offerLatestCameraFrame(frame, timestampUs, recognitionGeneration);
+                    }
+
+                    @Override
+                    public void onCameraReady(boolean flashAvailable) {
+                        handleCameraReady(flashAvailable);
+                    }
+
+                    @Override
+                    public void onCameraUnavailable(String userMessage, Throwable error) {
+                        if (error != null) {
+                            Log.w("ShiqiRecognition", "Camera start failed", error);
+                        }
+                        showCameraUnavailable(userMessage);
+                    }
+
+                    @Override
+                    public void onFrameError(Throwable error) {
+                        Log.w("ShiqiRecognition", "Camera frame capture failed", error);
+                        diagnostics.increment("camera_capture_error");
+                        diagnosticEvent(
+                                "camera.capture.failed",
+                                error == null ? "unknown" : error.getClass().getSimpleName()
+                        );
+                    }
+
+                    @Override
+                    public void onFocusEvent(CameraXFrameSource.FocusEvent event) {
+                        handleCameraFocusEvent(event);
+                    }
+                }
+        );
     }
 
-    private boolean hasBackCamera(ProcessCameraProvider provider) {
-        try {
-            return provider.hasCamera(CameraSelector.DEFAULT_BACK_CAMERA);
-        } catch (Exception error) {
-            return false;
+    private void startCamera() {
+        if (previewView == null
+                || cameraFrameSource == null
+                || latestCameraFrames == null) {
+            return;
         }
+        cameraBound = false;
+        latestCameraFrames.start(recognitionGeneration);
+        diagnostics.setSource(SystemClock.elapsedRealtime(), "camera");
+        diagnosticEvent("camera.start", "request provider");
+        cameraFrameSource.start(dateOnlyMode);
+    }
+
+    private void handleCameraReady(boolean flashAvailable) {
+        cameraBound = true;
+        if (torchButton != null) {
+            torchButton.setVisibility(flashAvailable ? View.VISIBLE : View.GONE);
+        }
+        statusBadge.setText("相机");
+        setCameraFrameState("相机已连接，等待第一帧", false);
+        statusText.setText(barcodeLookupOnly
+                ? "请对准商品条码，连续两帧一致后会自动查找。"
+                : dateOnlyMode
+                ? "实时扫描已启动；取景框会显示对焦、清晰度和中文识别进度。"
+                : "相机已就绪，正在识别中文商品名、条码和包装日期。");
     }
 
     private void showCameraUnavailable(String message) {
@@ -5591,186 +5620,78 @@ public final class DateOcrScanActivity extends ComponentActivity {
         stopCamera();
     }
 
-    private void bindCameraUseCases(ProcessCameraProvider provider) {
-        provider.unbindAll();
-
-        int targetRotation = previewView.getDisplay() == null
-                ? Surface.ROTATION_0
-                : previewView.getDisplay().getRotation();
-        Preview preview = new Preview.Builder()
-                .setTargetRotation(targetRotation)
-                .build();
-        preview.setSurfaceProvider(previewView.getSurfaceProvider());
-
-        ResolutionSelector resolutionSelector = new ResolutionSelector.Builder()
-                .setResolutionStrategy(new ResolutionStrategy(
-                        new Size(1920, 1080),
-                        ResolutionStrategy.FALLBACK_RULE_CLOSEST_HIGHER_THEN_LOWER
-                ))
-                .build();
-        ImageAnalysis imageAnalysis = new ImageAnalysis.Builder()
-                .setResolutionSelector(resolutionSelector)
-                .setTargetRotation(targetRotation)
-                .setBackpressureStrategy(ImageAnalysis.STRATEGY_KEEP_ONLY_LATEST)
-                .build();
-        imageAnalysis.setAnalyzer(cameraAnalyzerExecutor, new ImageAnalysis.Analyzer() {
-            @Override
-            public void analyze(ImageProxy imageProxy) {
-                analyzeImage(imageProxy);
-            }
-        });
-
-        camera = provider.bindToLifecycle(
-                this,
-                CameraSelector.DEFAULT_BACK_CAMERA,
-                preview,
-                imageAnalysis
-        );
-        try {
-            camera.getCameraControl().setLinearZoom(dateOnlyMode ? 0.12f : 0.06f);
-        } catch (RuntimeException ignored) {
-            // Some fixed-focus and virtual cameras expose no usable zoom range.
-        }
-        configureCameraFocus(camera);
-    }
-
-    private void configureCameraFocus(final Camera boundCamera) {
-        if (previewView == null || boundCamera == null) {
+    private void handleCameraFocusEvent(CameraXFrameSource.FocusEvent event) {
+        if (event == null) {
             return;
         }
-        previewView.setOnTouchListener(new View.OnTouchListener() {
-            @Override
-            public boolean onTouch(View view, MotionEvent event) {
-                if (event.getAction() != MotionEvent.ACTION_UP) {
-                    return true;
-                }
-                startFocusAndMetering(boundCamera, event.getX(), event.getY(), true);
-                return true;
+        if (event.status == CameraXFrameSource.FocusStatus.STARTED) {
+            focusRecoveryPolicy.markFocusRequested(SystemClock.elapsedRealtime());
+            diagnostics.increment("focus_requested");
+            if (event.automaticRecovery) {
+                diagnostics.increment("focus_recovery");
             }
-        });
-        previewView.postDelayed(new Runnable() {
-            @Override
-            public void run() {
-                if (boundCamera != camera || !cameraBound) {
-                    return;
-                }
-                startFocusAndMetering(
-                        boundCamera,
-                        previewView.getWidth() / 2f,
-                        previewView.getHeight() * 0.48f,
-                        false
-                );
-            }
-        }, 450L);
-    }
-
-    private void startFocusAndMetering(
-            final Camera boundCamera,
-            float x,
-            float y,
-            final boolean announceResult
-    ) {
-        startFocusAndMetering(boundCamera, x, y, announceResult, false);
-    }
-
-    private void startFocusAndMetering(
-            final Camera boundCamera,
-            float x,
-            float y,
-            final boolean announceResult,
-            final boolean automaticRecovery
-    ) {
-        if (previewView == null || boundCamera == null || previewView.getWidth() <= 0 || previewView.getHeight() <= 0) {
+            diagnosticEvent(
+                    "focus.start",
+                    "id=" + event.requestId
+                            + " recovery=" + event.automaticRecovery
+                            + " x=" + Math.round(event.x)
+                            + " y=" + Math.round(event.y)
+            );
+            setCameraFocusState(event.announced ? "点按对焦中" : "自动对焦中");
+            recognitionOverlay.showFocusPoint(
+                    event.x,
+                    event.y,
+                    RecognitionGuideOverlay.FOCUS_RUNNING
+            );
             return;
         }
-        if (focusRequestInFlight && !announceResult) {
-            return;
-        }
-        MeteringPoint point = previewView.getMeteringPointFactory().createPoint(x, y, 0.18f);
-        final float requestedFocusX = x;
-        final float requestedFocusY = y;
-        FocusMeteringAction action = new FocusMeteringAction.Builder(
-                point,
-                FocusMeteringAction.FLAG_AF | FocusMeteringAction.FLAG_AE | FocusMeteringAction.FLAG_AWB
-        ).setAutoCancelDuration(announceResult ? 2L : 1L, TimeUnit.SECONDS).build();
-        if (!boundCamera.getCameraInfo().isFocusMeteringSupported(action)) {
+        if (event.status == CameraXFrameSource.FocusStatus.UNSUPPORTED) {
             setCameraFocusState("固定焦距设备");
-            recognitionOverlay.showFocusPoint(x, y, RecognitionGuideOverlay.FOCUS_UNSUPPORTED);
+            recognitionOverlay.showFocusPoint(
+                    event.x,
+                    event.y,
+                    RecognitionGuideOverlay.FOCUS_UNSUPPORTED
+            );
             diagnostics.increment("focus_failed");
-            diagnosticEvent("focus.unsupported", "x=" + Math.round(x) + " y=" + Math.round(y));
+            diagnosticEvent(
+                    "focus.unsupported",
+                    "x=" + Math.round(event.x) + " y=" + Math.round(event.y)
+            );
             return;
         }
-        focusRequestInFlight = true;
-        final long requestId = ++latestFocusRequestId;
-        final long focusStartedAt = SystemClock.elapsedRealtime();
-        diagnostics.increment("focus_requested");
-        if (automaticRecovery) {
-            diagnostics.increment("focus_recovery");
+        if (event.status == CameraXFrameSource.FocusStatus.SUPERSEDED) {
+            diagnosticEvent("focus.superseded", "id=" + event.requestId);
+            return;
         }
-        diagnosticEvent(
-                "focus.start",
-                "id=" + requestId + " recovery=" + automaticRecovery
-                        + " x=" + Math.round(x) + " y=" + Math.round(y)
-        );
-        setCameraFocusState(announceResult ? "点按对焦中" : "自动对焦中");
-        recognitionOverlay.showFocusPoint(x, y, RecognitionGuideOverlay.FOCUS_RUNNING);
-        final ListenableFuture<FocusMeteringResult> focusFuture =
-                boundCamera.getCameraControl().startFocusAndMetering(action);
-        focusFuture.addListener(new Runnable() {
-            @Override
-            public void run() {
-                if (boundCamera != camera) {
-                    return;
-                }
-                if (requestId != latestFocusRequestId) {
-                    diagnosticEvent("focus.superseded", "id=" + requestId);
-                    return;
-                }
-                try {
-                    boolean successful = focusFuture.get().isFocusSuccessful();
-                    if (requestId == latestFocusRequestId) {
-                        focusRequestInFlight = false;
-                    }
-                    diagnostics.increment(successful ? "focus_success" : "focus_failed");
-                    diagnostics.timing("focus", SystemClock.elapsedRealtime() - focusStartedAt);
-                    diagnosticEvent("focus.done", "id=" + requestId + " success=" + successful);
-                    setCameraFocusState(successful
-                            ? "本次对焦已完成 · 正在验清晰度"
-                            : "未锁定焦点 · 连续对焦已恢复");
-                    recognitionOverlay.showFocusPoint(
-                            requestedFocusX,
-                            requestedFocusY,
-                            successful
-                                    ? RecognitionGuideOverlay.FOCUS_SUCCESS
-                                    : RecognitionGuideOverlay.FOCUS_FAILED
-                    );
-                } catch (Exception error) {
-                    if (requestId == latestFocusRequestId) {
-                        focusRequestInFlight = false;
-                    }
-                    diagnostics.increment("focus_failed");
-                    diagnostics.timing("focus", SystemClock.elapsedRealtime() - focusStartedAt);
-                    diagnosticEvent("focus.failed", "id=" + requestId
-                            + " error=" + error.getClass().getSimpleName());
-                    setCameraFocusState("对焦失败 · 连续对焦已恢复");
-                    recognitionOverlay.showFocusPoint(
-                            requestedFocusX,
-                            requestedFocusY,
-                            RecognitionGuideOverlay.FOCUS_FAILED
-                    );
-                }
-                previewView.postDelayed(new Runnable() {
-                    @Override
-                    public void run() {
-                        if (requestId == latestFocusRequestId && boundCamera == camera) {
-                            setCameraFocusState("连续自动对焦 · 实时检查清晰度");
-                        }
-                    }
-                }, announceResult ? 2200L : 1200L);
-            }
-        }, mainExecutor);
-    }
+        if (event.status == CameraXFrameSource.FocusStatus.CONTINUOUS) {
+            setCameraFocusState("连续自动对焦 · 实时检查清晰度");
+            return;
+        }
 
+        boolean successful = event.status == CameraXFrameSource.FocusStatus.SUCCESS;
+        diagnostics.increment(successful ? "focus_success" : "focus_failed");
+        diagnostics.timing("focus", event.elapsedMs);
+        diagnosticEvent(
+                successful ? "focus.done" : "focus.failed",
+                "id=" + event.requestId
+                        + " success=" + successful
+                        + (event.error == null
+                        ? ""
+                        : " error=" + event.error.getClass().getSimpleName())
+        );
+        setCameraFocusState(successful
+                ? "本次对焦已完成 · 正在验清晰度"
+                : event.error == null
+                ? "未锁定焦点 · 连续对焦已恢复"
+                : "对焦失败 · 连续对焦已恢复");
+        recognitionOverlay.showFocusPoint(
+                event.x,
+                event.y,
+                successful
+                        ? RecognitionGuideOverlay.FOCUS_SUCCESS
+                        : RecognitionGuideOverlay.FOCUS_FAILED
+        );
+    }
     private void setCameraFocusState(String state) {
         cameraFocusState = FoodItem.cleanText(state);
         runOnUiThread(new Runnable() {
@@ -5812,14 +5733,12 @@ public final class DateOcrScanActivity extends ComponentActivity {
     }
     private void stopCamera() {
         cameraBound = false;
-        if (previewView != null) {
-            previewView.setOnTouchListener(null);
+        if (cameraFrameSource != null) {
+            cameraFrameSource.stop();
         }
-        if (cameraProvider != null) {
-            cameraProvider.unbindAll();
-            cameraProvider = null;
+        if (latestCameraFrames != null) {
+            latestCameraFrames.stop();
         }
-        camera = null;
         torchEnabled = false;
         if (torchButton != null) {
             torchButton.setContentDescription("打开手电筒");
@@ -5829,127 +5748,70 @@ public final class DateOcrScanActivity extends ComponentActivity {
                     0
             ));
         }
-        clearPendingCameraFrame();
-    }
-
-    private void analyzeImage(final ImageProxy imageProxy) {
-        long now = SystemClock.uptimeMillis();
-        if (!RecognitionFrameSelector.shouldCaptureLatestCameraFrame(
-                cameraBound,
-                now,
-                lastAnalyzeAt,
-                CAMERA_CAPTURE_INTERVAL_MS,
-                analysisInFlight
-        )) {
-            imageProxy.close();
-            return;
-        }
-        lastAnalyzeAt = now;
-        final int frameGeneration = recognitionGeneration;
-        final long frameTimestampUs = SystemClock.elapsedRealtime() * 1000L;
-
-        Bitmap oriented = null;
-        try {
-            oriented = copyUprightBitmap(imageProxy);
-            offerLatestCameraFrame(oriented, frameTimestampUs, frameGeneration);
-            oriented = null;
-        } catch (Exception error) {
-            Log.w("ShiqiRecognition", "Camera frame capture failed", error);
-        } finally {
-            if (oriented != null && !oriented.isRecycled()) {
-                oriented.recycle();
-            }
-        }
     }
 
     private void offerLatestCameraFrame(Bitmap bitmap, long timestampUs, int generation) {
-        ExecutorService recognitionExecutor = cameraExecutor;
-        if (bitmap == null || bitmap.isRecycled() || recognitionExecutor == null) {
+        LatestFrameProcessor<Bitmap> frames = latestCameraFrames;
+        if (bitmap == null || bitmap.isRecycled() || frames == null) {
             recycleBitmap(bitmap);
             return;
         }
-        boolean scheduleWorker = false;
-        synchronized (pendingCameraFrameLock) {
-            if (!cameraBound || generation != recognitionGeneration) {
-                recycleBitmap(bitmap);
-                return;
-            }
-            if (pendingCameraFrame != null) {
-                diagnostics.increment("pending_replaced");
-            }
-            recycleBitmap(pendingCameraFrame);
-            pendingCameraFrame = bitmap;
-            cameraFramesCaptured++;
-            diagnostics.increment("frames_captured");
-            pendingCameraFrameTimestampUs = timestampUs;
-            pendingCameraFrameGeneration = generation;
-            if (!cameraRecognitionScheduled) {
-                cameraRecognitionScheduled = true;
-                scheduleWorker = true;
-            }
+        if (!cameraBound || generation != recognitionGeneration) {
+            recycleBitmap(bitmap);
+            return;
+        }
+
+        boolean recognitionBusy = frames.isBusy();
+        cameraFramesCaptured++;
+        LatestFrameProcessor.OfferResult result = frames.offer(
+                bitmap,
+                timestampUs,
+                generation
+        );
+        if (!result.accepted) {
+            diagnostics.increment("camera_offer_rejected");
+            return;
+        }
+        diagnostics.increment("frames_captured");
+        if (result.replacedPending) {
+            diagnostics.increment("pending_replaced");
         }
         setCameraFrameState(
-                analysisInFlight
+                recognitionBusy
                         ? "已看到实时画面 · 正在识别，保留最新帧 " + cameraFramesCaptured
                         : "已看到实时画面 · 正在检查清晰度 " + cameraFramesCaptured,
                 true
         );
-        if (!scheduleWorker) {
+    }
+
+    private void processLatestCameraFrame(
+            LatestFrameProcessor.Frame<Bitmap> queuedFrame
+    ) throws Exception {
+        if (queuedFrame == null
+                || !cameraBound
+                || queuedFrame.generation != recognitionGeneration) {
             return;
         }
-        try {
-            recognitionExecutor.execute(new Runnable() {
-                @Override
-                public void run() {
-                    drainLatestCameraFrames();
-                }
-            });
-        } catch (RuntimeException error) {
-            synchronized (pendingCameraFrameLock) {
-                cameraRecognitionScheduled = false;
-            }
-            clearPendingCameraFrame();
+        long queueLagMs = Math.max(
+                0L,
+                (SystemClock.elapsedRealtime() * 1000L - queuedFrame.timestampUs) / 1000L
+        );
+        diagnostics.timing("queue_lag", queueLagMs);
+        currentFrameTimestampUs = queuedFrame.timestampUs;
+        CameraFrameProbe probe = inspectCameraFrame(
+                queuedFrame.value,
+                queuedFrame.generation
+        );
+        if (probe.shouldRecognize) {
+            analyzeBitmapFrame(
+                    queuedFrame.value,
+                    false,
+                    true,
+                    queuedFrame.generation,
+                    probe
+            );
         }
     }
-
-    private void drainLatestCameraFrames() {
-        while (true) {
-            Bitmap frame;
-            long timestampUs;
-            int generation;
-            synchronized (pendingCameraFrameLock) {
-                frame = pendingCameraFrame;
-                timestampUs = pendingCameraFrameTimestampUs;
-                generation = pendingCameraFrameGeneration;
-                pendingCameraFrame = null;
-                if (frame == null) {
-                    cameraRecognitionScheduled = false;
-                    analysisInFlight = false;
-                    return;
-                }
-                analysisInFlight = true;
-            }
-            try {
-                if (cameraBound && generation == recognitionGeneration) {
-                    long queueLagMs = Math.max(
-                            0L,
-                            (SystemClock.elapsedRealtime() * 1000L - timestampUs) / 1000L
-                    );
-                    diagnostics.timing("queue_lag", queueLagMs);
-                    currentFrameTimestampUs = timestampUs;
-                    CameraFrameProbe probe = inspectCameraFrame(frame, generation);
-                    if (probe.shouldRecognize) {
-                        analyzeBitmapFrame(frame, false, true, generation, probe);
-                    }
-                }
-            } catch (Exception error) {
-                Log.w("ShiqiRecognition", "Camera frame recognition failed", error);
-            } finally {
-                recycleBitmap(frame);
-            }
-        }
-    }
-
     private CameraFrameProbe inspectCameraFrame(Bitmap frame, int expectedGeneration) {
         LowContrastTextPreprocessor.FrameMetrics metrics =
                 LowContrastTextPreprocessor.measureFrame(frame);
@@ -6071,7 +5933,7 @@ public final class DateOcrScanActivity extends ComponentActivity {
 
         boolean meaningfulImprovement = bestCameraAcceptedScore < 0d
                 || candidateScore >= bestCameraAcceptedScore + 0.025d;
-        consecutiveBlurFrames = 0;
+        focusRecoveryPolicy.shouldRecover(false, false, SystemClock.elapsedRealtime());
         diagnostics.increment("frames_accepted");
         diagnosticEvent("frame.accept", "source=camera regions=" + regions.size());
         lastCameraAcceptedAtMs = now;
@@ -6103,38 +5965,39 @@ public final class DateOcrScanActivity extends ComponentActivity {
     }
 
     private void maybeRecoverCameraFocus(int reason) {
-        if (reason != RecognitionFrameSelector.CAMERA_FRAME_BLUR) {
-            consecutiveBlurFrames = 0;
-            return;
-        }
-        consecutiveBlurFrames++;
+        boolean blurred = reason == RecognitionFrameSelector.CAMERA_FRAME_BLUR;
+        CameraXFrameSource source = cameraFrameSource;
         long now = SystemClock.elapsedRealtime();
-        if (consecutiveBlurFrames < 2
-                || focusRequestInFlight
-                || now - lastAutomaticFocusAtMs < 1800L) {
+        if (source == null || !cameraBound) {
+            focusRecoveryPolicy.shouldRecover(false, false, now);
             return;
         }
-        final Camera activeCamera = camera;
-        final PreviewView activePreview = previewView;
-        if (activeCamera == null || activePreview == null) {
+        if (!focusRecoveryPolicy.shouldRecover(
+                blurred,
+                source.isFocusInFlight(),
+                now
+        )) {
             return;
         }
-        lastAutomaticFocusAtMs = now;
-        consecutiveBlurFrames = 0;
-        final float focusX = (float) (latestTextFocusXRatio * activePreview.getWidth());
-        final float focusY = (float) (latestTextFocusYRatio * activePreview.getHeight());
+        final double focusXRatio = latestTextFocusXRatio;
+        final double focusYRatio = latestTextFocusYRatio;
         runOnUiThread(new Runnable() {
             @Override
             public void run() {
-                if (activeCamera != camera || !cameraBound) {
+                CameraXFrameSource activeSource = cameraFrameSource;
+                if (activeSource == null || !cameraBound) {
                     return;
                 }
                 setCameraFrameState("连续模糊 · 正在自动重对焦", false);
-                startFocusAndMetering(activeCamera, focusX, focusY, false, true);
+                activeSource.focusAtRatio(
+                        focusXRatio,
+                        focusYRatio,
+                        false,
+                        true
+                );
             }
         });
     }
-
     private void updateLatestFocusTarget(List<PaddleTextDetectionEngine.TextRegion> regions) {
         if (regions == null || regions.isEmpty()) {
             return;
@@ -6229,12 +6092,9 @@ public final class DateOcrScanActivity extends ComponentActivity {
         });
     }
 
-    private void clearPendingCameraFrame() {
-        synchronized (pendingCameraFrameLock) {
-            recycleBitmap(pendingCameraFrame);
-            pendingCameraFrame = null;
-            pendingCameraFrameTimestampUs = 0L;
-            pendingCameraFrameGeneration = 0;
+    private void resetLatestCameraFrames() {
+        if (latestCameraFrames != null) {
+            latestCameraFrames.start(recognitionGeneration);
         }
     }
 
@@ -6243,41 +6103,6 @@ public final class DateOcrScanActivity extends ComponentActivity {
             bitmap.recycle();
         }
     }
-
-    private Bitmap copyUprightBitmap(ImageProxy imageProxy) {
-        Bitmap source;
-        int rotationDegrees = imageProxy.getImageInfo().getRotationDegrees();
-        try {
-            source = imageProxy.toBitmap();
-        } finally {
-            imageProxy.close();
-        }
-        int normalizedRotation = ((rotationDegrees % 360) + 360) % 360;
-        if (normalizedRotation == 0) {
-            return source;
-        }
-        Matrix matrix = new Matrix();
-        matrix.postRotate(normalizedRotation);
-        try {
-            Bitmap upright = Bitmap.createBitmap(
-                    source,
-                    0,
-                    0,
-                    source.getWidth(),
-                    source.getHeight(),
-                    matrix,
-                    true
-            );
-            if (upright != source) {
-                source.recycle();
-            }
-            return upright;
-        } catch (RuntimeException error) {
-            source.recycle();
-            throw error;
-        }
-    }
-
     private String extractProductBarcode(List<Barcode> barcodes) {
         if (barcodes == null) {
             return "";
@@ -7932,12 +7757,6 @@ public final class DateOcrScanActivity extends ComponentActivity {
             return "日期暂未识别，请重新对准日期区域。";
         }
         StringBuilder builder = new StringBuilder();
-        double confidence = strongestDateEvidenceConfidence();
-        if (confidence > 0d) {
-            builder.append("日期可信度  ")
-                    .append(RecognitionEvidence.confidenceLabel(confidence))
-                    .append('\n');
-        }
         for (int index = 0; index < values.size(); index++) {
             if (index > 0) {
                 builder.append('\n');
@@ -7958,19 +7777,6 @@ public final class DateOcrScanActivity extends ComponentActivity {
             return "年";
         }
         return FoodData.shelfLifeUnitLabel(unit);
-    }
-
-    private double strongestDateEvidenceConfidence() {
-        double confidence = 0d;
-        for (SessionKeyframe keyframe : keyframeSnapshot()) {
-            for (RecognitionEvidence.Region region : keyframe.evidence.regions) {
-                if (RecognitionEvidence.FIELD_PRODUCTION_DATE.equals(region.field)
-                        || RecognitionEvidence.FIELD_EXPIRY_DATE.equals(region.field)) {
-                    confidence = Math.max(confidence, region.confidence);
-                }
-            }
-        }
-        return confidence;
     }
 
     private void updateStatus(UnifiedRecognitionStabilizer.Snapshot snapshot) {

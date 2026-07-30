@@ -365,3 +365,16 @@ UI 映射：
 [`2026-07-30-redesign-v2-c2-roi-speed.md`](../qa/2026-07-30-redesign-v2-c2-roi-speed.md)。
 
 C2 的本轮冻结样本门槛为 `PASS`。真实相机仍为 `PARTIAL`；公开集字段统计、PP-OCRv5/v6 同裁剪 A/B 和 `DateOcrScanActivity` 后续模块拆分仍未完成。
+## 16. C1a CameraX 采集层实施状态
+
+已实现：
+
+- `CameraXFrameSource` 统一拥有 provider、Preview、ImageAnalysis、旋转、1920 x 1080 目标、后置相机绑定、手电筒、点按/中央 AF-AE-AWB 和停止解绑。
+- ImageAnalysis 使用非阻塞 `STRATEGY_KEEP_ONLY_LATEST`；分析线程在拒绝、异常或转换结束后关闭每个 `ImageProxy`。
+- `LatestFrameProcessor` 在识别线程前只保存一个最新待处理 `Bitmap`，以 generation 隔离新旧会话，并在替换、停止、执行器拒绝和识别异常时释放所有权。
+- `CameraFocusRecoveryPolicy` 要求连续两次模糊且 1800ms 冷却结束后才自动重对焦；已有 focus in-flight 时不叠加请求。
+- 相机页仍由字段缺口、清晰度、曝光、反光和文字区域决定慢通道，不对每个预览帧运行全量 OCR。
+
+这与官方 CameraX/ML Kit 实时建议一致：分析器需要快速返回，忙碌时丢弃旧帧，并及时关闭 `ImageProxy`；AF/AE/AWB 区域属于设备 best effort，不支持时必须降级。PaddleOCR Android 官方方案已提供 PP-OCRv6 small/tiny 和 PP-OCRv5 mobile 部署路线，但本节点没有仅因版本号替换模型。模型变更仍需同 ROI 字段召回、错误填入率、延迟、内存和体积 A/B。
+
+C1a 的 219 项既有逻辑测试、5 项管线测试、四组冻结样本和视觉检查通过。AVD 在 CameraX 启动后发生系统 shell 冻结，真实相机 AF、曝光、FPS 和温升仍为 C1b `PARTIAL`。完整证据见 [`2026-07-30-redesign-v2-c1a-camera-pipeline.md`](../qa/2026-07-30-redesign-v2-c1a-camera-pipeline.md)。
