@@ -50,6 +50,7 @@ $Java = Resolve-JavaTool 'java'
 $MainSources = @(
   'DateRules.java',
   'AppNavigation.java',
+  'FoodEditorSession.java',
   'ScanUiPresentation.java',
   'FoodItem.java',
   'Option.java',
@@ -118,6 +119,7 @@ try {
   Write-Host 'Running APK local Java logic tests...'
   Invoke-Checked $Java @('-cp', $Classes, 'com.shiqi.expirytracker.LocalLogicTest')
   Invoke-Checked $Java @('-cp', $Classes, 'com.shiqi.expirytracker.CameraFramePipelineTest')
+  Invoke-Checked $Java @('-cp', $Classes, 'com.shiqi.expirytracker.FoodEditorSessionTest')
 } finally {
   if (Test-Path $TempRoot) {
     Remove-Item -LiteralPath $TempRoot -Recurse -Force

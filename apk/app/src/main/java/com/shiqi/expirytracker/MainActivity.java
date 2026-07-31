@@ -123,6 +123,8 @@ public final class MainActivity extends Activity {
     private Runnable hideUndoRunnable;
     private FoodItem pendingUndoFood;
     private boolean productDetailVisible = false;
+    private boolean foodEditorVisible = false;
+    private FoodEditorViews activeFoodEditor;
     private String visibleProductProfileId = "";
     private int detailReturnDestination = AppNavigation.INVENTORY;
     private int detailReturnScrollY = 0;
@@ -963,6 +965,10 @@ public final class MainActivity extends Activity {
 
     @Override
     public void onBackPressed() {
+        if (foodEditorVisible) {
+            requestCloseFoodEditor();
+            return;
+        }
         if (productDetailVisible) {
             returnFromProductDetail();
             return;
@@ -1770,17 +1776,13 @@ public final class MainActivity extends Activity {
         FoodItem draft = recognizedDraft == null ? new FoodItem() : recognizedDraft.copy();
         draft.productProfileId = "";
         draft.barcode = BarcodeUtils.digitsOnly(barcode);
-        showFoodForm(draft, false, "新增其他商品");
+        showFoodForm(draft, false);
     }
 
     private void showReplenishmentForm(FoodItem profile, FoodItem recognizedDraft) {
         FoodItem draft = ReplenishmentDraftFactory.createDraft(profile);
         draft = ReplenishmentRecognitionMerge.mergeDates(draft, recognizedDraft);
-        String title = "补货新批次\n" + profile.name;
-        if (BarcodeUtils.isSupportedProductCode(profile.barcode)) {
-            title = title + " · " + BarcodeUtils.digitsOnly(profile.barcode);
-        }
-        showFoodForm(draft, false, title);
+        showFoodForm(draft, false, true);
     }
 
     private void queryBarcodeProduct(final String barcode) {
@@ -1999,6 +2001,39 @@ public final class MainActivity extends Activity {
         }
     }
 
+    private static final class FoodEditorViews {
+        FoodItem sourceFood;
+        boolean isEdit;
+        int mode;
+        boolean protectInitialContent;
+        String initialFingerprint = "";
+        boolean returnToProductDetail;
+        String returnProductProfileId = "";
+        int returnDestination = AppNavigation.OVERVIEW;
+        int returnScrollY;
+        EditText nameInput;
+        Spinner categoryInput;
+        EditText barcodeInput;
+        EditText quantityInput;
+        EditText remainingInput;
+        EditText unitInput;
+        Spinner storageInput;
+        Spinner locationInput;
+        EditText customLocationInput;
+        EditText productionDateInput;
+        CheckBox noExpiryInput;
+        EditText shelfLifeInput;
+        Spinner shelfLifeUnitInput;
+        EditText expiryDateInput;
+        boolean[] manualExpiryOverride;
+        EditText openedDateInput;
+        EditText afterOpenShelfLifeInput;
+        Spinner afterOpenShelfLifeUnitInput;
+        EditText notesInput;
+        ScrollView scrollView;
+        Button cancelButton;
+        Button saveButton;
+    }
     private String dateOcrDraftSummary(FoodItem draft) {
         StringBuilder builder = new StringBuilder();
         if (draft.productionDate.length() > 0) {
@@ -4138,7 +4173,7 @@ public final class MainActivity extends Activity {
             return;
         }
         FrameLayout.LayoutParams params = (FrameLayout.LayoutParams) rawParams;
-        params.bottomMargin = productDetailVisible ? dp(12) : dp(77);
+        params.bottomMargin = productDetailVisible && !foodEditorVisible ? dp(12) : dp(77);
         undoBar.setLayoutParams(params);
     }
 
@@ -4170,10 +4205,14 @@ public final class MainActivity extends Activity {
     }
 
     private void showFoodForm(final FoodItem sourceFood, final boolean isEdit) {
-        showFoodForm(sourceFood, isEdit, isEdit ? "编辑食品" : "新增食品");
+        showFoodForm(sourceFood, isEdit, false);
     }
 
-    private void showFoodForm(final FoodItem sourceFood, final boolean isEdit, String formTitle) {
+    private void showFoodForm(
+            final FoodItem sourceFood,
+            final boolean isEdit,
+            final boolean isReplenishment
+    ) {
         final FoodItem draft = sourceFood == null ? new FoodItem() : sourceFood.copy();
 
         final EditText nameInput = input(draft.name, "食品名称", InputType.TYPE_CLASS_TEXT);
@@ -4185,7 +4224,6 @@ public final class MainActivity extends Activity {
                 InputType.TYPE_CLASS_NUMBER
         );
 
-        final boolean isReplenishment = FoodItem.cleanText(formTitle).startsWith("补货新批次");
         final EditText quantityInput = input(
                 isEdit ? formatNumber(draft.quantity) : "",
                 isReplenishment ? "本批次入库数量" : "数量",
@@ -4518,18 +4556,34 @@ public final class MainActivity extends Activity {
         form.addView(optionalToggle, withMargins(matchWrap(), 0, dp(4), 0, dp(4)));
         form.addView(optionalSection, matchWrap());
 
-        ScrollView scrollView = new ScrollView(this);
-        scrollView.addView(form, new ScrollView.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT,
-                ViewGroup.LayoutParams.WRAP_CONTENT
-        ));
+        final FoodEditorViews editor = new FoodEditorViews();
+        editor.sourceFood = sourceFood;
+        editor.isEdit = isEdit;
+        editor.mode = FoodEditorSession.resolveMode(isEdit, isReplenishment);
+        editor.protectInitialContent = !isEdit
+                && !isReplenishment
+                && hasMeaningfulEditorDraft(sourceFood);
+        editor.nameInput = nameInput;
+        editor.categoryInput = categoryInput;
+        editor.barcodeInput = barcodeInput;
+        editor.quantityInput = quantityInput;
+        editor.remainingInput = remainingInput;
+        editor.unitInput = unitInput;
+        editor.storageInput = storageInput;
+        editor.locationInput = locationInput;
+        editor.customLocationInput = customLocationInput;
+        editor.productionDateInput = productionDateInput;
+        editor.noExpiryInput = noExpiryInput;
+        editor.shelfLifeInput = shelfLifeInput;
+        editor.shelfLifeUnitInput = shelfLifeUnitInput;
+        editor.expiryDateInput = expiryDateInput;
+        editor.manualExpiryOverride = manualExpiryOverride;
+        editor.openedDateInput = openedDateInput;
+        editor.afterOpenShelfLifeInput = afterOpenShelfLifeInput;
+        editor.afterOpenShelfLifeUnitInput = afterOpenShelfLifeUnitInput;
+        editor.notesInput = notesInput;
 
-        final AlertDialog dialog = new AlertDialog.Builder(this)
-                .setTitle(formTitle)
-                .setView(scrollView)
-                .setNegativeButton("取消", null)
-                .setPositiveButton("保存", null)
-                .create();
+        showFoodEditorPage(form, editor);
 
         if (replenishmentCameraButton != null) {
             replenishmentCameraButton.setOnClickListener(new View.OnClickListener() {
@@ -4562,66 +4616,336 @@ public final class MainActivity extends Activity {
             });
         }
 
-        dialog.setOnShowListener(new DialogInterface.OnShowListener() {
+        editor.saveButton.setOnClickListener(new View.OnClickListener() {
             @Override
-            public void onShow(DialogInterface dialogInterface) {
-                dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener(new View.OnClickListener() {
+            public void onClick(View view) {
+                saveFoodEditor(editor);
+            }
+        });
+        editor.cancelButton.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View view) {
+                requestCloseFoodEditor();
+            }
+        });
+        editor.initialFingerprint = foodEditorFingerprint(editor);
+    }
+
+    private void showFoodEditorPage(LinearLayout form, FoodEditorViews editor) {
+        editor.returnToProductDetail = productDetailVisible;
+        editor.returnProductProfileId = visibleProductProfileId;
+        editor.returnDestination = productDetailVisible
+                ? detailReturnDestination
+                : currentDestination;
+        editor.returnScrollY = mainScrollView == null ? 0 : mainScrollView.getScrollY();
+
+        foodEditorVisible = true;
+        activeFoodEditor = editor;
+        if (bottomNavigation != null) {
+            bottomNavigation.setVisibility(View.GONE);
+        }
+        resetPageViews();
+        pageHost.removeAllViews();
+
+        LinearLayout root = new LinearLayout(this);
+        root.setOrientation(LinearLayout.VERTICAL);
+        root.setBackgroundColor(Color.WHITE);
+        pageHost.addView(root, new FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.MATCH_PARENT
+        ));
+
+        root.addView(foodEditorHeader(editor), new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                dp(72)
+        ));
+        View headerDivider = new View(this);
+        headerDivider.setBackgroundColor(COLOR_LINE);
+        root.addView(headerDivider, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                dp(1)
+        ));
+
+        editor.scrollView = new ScrollView(this);
+        editor.scrollView.setFillViewport(true);
+        editor.scrollView.setClipToPadding(false);
+        editor.scrollView.setBackgroundColor(Color.WHITE);
+        mainScrollView = editor.scrollView;
+        form.setPadding(dp(16), dp(10), dp(16), dp(28));
+        editor.scrollView.addView(form, new ScrollView.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT
+        ));
+        root.addView(editor.scrollView, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                0,
+                1
+        ));
+
+        root.addView(foodEditorFooter(editor), new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                dp(77)
+        ));
+        repositionUndoBar();
+    }
+
+    private View foodEditorHeader(final FoodEditorViews editor) {
+        LinearLayout header = new LinearLayout(this);
+        header.setOrientation(LinearLayout.HORIZONTAL);
+        header.setGravity(Gravity.CENTER_VERTICAL);
+        header.setPadding(dp(8), dp(8), dp(12), dp(8));
+        header.setBackgroundColor(Color.WHITE);
+
+        TextView back = actionIconButton(R.drawable.ic_v2_back, "返回", true);
+        back.setBackground(rounded(Color.WHITE, dp(8), 0));
+        back.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View view) {
+                requestCloseFoodEditor();
+            }
+        });
+        header.addView(back, new LinearLayout.LayoutParams(dp(48), dp(48)));
+
+        LinearLayout titles = new LinearLayout(this);
+        titles.setOrientation(LinearLayout.VERTICAL);
+        titles.setGravity(Gravity.CENTER_VERTICAL);
+        header.addView(titles, withMargins(weightWrap(1), dp(4), 0, 0, 0));
+
+        TextView title = text(FoodEditorSession.title(editor.mode), 19, COLOR_TEXT, Typeface.BOLD);
+        title.setMaxLines(1);
+        titles.addView(title, matchWrap());
+
+        TextView subtitle = text(foodEditorSubtitle(editor), 12, COLOR_MUTED, Typeface.NORMAL);
+        subtitle.setMaxLines(1);
+        subtitle.setEllipsize(TextUtils.TruncateAt.END);
+        subtitle.setPadding(0, dp(2), 0, 0);
+        titles.addView(subtitle, matchWrap());
+        return header;
+    }
+
+    private String foodEditorSubtitle(FoodEditorViews editor) {
+        FoodItem source = editor.sourceFood;
+        String name = source == null ? "" : FoodItem.cleanText(source.name);
+        if (editor.mode == FoodEditorSession.MODE_REPLENISH) {
+            return name.length() > 0 ? name + " · 建立独立批次" : "建立独立批次";
+        }
+        if (editor.mode == FoodEditorSession.MODE_EDIT) {
+            String batchId = source == null ? "" : InventoryPresentation.displayBatchId(source.id);
+            return name.length() > 0 ? name + " · 批次 " + batchId : "修改批次信息";
+        }
+        if (editor.protectInitialContent) {
+            return "识别结果待核对，保存后才会入库";
+        }
+        return "填写商品与批次信息";
+    }
+
+    private View foodEditorFooter(FoodEditorViews editor) {
+        LinearLayout footer = new LinearLayout(this);
+        footer.setOrientation(LinearLayout.VERTICAL);
+        footer.setBackgroundColor(Color.WHITE);
+
+        View divider = new View(this);
+        divider.setBackgroundColor(COLOR_LINE);
+        footer.addView(divider, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                dp(1)
+        ));
+
+        LinearLayout actions = new LinearLayout(this);
+        actions.setOrientation(LinearLayout.HORIZONTAL);
+        actions.setGravity(Gravity.CENTER_VERTICAL);
+        actions.setPadding(dp(16), dp(10), dp(16), dp(10));
+        footer.addView(actions, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                dp(76)
+        ));
+
+        editor.cancelButton = outlineButton("取消");
+        editor.cancelButton.setMinHeight(dp(52));
+        actions.addView(editor.cancelButton, withMargins(weightWrap(0.36f), 0, 0, dp(8), 0));
+
+        editor.saveButton = button(FoodEditorSession.primaryAction(editor.mode), COLOR_PRIMARY);
+        editor.saveButton.setMinHeight(dp(52));
+        actions.addView(editor.saveButton, weightWrap(0.64f));
+        return footer;
+    }
+
+    private void saveFoodEditor(FoodEditorViews editor) {
+        if (!foodEditorVisible || activeFoodEditor != editor) {
+            return;
+        }
+        FoodItem saved = buildFoodFromForm(
+                editor.sourceFood,
+                editor.isEdit,
+                editor.nameInput,
+                editor.categoryInput,
+                editor.barcodeInput,
+                editor.quantityInput,
+                editor.remainingInput,
+                editor.unitInput,
+                editor.storageInput,
+                editor.locationInput,
+                editor.customLocationInput,
+                editor.productionDateInput,
+                editor.noExpiryInput,
+                editor.shelfLifeInput,
+                editor.shelfLifeUnitInput,
+                editor.expiryDateInput,
+                editor.manualExpiryOverride[0],
+                editor.openedDateInput,
+                editor.afterOpenShelfLifeInput,
+                editor.afterOpenShelfLifeUnitInput,
+                editor.notesInput
+        );
+        if (saved == null) {
+            return;
+        }
+
+        ReminderPolicy.ensureSmartSchedule(saved);
+        if (editor.isEdit) {
+            replaceFood(saved);
+        } else {
+            foods.add(0, saved);
+        }
+        if (!saveFoodsRefreshReminders()) {
+            return;
+        }
+
+        if (editor.returnToProductDetail) {
+            editor.returnProductProfileId = saved.productProfileId;
+        }
+        finishFoodEditor();
+        if (editor.mode == FoodEditorSession.MODE_EDIT) {
+            toast("已保存修改");
+        } else if (editor.mode == FoodEditorSession.MODE_REPLENISH) {
+            toast("新批次已入库");
+        } else {
+            toast("商品已新增");
+        }
+    }
+
+    private void requestCloseFoodEditor() {
+        final FoodEditorViews editor = activeFoodEditor;
+        if (!foodEditorVisible || editor == null) {
+            return;
+        }
+        boolean confirm = FoodEditorSession.shouldConfirmDiscard(
+                editor.initialFingerprint,
+                foodEditorFingerprint(editor),
+                editor.protectInitialContent
+        );
+        if (!confirm) {
+            finishFoodEditor();
+            return;
+        }
+
+        new AlertDialog.Builder(this)
+                .setTitle("放弃未保存内容？")
+                .setMessage("当前填写或识别的内容尚未保存。返回后这些修改会丢失。")
+                .setNegativeButton("继续填写", null)
+                .setPositiveButton("放弃并返回", new DialogInterface.OnClickListener() {
                     @Override
-                    public void onClick(View view) {
-                        FoodItem saved = buildFoodFromForm(
-                                sourceFood,
-                                isEdit,
-                                nameInput,
-                                categoryInput,
-                                barcodeInput,
-                                quantityInput,
-                                remainingInput,
-                                unitInput,
-                                storageInput,
-                                locationInput,
-                                customLocationInput,
-                                productionDateInput,
-                                noExpiryInput,
-                                shelfLifeInput,
-                                shelfLifeUnitInput,
-                                expiryDateInput,
-                                manualExpiryOverride[0],
-                                openedDateInput,
-                                afterOpenShelfLifeInput,
-                                afterOpenShelfLifeUnitInput,
-                                notesInput
-                        );
-
-                        if (saved == null) {
-                            return;
-                        }
-
-                        ReminderPolicy.ensureSmartSchedule(saved);
-
-                        if (isEdit) {
-                            replaceFood(saved);
-                        } else {
-                            foods.add(0, saved);
-                        }
-
-                        if (!saveFoodsRefreshReminders()) {
-                            return;
-                        }
-                        dialog.dismiss();
-                        toast(isEdit ? "已更新食品" : "已新增食品");
+                    public void onClick(DialogInterface dialogInterface, int which) {
+                        finishFoodEditor();
                     }
-                });
-            }
-        });
+                })
+                .show();
+    }
 
-        dialog.setOnDismissListener(new DialogInterface.OnDismissListener() {
+    private void finishFoodEditor() {
+        FoodEditorViews editor = activeFoodEditor;
+        if (!foodEditorVisible || editor == null) {
+            return;
+        }
+        foodEditorVisible = false;
+        activeFoodEditor = null;
+        pendingReplenishmentRecognitionTarget = null;
+        hideCurrentKeyboard();
+
+        if (editor.returnToProductDetail
+                && InventoryPresentation.find(foods, editor.returnProductProfileId) != null) {
+            productDetailVisible = true;
+            visibleProductProfileId = editor.returnProductProfileId;
+            if (bottomNavigation != null) {
+                bottomNavigation.setVisibility(View.GONE);
+            }
+            resetPageViews();
+            renderProductDetail();
+            restoreScrollPosition(editor.returnScrollY);
+            return;
+        }
+
+        productDetailVisible = false;
+        showDestination(editor.returnDestination);
+        restoreScrollPosition(editor.returnScrollY);
+    }
+
+    private void restoreScrollPosition(final int scrollY) {
+        if (mainScrollView == null || scrollY <= 0) {
+            return;
+        }
+        mainScrollView.post(new Runnable() {
             @Override
-            public void onDismiss(DialogInterface dialogInterface) {
-                pendingReplenishmentRecognitionTarget = null;
+            public void run() {
+                mainScrollView.scrollTo(0, scrollY);
             }
         });
+    }
 
-        dialog.show();
+    private void hideCurrentKeyboard() {
+        View focused = getCurrentFocus();
+        if (focused == null) {
+            return;
+        }
+        InputMethodManager manager = (InputMethodManager) getSystemService(Context.INPUT_METHOD_SERVICE);
+        if (manager != null) {
+            manager.hideSoftInputFromWindow(focused.getWindowToken(), 0);
+        }
+        focused.clearFocus();
+    }
+
+    private boolean hasMeaningfulEditorDraft(FoodItem source) {
+        if (source == null) {
+            return false;
+        }
+        return FoodItem.cleanText(source.name).length() > 0
+                || FoodItem.cleanText(source.barcode).length() > 0
+                || FoodItem.cleanText(source.productionDate).length() > 0
+                || FoodItem.cleanText(source.expiryDate).length() > 0
+                || source.shelfLifeValue != null
+                || FoodItem.cleanText(source.notes).length() > 0;
+    }
+
+    private String foodEditorFingerprint(FoodEditorViews editor) {
+        StringBuilder value = new StringBuilder();
+        appendEditorFingerprint(value, clean(editor.nameInput));
+        appendEditorFingerprint(value, selectedOption(FoodData.CATEGORIES, editor.categoryInput));
+        appendEditorFingerprint(value, clean(editor.barcodeInput));
+        appendEditorFingerprint(value, clean(editor.quantityInput));
+        appendEditorFingerprint(value, clean(editor.remainingInput));
+        appendEditorFingerprint(value, clean(editor.unitInput));
+        appendEditorFingerprint(value, selectedOption(FoodData.STORAGE_METHODS, editor.storageInput));
+        appendEditorFingerprint(value, selectedOption(FoodData.LOCATION_OPTIONS, editor.locationInput));
+        appendEditorFingerprint(value, clean(editor.customLocationInput));
+        appendEditorFingerprint(value, clean(editor.productionDateInput));
+        appendEditorFingerprint(value, editor.noExpiryInput.isChecked() ? "1" : "0");
+        appendEditorFingerprint(value, clean(editor.shelfLifeInput));
+        appendEditorFingerprint(value, selectedOption(FoodData.SHELF_LIFE_UNITS, editor.shelfLifeUnitInput));
+        appendEditorFingerprint(value, clean(editor.expiryDateInput));
+        appendEditorFingerprint(value, editor.manualExpiryOverride[0] ? "1" : "0");
+        appendEditorFingerprint(value, clean(editor.openedDateInput));
+        appendEditorFingerprint(value, clean(editor.afterOpenShelfLifeInput));
+        appendEditorFingerprint(value, selectedOption(
+                FoodData.SHELF_LIFE_UNITS,
+                editor.afterOpenShelfLifeUnitInput
+        ));
+        appendEditorFingerprint(value, clean(editor.notesInput));
+        return value.toString();
+    }
+
+    private void appendEditorFingerprint(StringBuilder builder, String fieldValue) {
+        String normalized = fieldValue == null ? "" : fieldValue;
+        builder.append(normalized.length()).append(':').append(normalized).append('|');
     }
 
     private FoodItem buildFoodFromForm(
@@ -4930,6 +5254,9 @@ public final class MainActivity extends Activity {
     }
 
     private void refreshVisibleContentAfterDataChange() {
+        if (foodEditorVisible) {
+            return;
+        }
         if (productDetailVisible) {
             renderProductDetail();
             return;

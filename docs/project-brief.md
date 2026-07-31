@@ -133,6 +133,7 @@ Android APK 本地版优先；微信小程序端封存在 `miniprogram/`
 - V0.4.3 的 D1a 商品库存与批次详情已通过：同码不同档案、三批次详情、减量撤销、补货相机首屏、完整增改删、五尺寸视觉与覆盖安装保数均有证据；详见 `docs/qa/2026-07-30-redesign-v2-d1a-inventory-detail.md`。
 - V0.4.4 的 D1b 扫描与核对页已通过：统一字段进度、稳定核对、识别依据无损返回、部分结果、四组冻结样本、五尺寸视觉和覆盖安装保数均有证据；详见 `docs/qa/2026-07-30-redesign-v2-d1b-scan-confirm.md`。
 - V0.4.5 的 C1a CameraX 采集层已通过：最新帧替换、会话代际、帧释放、对焦恢复策略、四组冻结样本、日期摘要视觉和覆盖安装保数均有证据；详见 docs/qa/2026-07-30-redesign-v2-c1a-camera-pipeline.md。
+- V0.4.6 的 D1c 全屏录入编辑器已通过：新增、编辑、补货、未保存保护、OCR 预填、保存失败回滚、完整增改补删、两尺寸视觉和覆盖安装保数均有证据；详见 docs/qa/2026-07-31-redesign-v2-d1c-fullscreen-editor.md。
 - 未执行公开数据集全量评测，也未完成真实手机相机验收。
 
 详细架构、证据文件与限制见 `docs/OCR_VALIDATION_REPORT.md`；公开来源和许可边界见 `docs/OCR_PUBLIC_VALIDATION_SOURCES.md`。

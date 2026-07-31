@@ -6,7 +6,7 @@
 
 ## 构建
 
-当前 APK 版本号：`versionName 0.4.5`，`versionCode 35`。每次生成新的可交付 APK 时，都需要同步提升 `apk/app/build.gradle` 和 `AndroidManifest.xml` 里的 `versionName` 和 `versionCode`。
+当前 APK 版本号：`versionName 0.4.6`，`versionCode 36`。每次生成新的可交付 APK 时，都需要同步提升 `apk/app/build.gradle` 和 `AndroidManifest.xml` 里的 `versionName` 和 `versionCode`。
 
 当前最低 Android 版本为 API 24（Android 7.0）。当前 debug APK 实测约 220 MB；离线模型只保留当前链路需要的关键文件，可交付 APK 的硬上限为 1 GB。
 
@@ -133,3 +133,4 @@ apk/build/outputs/apk/shiqi-android-release.apk
 - V0.4.3 商品档案分组库存、全屏批次详情、减量撤销、补货相机首屏、完整增改删和五尺寸视觉证据见 `../docs/qa/2026-07-30-redesign-v2-d1a-inventory-detail.md`。
 - V0.4.4 全屏扫描、稳定核对、证据无损返回、四组冻结样本、完整增改删和五尺寸视觉证据见 `../docs/qa/2026-07-30-redesign-v2-d1b-scan-confirm.md`。
 - V0.4.5 CameraX 帧源、最新帧替换、对焦恢复、四组冻结样本、日期摘要视觉修正和覆盖安装证据见 ../docs/qa/2026-07-30-redesign-v2-c1a-camera-pipeline.md。
+- V0.4.6 全屏新增/编辑/补货、未保存保护、OCR 预填、失败回滚、完整 CRUD 和两尺寸视觉证据见 ../docs/qa/2026-07-31-redesign-v2-d1c-fullscreen-editor.md。
