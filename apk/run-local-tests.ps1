@@ -51,6 +51,8 @@ $MainSources = @(
   'DateRules.java',
   'AppNavigation.java',
   'FoodEditorSession.java',
+  'InventorySnapshot.java',
+  'InventorySnapshotMapper.java',
   'ScanUiPresentation.java',
   'FoodItem.java',
   'Option.java',
@@ -87,7 +89,9 @@ $MainSources = @(
   'FoodExcelImporter.java',
   'FoodJsonTransfer.java',
   'FoodIdGenerator.java',
-  'FoodStoreMigration.java'
+  'FoodStoreMigration.java',
+  'MigrationBackupEnvelope.java',
+  'BarcodeResolutionState.java'
 ) | ForEach-Object { Join-Path $MainSourceRoot $_ }
 
 $MissingSources = @($MainSources | Where-Object { -not (Test-Path $_) })
@@ -120,6 +124,8 @@ try {
   Invoke-Checked $Java @('-cp', $Classes, 'com.shiqi.expirytracker.LocalLogicTest')
   Invoke-Checked $Java @('-cp', $Classes, 'com.shiqi.expirytracker.CameraFramePipelineTest')
   Invoke-Checked $Java @('-cp', $Classes, 'com.shiqi.expirytracker.FoodEditorSessionTest')
+  Invoke-Checked $Java @('-cp', $Classes, 'com.shiqi.expirytracker.InventorySnapshotMapperTest')
+  Invoke-Checked $Java @('-cp', $Classes, 'com.shiqi.expirytracker.BusinessPageStateTest')
 } finally {
   if (Test-Path $TempRoot) {
     Remove-Item -LiteralPath $TempRoot -Recurse -Force

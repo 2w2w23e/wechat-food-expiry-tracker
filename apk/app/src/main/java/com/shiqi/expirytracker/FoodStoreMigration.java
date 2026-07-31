@@ -30,7 +30,11 @@ final class FoodStoreMigration {
     static MigrationResult migrate(String raw, int currentSchemaVersion) throws JSONException {
         String text = raw == null ? "" : raw.trim();
         if (text.length() == 0) {
-            return new MigrationResult(new ArrayList<FoodItem>(), false);
+            return new MigrationResult(
+                    new ArrayList<FoodItem>(),
+                    false,
+                    LEGACY_ARRAY_SCHEMA_VERSION
+            );
         }
 
         JSONTokener tokener = new JSONTokener(text);
@@ -40,7 +44,11 @@ final class FoodStoreMigration {
         }
 
         if (root instanceof JSONArray) {
-            return new MigrationResult(readFoods((JSONArray) root, currentSchemaVersion).foods, true);
+            return new MigrationResult(
+                    readFoods((JSONArray) root, currentSchemaVersion).foods,
+                    true,
+                    LEGACY_ARRAY_SCHEMA_VERSION
+            );
         }
 
         if (root instanceof JSONObject) {
@@ -57,12 +65,26 @@ final class FoodStoreMigration {
     ) {
         String primaryText = cleanRaw(primaryRaw);
         if (primaryText.length() == 0) {
-            return StorageLoadResult.loaded(new ArrayList<FoodItem>(), false, false, false);
+            return StorageLoadResult.loaded(
+                    new ArrayList<FoodItem>(),
+                    false,
+                    false,
+                    false,
+                    exactRaw(primaryRaw),
+                    LEGACY_ARRAY_SCHEMA_VERSION
+            );
         }
 
         try {
             MigrationResult primary = migrate(primaryText, currentSchemaVersion);
-            return StorageLoadResult.loaded(primary.foods, primary.needsWriteBack, false, false);
+            return StorageLoadResult.loaded(
+                    primary.foods,
+                    primary.needsWriteBack,
+                    false,
+                    false,
+                    exactRaw(primaryRaw),
+                    primary.sourceSchemaVersion
+            );
         } catch (JSONException ignored) {
             if (hasFutureSchema(primaryText, currentSchemaVersion)) {
                 return StorageLoadResult.failed(true);
@@ -77,7 +99,14 @@ final class FoodStoreMigration {
 
                 try {
                     MigrationResult backup = migrate(backupText, currentSchemaVersion);
-                    return StorageLoadResult.loaded(backup.foods, true, true, false);
+                    return StorageLoadResult.loaded(
+                            backup.foods,
+                            true,
+                            true,
+                            false,
+                            exactRaw(backupRaw),
+                            backup.sourceSchemaVersion
+                    );
                 } catch (JSONException ignoredBackup) {
                     // Try the next backup slot.
                 }
@@ -109,6 +138,10 @@ final class FoodStoreMigration {
 
     private static String cleanRaw(String raw) {
         return raw == null ? "" : raw.trim();
+    }
+
+    private static String exactRaw(String raw) {
+        return raw == null ? "" : raw;
     }
 
     private static boolean hasFutureSchema(String raw, int currentSchemaVersion) {
@@ -150,7 +183,11 @@ final class FoodStoreMigration {
         }
 
         ReadFoodsResult read = readFoods(foods, currentSchemaVersion);
-        return new MigrationResult(read.foods, schemaVersion != currentSchemaVersion || read.repairedRecords);
+        return new MigrationResult(
+                read.foods,
+                schemaVersion != currentSchemaVersion || read.repairedRecords,
+                schemaVersion
+        );
     }
 
     private static ReadFoodsResult readFoods(JSONArray array, int currentSchemaVersion) {
@@ -279,10 +316,16 @@ final class FoodStoreMigration {
     static final class MigrationResult {
         final List<FoodItem> foods;
         final boolean needsWriteBack;
+        final int sourceSchemaVersion;
 
-        MigrationResult(List<FoodItem> foods, boolean needsWriteBack) {
+        MigrationResult(
+                List<FoodItem> foods,
+                boolean needsWriteBack,
+                int sourceSchemaVersion
+        ) {
             this.foods = foods;
             this.needsWriteBack = needsWriteBack;
+            this.sourceSchemaVersion = sourceSchemaVersion;
         }
     }
 
@@ -302,29 +345,45 @@ final class FoodStoreMigration {
         final boolean needsPrimaryWriteBack;
         final boolean restoredFromBackup;
         final boolean primaryHasFutureSchema;
+        final String sourceRaw;
+        final int sourceSchemaVersion;
 
         private StorageLoadResult(
                 List<FoodItem> foods,
                 boolean loaded,
                 boolean needsPrimaryWriteBack,
                 boolean restoredFromBackup,
-                boolean primaryHasFutureSchema
+                boolean primaryHasFutureSchema,
+                String sourceRaw,
+                int sourceSchemaVersion
         ) {
             this.foods = foods;
             this.loaded = loaded;
             this.needsPrimaryWriteBack = needsPrimaryWriteBack;
             this.restoredFromBackup = restoredFromBackup;
             this.primaryHasFutureSchema = primaryHasFutureSchema;
+            this.sourceRaw = exactRaw(sourceRaw);
+            this.sourceSchemaVersion = sourceSchemaVersion;
         }
 
         static StorageLoadResult loaded(
                 List<FoodItem> foods,
                 boolean needsPrimaryWriteBack,
                 boolean restoredFromBackup,
-                boolean primaryHasFutureSchema
+                boolean primaryHasFutureSchema,
+                String sourceRaw,
+                int sourceSchemaVersion
         ) {
             List<FoodItem> safeFoods = foods == null ? new ArrayList<FoodItem>() : foods;
-            return new StorageLoadResult(safeFoods, true, needsPrimaryWriteBack, restoredFromBackup, primaryHasFutureSchema);
+            return new StorageLoadResult(
+                    safeFoods,
+                    true,
+                    needsPrimaryWriteBack,
+                    restoredFromBackup,
+                    primaryHasFutureSchema,
+                    sourceRaw,
+                    sourceSchemaVersion
+            );
         }
 
         static StorageLoadResult failed(boolean primaryHasFutureSchema) {
@@ -333,7 +392,9 @@ final class FoodStoreMigration {
                     false,
                     false,
                     false,
-                    primaryHasFutureSchema
+                    primaryHasFutureSchema,
+                    "",
+                    -1
             );
         }
     }

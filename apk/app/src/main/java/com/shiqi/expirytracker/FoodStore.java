@@ -13,7 +13,7 @@ import java.util.Map;
 import java.util.Set;
 
 final class FoodStore {
-    private static final String PREFS_NAME = "shiqi_android_v0";
+    static final String PREFS_NAME = "shiqi_android_v0";
     static final int CURRENT_SCHEMA_VERSION = 3;
     static final String STORAGE_KEY = "food_expiry_tracker_foods_v0";
     static final String MIGRATION_BACKUP_KEY = STORAGE_KEY + "_pre_schema_migration_backup";
@@ -27,34 +27,57 @@ final class FoodStore {
     };
 
     private final SharedPreferences preferences;
+    private final RoomInventoryStore roomStore;
+    private StorageMode storageMode = StorageMode.UNKNOWN;
     private boolean lastLoadFailed = false;
+    private String lastRoomError = "";
 
     FoodStore(Context context) {
-        preferences = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE);
+        Context applicationContext = context.getApplicationContext();
+        preferences = applicationContext.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE);
+        roomStore = new RoomInventoryStore(applicationContext);
     }
 
     List<FoodItem> loadFoods() {
-        String raw = preferences.getString(STORAGE_KEY, null);
-        FoodStoreMigration.StorageLoadResult result = FoodStoreMigration.loadWithBackups(
-                raw,
-                loadBackupRaws(),
-                CURRENT_SCHEMA_VERSION
-        );
+        RoomInventoryStore.LoadResult roomResult = roomStore.loadIfInitialized();
+        if (roomResult.initialized) {
+            if (roomResult.success) {
+                storageMode = StorageMode.ROOM;
+                lastLoadFailed = false;
+                lastRoomError = "";
+                return roomResult.foods;
+            }
 
-        if (!result.loaded) {
+            storageMode = StorageMode.ROOM_FAILED;
             lastLoadFailed = true;
+            lastRoomError = roomResult.error;
+            return loadLegacyReadOnly();
+        }
+
+        FoodStoreMigration.StorageLoadResult legacyResult = loadLegacyResult();
+        if (!legacyResult.loaded) {
+            storageMode = StorageMode.LEGACY_FALLBACK;
+            lastLoadFailed = true;
+            lastRoomError = roomResult.error;
             return new ArrayList<FoodItem>();
         }
 
-        lastLoadFailed = false;
-        if (result.needsPrimaryWriteBack) {
-            if (result.restoredFromBackup) {
-                writeRecoveredStorage(result.foods);
-            } else {
-                writeMigratedStorage(raw, result.foods);
-            }
+        RoomInventoryStore.LoadResult migrationResult = roomStore.initializeFromLegacy(
+                legacyResult.foods,
+                legacyResult.sourceRaw,
+                legacyResult.sourceSchemaVersion
+        );
+        if (migrationResult.success) {
+            storageMode = StorageMode.ROOM;
+            lastLoadFailed = false;
+            lastRoomError = "";
+            return migrationResult.foods;
         }
-        return result.foods;
+
+        storageMode = StorageMode.LEGACY_FALLBACK;
+        lastLoadFailed = false;
+        lastRoomError = migrationResult.error;
+        return legacyResult.foods;
     }
 
     ProductProfileIndex loadProductProfileIndex() {
@@ -74,6 +97,21 @@ final class FoodStore {
     }
 
     private boolean saveFoodsInternal(List<FoodItem> foods, boolean forceFailureAfterCommit) {
+        if (storageMode == StorageMode.UNKNOWN) {
+            loadFoods();
+        }
+        if (storageMode == StorageMode.ROOM) {
+            boolean saved = roomStore.saveFoods(foods, forceFailureAfterCommit);
+            if (saved) {
+                lastLoadFailed = false;
+                lastRoomError = "";
+            }
+            return saved;
+        }
+        if (storageMode == StorageMode.ROOM_FAILED) {
+            return false;
+        }
+
         String currentRaw = preferences.getString(STORAGE_KEY, null);
         if (!canOverwriteCurrentStorage(currentRaw)) {
             return false;
@@ -110,27 +148,25 @@ final class FoodStore {
         }
     }
 
-    private void writeMigratedStorage(String previousRaw, List<FoodItem> foods) {
-        try {
-            String nextRaw = FoodStoreMigration.serialize(foods, CURRENT_SCHEMA_VERSION);
-            SharedPreferences.Editor editor = preferences.edit();
-            if (hasStoredPayload(previousRaw)) {
-                rotateRecentBackups(editor, previousRaw);
-                editor.putString(MIGRATION_BACKUP_KEY, previousRaw);
-            }
-            editor.putString(STORAGE_KEY, nextRaw).apply();
-        } catch (JSONException ignored) {
-            // Migration is already available in memory; failed write-back must not touch storage.
-        }
+    private FoodStoreMigration.StorageLoadResult loadLegacyResult() {
+        return FoodStoreMigration.loadWithBackups(
+                preferences.getString(STORAGE_KEY, null),
+                loadBackupRaws(),
+                CURRENT_SCHEMA_VERSION
+        );
     }
 
-    private void writeRecoveredStorage(List<FoodItem> foods) {
-        try {
-            String nextRaw = FoodStoreMigration.serialize(foods, CURRENT_SCHEMA_VERSION);
-            preferences.edit().putString(STORAGE_KEY, nextRaw).apply();
-        } catch (JSONException ignored) {
-            // Recovery is already available in memory; failed write-back must not touch storage.
-        }
+    private List<FoodItem> loadLegacyReadOnly() {
+        FoodStoreMigration.StorageLoadResult result = loadLegacyResult();
+        return result.loaded ? result.foods : new ArrayList<FoodItem>();
+    }
+
+    String storageModeForTests() {
+        return storageMode.name();
+    }
+
+    String lastRoomErrorForTests() {
+        return lastRoomError;
     }
 
     private List<String> loadBackupRaws() {
@@ -212,6 +248,13 @@ final class FoodStore {
 
     private static boolean hasStoredPayload(String raw) {
         return raw != null && raw.trim().length() > 0;
+    }
+
+    private enum StorageMode {
+        UNKNOWN,
+        ROOM,
+        LEGACY_FALLBACK,
+        ROOM_FAILED
     }
 
     private static final class PreferenceSnapshot {
