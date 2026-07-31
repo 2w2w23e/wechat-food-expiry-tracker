@@ -544,3 +544,13 @@ V2 重构不直接重写 4500 行以上的 `MainActivity` 和既有数据操作�
 编辑器记录来源页面、商品档案和滚动位置。空白且未修改的新增页可直接返回；已填写内容以及 OCR 预填内容返回前必须确认。保存失败时继续保留表单输入，同时恢复最近成功保存的内存与磁盘快照；OCR 结果仍必须由用户点击确认新增或确认入库后才写入。
 
 219 项既有逻辑测试、5 项 CameraX 管线测试、9 项编辑器状态测试、Lint、构建、完整增改补删、OCR 预填、保存失败回滚、720x1280 与 1080x2400 视觉检查和覆盖安装保数通过。最终 APK 为 `versionName 0.4.6`、`versionCode 36`。补货视频回填后的页面返回通过，但日期区域二次截图因 AVD 高负载掉线缺失；真实手机光学能力仍属于 C1b `PARTIAL`。
+
+## 2026-07-31：V0.4.7 Room 数据层与无损迁移
+
+库存主存储从单个 SharedPreferences JSON 迁移为 AndroidX Room `2.8.4` schema 1。选择经典 Room 而不是 Room 3，是因为当前 APK 是 Java 工程，经典 Room 提供稳定的 Java annotation processor、事务、关系建模、schema 导出和测试支持，不需要为一次数据迁移同时引入 Kotlin、KSP 或协程。
+
+新库规范化保存商品、批次、条码、商品与条码多对多关系、批次提醒计划和校验元数据。`FoodItem.id` 继续作为唯一批次编号，`productProfileId` 继续作为商品身份；一个条码可以关联多个商品，一个商品也可以保留多个历史条码。名称或类别发生稳定冲突时才确定性拆分商品，条码和批次单位差异不能单独触发拆分。
+
+schema 0、2、3 的旧 payload 先由既有迁移器标准化，再在一个 Room 事务中写入并读回比较摘要和 SHA-256 指纹。迁移前将原 payload、schema、UTF-8 长度和 SHA-256 写入应用私有备份并重新校验。成功后旧 SharedPreferences 保持原样且只读；禁止 `fallbackToDestructiveMigration()`。Room 失败时不把空库存写回旧存储。
+
+V0.4.6 覆盖安装到 V0.4.7 后，旧 SharedPreferences XML SHA-256 `62474ee0216d3faba6667ad19d4a0385eb5e1c169eff44b7374800f30e0c6bfc` 前后一致。schema 0/2/3、同商品多条码、事务失败回滚、CRUD、Excel、JSON 幂等更新、筛选分享和重启均通过自动化或运行验收。兼容阶段仍保留同步 `FoodStore` 外观并在专用数据库线程执行，后续再按独立节点将页面改为异步 Repository，避免扩大本次迁移风险。

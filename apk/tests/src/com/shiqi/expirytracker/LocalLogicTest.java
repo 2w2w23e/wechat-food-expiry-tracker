@@ -1115,6 +1115,38 @@ public final class LocalLogicTest {
             }
         });
 
+        test("FoodStoreMigration preserves exact primary payload metadata", new TestCase() {
+            public void run() {
+                String raw = "  \n" + foodStoreRaw(3, "primary-exact", "Primary exact") + "\n\t";
+                Object result = loadFoodStoreWithBackups(
+                        migrationClass,
+                        raw,
+                        new ArrayList<String>(),
+                        3
+                );
+
+                assertTrue(booleanField(result, "loaded"), "exact primary should load");
+                assertEquals(raw, fieldText(result, "sourceRaw"));
+                assertEquals(3, intField(result, "sourceSchemaVersion"));
+            }
+        });
+
+        test("FoodStoreMigration reports the exact recovered backup payload", new TestCase() {
+            public void run() {
+                String backup = " \n" + foodStoreRaw(2, "backup-exact", "Backup exact") + "\n ";
+                Object result = loadFoodStoreWithBackups(
+                        migrationClass,
+                        "{bad json",
+                        Arrays.asList(backup),
+                        3
+                );
+
+                assertTrue(booleanField(result, "restoredFromBackup"), "backup should recover");
+                assertEquals(backup, fieldText(result, "sourceRaw"));
+                assertEquals(2, intField(result, "sourceSchemaVersion"));
+            }
+        });
+
         test("FoodStoreMigration leaves bad primary failed when backups are bad", new TestCase() {
             public void run() {
                 Object result = loadFoodStoreWithBackups(
@@ -5786,6 +5818,16 @@ public final class LocalLogicTest {
             field.set(target, value);
         } catch (Exception error) {
             throw new AssertionError("failed to set field " + fieldName + ": " + error.getMessage());
+        }
+    }
+
+    private static int intField(Object target, String fieldName) {
+        try {
+            java.lang.reflect.Field field = target.getClass().getDeclaredField(fieldName);
+            field.setAccessible(true);
+            return field.getInt(target);
+        } catch (Exception exception) {
+            throw new AssertionError("Unable to read int field " + fieldName, exception);
         }
     }
 

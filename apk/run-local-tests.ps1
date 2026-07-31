@@ -51,6 +51,8 @@ $MainSources = @(
   'DateRules.java',
   'AppNavigation.java',
   'FoodEditorSession.java',
+  'InventorySnapshot.java',
+  'InventorySnapshotMapper.java',
   'ScanUiPresentation.java',
   'FoodItem.java',
   'Option.java',
@@ -120,6 +122,7 @@ try {
   Invoke-Checked $Java @('-cp', $Classes, 'com.shiqi.expirytracker.LocalLogicTest')
   Invoke-Checked $Java @('-cp', $Classes, 'com.shiqi.expirytracker.CameraFramePipelineTest')
   Invoke-Checked $Java @('-cp', $Classes, 'com.shiqi.expirytracker.FoodEditorSessionTest')
+  Invoke-Checked $Java @('-cp', $Classes, 'com.shiqi.expirytracker.InventorySnapshotMapperTest')
 } finally {
   if (Test-Path $TempRoot) {
     Remove-Item -LiteralPath $TempRoot -Recurse -Force
