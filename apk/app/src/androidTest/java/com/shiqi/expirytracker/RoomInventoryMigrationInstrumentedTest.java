@@ -57,6 +57,10 @@ public final class RoomInventoryMigrationInstrumentedTest {
         assertEquals("ROOM", store.storageModeForTests());
         assertFalse(preferences.contains(FoodStore.STORAGE_KEY));
         assertTrue(context.getDatabasePath(RoomInventoryDatabase.DATABASE_NAME).isFile());
+        assertTrue(RoomMigrationBackup.verifiedCatalog(
+                context,
+                FoodStore.CURRENT_SCHEMA_VERSION
+        ).candidates.isEmpty());
     }
 
     @Test

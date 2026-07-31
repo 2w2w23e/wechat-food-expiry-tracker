@@ -6,7 +6,7 @@
 
 ## 构建
 
-当前 APK 版本号：`versionName 0.4.6`，`versionCode 36`。每次生成新的可交付 APK 时，都需要同步提升 `apk/app/build.gradle` 和 `AndroidManifest.xml` 里的 `versionName` 和 `versionCode`。
+当前 APK 版本号：`versionName 0.4.8`，`versionCode 38`。每次生成新的可交付 APK 时，都需要同步提升 `apk/app/build.gradle` 和 `AndroidManifest.xml` 里的 `versionName` 和 `versionCode`。
 
 当前最低 Android 版本为 API 24（Android 7.0）。当前 debug APK 实测约 220 MB；离线模型只保留当前链路需要的关键文件，可交付 APK 的硬上限为 1 GB。
 
@@ -63,6 +63,7 @@ apk/build/outputs/apk/shiqi-android-release.apk
 ## 当前支持
 
 - V2 四目的地外壳：总览、库存、扫描、设置；底部导航固定，扫描是主操作，Excel、JSON 和提醒集中在设置
+- 设置首页只保留提醒、数据、识别和关于摘要；提醒、JSON、Excel、备份恢复均使用独立全屏业务页，未保存内容返回前需要确认
 - 总览优先显示今天到期、7 天内、已过期、优先处理和提醒摘要，不再堆叠所有管理操作
 - 库存按商品档案分组：商品行显示在库批次数、总剩余量和最近到期日；减少 1 和补货外层直达，点击进入全屏详情后逐批次编辑、完成、恢复或删除
 - 食品列表展示
@@ -96,6 +97,9 @@ apk/build/outputs/apk/shiqi-android-release.apk
 - Excel `.xlsx` 批量导入、预览校验、覆盖确认、错误行详情和导出；导出文件包含 `foods` 和 `README` 两个工作表，并保留商品档案 ID、条码和独立批次关系
 - JSON 快速换机：按入库时间、生产日期、最终日期筛选并导出 UTF-8 JSON，可保存到本机或调用系统分享面板；每个批次有唯一编号，相同编号不会重复新增，只有较新文件才更新数量和状态
 - 条码商品档案与库存批次：同一条码可对应多个商品档案；扫码命中本机档案时选择商品并建立补货新批次，复用名称、分类、单位和保存位置，但生产日期、保质期、最终日期、数量、开封和提醒独立填写，不覆盖旧批次
+- 统一条码结果页：本地 0 个结果时才联网查询；1 个结果只预选不自动补货；多个结果必须显式选择后才解锁补货；联网结果只能显式填入新增表单，所有路径均不自动保存
+- Room 规范化本地存储：商品、条码多对多关系、批次和提醒分表保存；旧 SharedPreferences 首次启动事务迁移、读回校验并保留只读原始备份，禁止破坏性迁移
+- 备份与恢复：只展示格式、schema、长度和 SHA-256 通过校验的候选；恢复前创建当前库存安全备份，恢复和读回验证在事务中完成，失败时当前数据不变
 - Android 本地存储
 
 ## 本地交付整理
@@ -134,3 +138,5 @@ apk/build/outputs/apk/shiqi-android-release.apk
 - V0.4.4 全屏扫描、稳定核对、证据无损返回、四组冻结样本、完整增改删和五尺寸视觉证据见 `../docs/qa/2026-07-30-redesign-v2-d1b-scan-confirm.md`。
 - V0.4.5 CameraX 帧源、最新帧替换、对焦恢复、四组冻结样本、日期摘要视觉修正和覆盖安装证据见 ../docs/qa/2026-07-30-redesign-v2-c1a-camera-pipeline.md。
 - V0.4.6 全屏新增/编辑/补货、未保存保护、OCR 预填、失败回滚、完整 CRUD 和两尺寸视觉证据见 ../docs/qa/2026-07-31-redesign-v2-d1c-fullscreen-editor.md。
+- V0.4.7 Room 规范化数据层、旧 schema 0/2/3 无损迁移、读回指纹、失败回滚和覆盖升级保数见 `../docs/qa/2026-07-31-redesign-v2-b2-room-migration.md`。
+- V0.4.8 条码 0/1/多档案、全屏设置业务页、提醒、Excel/JSON、校验备份恢复、完整用户旅程、三尺寸视觉和同签名覆盖升级见 `../docs/qa/2026-07-31-redesign-v2-d1d-business-pages.md`。
