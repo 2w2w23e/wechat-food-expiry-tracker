@@ -210,9 +210,13 @@ final class UnifiedRecognitionStabilizer {
             );
             boolean strongerDomainEvidence = PackagingNamePolicy.isStrong(normalized)
                     && !PackagingNamePolicy.isStrong(lockedPackagingName);
+            boolean replacesGenericCategory = PackagingNamePolicy.isStrong(normalized)
+                    && RecognitionTextCleaner.isGenericProductCategoryName(lockedPackagingName)
+                    && !RecognitionTextCleaner.isGenericProductCategoryName(normalized);
             if (lockedPackagingName.length() == 0
                     || sameProduct
-                    || strongerDomainEvidence) {
+                    || strongerDomainEvidence
+                    || replacesGenericCategory) {
                 lockedPackagingName = normalized;
             }
         }

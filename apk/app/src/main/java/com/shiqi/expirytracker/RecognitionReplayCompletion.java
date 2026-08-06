@@ -35,6 +35,11 @@ final class RecognitionReplayCompletion {
         return completeDate && (dateOnlyMode || hasProductIdentity);
     }
 
+    static boolean isRichTextIdentity(String value) {
+        String text = FoodItem.cleanText(value).replaceAll("\\s+", "");
+        return text.length() >= 4;
+    }
+
     static boolean shouldFinishIdentityOnly(
             int analyzedFrames,
             double videoRatio,
@@ -43,11 +48,31 @@ final class RecognitionReplayCompletion {
             boolean hasStrongTextIdentity,
             boolean hasCompleteDate
     ) {
-        return cameraScreenRecording
+        return shouldFinishIdentityOnly(
+                analyzedFrames,
+                videoRatio,
+                cameraScreenRecording,
+                fullTextPasses,
+                hasStrongTextIdentity,
+                hasCompleteDate,
+                false
+        );
+    }
+
+    static boolean shouldFinishIdentityOnly(
+            int analyzedFrames,
+            double videoRatio,
+            boolean cameraScreenRecording,
+            int fullTextPasses,
+            boolean hasFinishableIdentity,
+            boolean hasCompleteDate,
+            boolean cameraSimulation
+    ) {
+        return (cameraScreenRecording || cameraSimulation)
                 && analyzedFrames >= 5
                 && videoRatio >= 0.70d
                 && fullTextPasses >= 2
-                && hasStrongTextIdentity
+                && hasFinishableIdentity
                 && !hasCompleteDate;
     }
 }

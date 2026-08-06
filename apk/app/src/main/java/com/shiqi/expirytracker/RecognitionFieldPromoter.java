@@ -27,14 +27,7 @@ final class RecognitionFieldPromoter {
             throw new IllegalArgumentException("stabilizer is required");
         }
         String cleanedText = FoodItem.cleanText(rawText);
-        String printedBarcode = RecognitionTextCleaner.extractProductCodeFromOcr(cleanedText);
-        String barcode = VerifiedBarcodeCatalog.preferCatalogBackedBarcode(
-                rawBarcode,
-                printedBarcode
-        );
-        if (RecognitionTextCleaner.isNonProductTraceabilityCode(cleanedText, barcode)) {
-            barcode = "";
-        }
+        String barcode = acceptedBarcodeEvidence(rawBarcode, cleanedText);
 
         List<PackagingTextAnalyzer.Candidate> safeCandidates =
                 packagingCandidates == null
@@ -59,6 +52,18 @@ final class RecognitionFieldPromoter {
         );
     }
 
+    static String acceptedBarcodeEvidence(String rawBarcode, String rawText) {
+        String cleanedText = FoodItem.cleanText(rawText);
+        String printedBarcode = RecognitionTextCleaner.extractProductCodeFromOcr(cleanedText);
+        String barcode = VerifiedBarcodeCatalog.preferCatalogBackedBarcode(
+                rawBarcode,
+                printedBarcode
+        );
+        barcode = VerifiedBarcodeCatalog.recoverTruncatedOcrBarcode(barcode, cleanedText);
+        return RecognitionTextCleaner.isNonProductTraceabilityCode(cleanedText, barcode)
+                ? ""
+                : barcode;
+    }
     private static boolean hasNewBarcode(
             UnifiedRecognitionStabilizer.Snapshot previous,
             UnifiedRecognitionStabilizer.Snapshot current

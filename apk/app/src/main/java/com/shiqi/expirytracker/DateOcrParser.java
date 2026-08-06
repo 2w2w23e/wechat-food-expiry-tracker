@@ -37,6 +37,10 @@ final class DateOcrParser {
             Pattern.CASE_INSENSITIVE
     );
     private static final Pattern COMPACT_DATE = Pattern.compile("(?<!\\d)((?:20\\d{6})|(?:\\d{6}))(?!\\d)");
+    private static final Pattern SHELF_LABEL_COMPACT_EXPIRY = Pattern.compile(
+            "(?:\u4fdd\\s*\u8d28\\s*\u671f|\u8d28\\s*\u671f)\\s*[:\uff1a]?\\s*"
+                    + "(?:\u81f3|\u5230)?\\s*(20\\d{6})(?!\\d)"
+    );
     private static final Pattern COMPACT_DAY_MONTH_YEAR = Pattern.compile("(?<!\\d)(\\d{4}20\\d{2})(?!\\d)");
     private static final Pattern PACKED_PRODUCTION_CODE = Pattern.compile("(?<!\\d)(20\\d{6})\\d{1,8}(?!\\d)");
     private static final Pattern NOISY_LASER_DIGIT_RUN = Pattern.compile("(?<!\\d)(\\d{10,18})(?!\\d)");
@@ -78,7 +82,7 @@ final class DateOcrParser {
     );
     private static final Pattern OCR_DAMAGED_MONTH_SHELF_LIFE = Pattern.compile(
             "(?:保[^\\s\\d]{1,3}|质\\s*期|(?<![用动验])期)\\s*(\\d{1,3})\\s*个"
-                    + "([月日天门曰目冃节1])?(?![\\p{IsHan}\\d])",
+                    + "([月日天门曰目冃节1])?[月日天门曰目冃节1]?(?![\\p{IsHan}\\d])",
             Pattern.CASE_INSENSITIVE
     );
     private static final Pattern OCR_DAMAGED_SHORT_SHELF_LIFE = Pattern.compile(
@@ -119,6 +123,7 @@ final class DateOcrParser {
         collectDates(text, DATE_WITH_SEPARATOR, productionDates, expiryDates, unhintedDates);
         collectDates(text, DAY_MONTH_YEAR_WITH_SEPARATOR, productionDates, expiryDates, unhintedDates);
         collectDates(text, COMPACT_DATE, productionDates, expiryDates, unhintedDates);
+        collectShelfLabelCompactExpiries(text, expiryDates);
         collectDates(text, COMPACT_DAY_MONTH_YEAR, productionDates, expiryDates, unhintedDates);
         collectYearMonths(text, YEAR_MONTH_WITH_SEPARATOR, expiryDates, unhintedDates, false);
         collectYearMonths(text, COMPACT_YEAR_MONTH, expiryDates, unhintedDates, false);
@@ -193,6 +198,47 @@ final class DateOcrParser {
         );
     }
 
+    static String[] latestCompactDateRange(String rawText, String referenceDate) {
+        String text = normalizeText(rawText);
+        String today = DateRules.isValidDateString(referenceDate)
+                ? referenceDate
+                : DateRules.getTodayString();
+        String[] latest = null;
+        Matcher matcher = COMPACT_DATE_RANGE.matcher(text);
+        while (matcher.find()) {
+            String production = normalizeDate(matcher.group(1));
+            String expiry = normalizeDate(matcher.group(2));
+            if (isValidCompactRange(production, expiry, today)) {
+                latest = new String[] {production, expiry};
+            }
+        }
+        matcher = OCR_DAMAGED_COMPACT_DATE_RANGE.matcher(text);
+        while (matcher.find()) {
+            String productionRaw = matcher.group(1);
+            String production = productionRaw.length() == 7
+                    ? normalizeDate("2" + productionRaw)
+                    : normalizeDate(productionRaw);
+            String expiry = normalizeDate(matcher.group(2));
+            if (isValidCompactRange(production, expiry, today)) {
+                latest = new String[] {production, expiry};
+            }
+        }
+        return latest;
+    }
+
+    private static boolean isValidCompactRange(
+            String production,
+            String expiry,
+            String today
+    ) {
+        if (!DateRules.isValidDateString(production)
+                || !DateRules.isValidDateString(expiry)
+                || production.compareTo(today) > 0) {
+            return false;
+        }
+        int spanDays = DateRules.daysBetween(production, expiry);
+        return spanDays >= 0 && spanDays <= (366 * 5);
+    }
     static String dominantRepeatedPastCompactDate(String rawText, String referenceDate) {
         String text = normalizeText(rawText);
         String today = DateRules.isValidDateString(referenceDate)
@@ -276,6 +322,28 @@ final class DateOcrParser {
         }
     }
 
+    private static void collectShelfLabelCompactExpiries(
+            String text,
+            List<DateCandidate> expiryDates
+    ) {
+        Matcher matcher = SHELF_LABEL_COMPACT_EXPIRY.matcher(text);
+        while (matcher.find()) {
+            String raw = matcher.group(1);
+            String normalized = normalizeDate(raw);
+            if (!DateRules.isValidDateString(normalized)) {
+                continue;
+            }
+            expiryDates.add(new DateCandidate(
+                    "expiryDate",
+                    raw,
+                    normalized,
+                    nearbyText(text, matcher.start(1), matcher.end(1), 30),
+                    0.92d,
+                    false,
+                    false
+            ));
+        }
+    }
     private static void collectDates(
             String text,
             Pattern pattern,

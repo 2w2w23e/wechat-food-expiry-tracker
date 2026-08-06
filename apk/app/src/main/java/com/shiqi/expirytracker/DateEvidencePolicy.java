@@ -19,6 +19,28 @@ final class DateEvidencePolicy {
                 false
         );
         latest = retainDominantProductionDate(latest);
+        String[] latestCompactRange = DateOcrParser.latestCompactDateRange(
+                latestFrameText,
+                DateRules.getTodayString()
+        );
+        if (latestCompactRange != null) {
+            DateOcrParser.Result temporalRange = apply(
+                    DateOcrParser.parse(
+                            "生产日期 " + latestCompactRange[0]
+                                    + " 有效期至 " + latestCompactRange[1]
+                    ),
+                    "",
+                    false
+            );
+            DateOcrFrameVoter.VoteResult temporalVote = DateOcrFrameVoter.vote(
+                    Collections.singletonList(temporalRange),
+                    1
+            );
+            if (UnifiedRecognitionStabilizer.isReliableDirectDatePair(temporalVote)
+                    && isPlausibleDateSpan(temporalVote)) {
+                return temporalRange;
+            }
+        }
         String dominantPastDate = DateOcrParser.dominantRepeatedPastCompactDate(
                 latestFrameText,
                 DateRules.getTodayString()
@@ -56,12 +78,73 @@ final class DateEvidencePolicy {
                 return latest;
             }
         }
+        DateOcrFrameVoter.VoteResult fallbackDirect = earlierFallback == null
+                ? null
+                : DateOcrFrameVoter.vote(Collections.singletonList(earlierFallback), 1);
+        if (UnifiedRecognitionStabilizer.isReliableDirectDatePair(fallbackDirect)
+                && isPlausibleDateSpan(fallbackDirect)) {
+            return earlierFallback;
+        }
         if (isReliableCalculatedDate(direct)) {
             return latest;
+        }
+        DateOcrParser.Result mergedCalculated = mergeProductionAndShelfLife(
+                latest,
+                earlierFallback
+        );
+        DateOcrFrameVoter.VoteResult mergedVote = DateOcrFrameVoter.vote(
+                Collections.singletonList(mergedCalculated),
+                1
+        );
+        if (isReliableCalculatedDate(mergedVote)) {
+            return mergedCalculated;
         }
         return earlierFallback == null ? latest : earlierFallback;
     }
 
+    private static DateOcrParser.Result mergeProductionAndShelfLife(
+            DateOcrParser.Result latest,
+            DateOcrParser.Result earlier
+    ) {
+        if (latest == null) {
+            return null;
+        }
+        DateOcrParser.DateCandidate production = latest.productionDates.size() == 1
+                ? latest.productionDates.get(0)
+                : earlier != null && earlier.productionDates.size() == 1
+                ? earlier.productionDates.get(0)
+                : null;
+        DateOcrParser.ShelfLifeCandidate shelfLife = !latest.shelfLives.isEmpty()
+                ? latest.shelfLives.get(0)
+                : earlier != null && !earlier.shelfLives.isEmpty()
+                ? earlier.shelfLives.get(0)
+                : null;
+        if (production == null || shelfLife == null) {
+            return latest;
+        }
+        String unit = "month".equals(shelfLife.unit)
+                ? "个月"
+                : "year".equals(shelfLife.unit) ? "年" : "天";
+        return apply(
+                DateOcrParser.parse(
+                        "生产日期 " + production.normalized
+                                + " 保质期 " + shelfLife.value + unit
+                ),
+                "",
+                false
+        );
+    }
+
+    private static boolean isPlausibleDateSpan(DateOcrFrameVoter.VoteResult vote) {
+        if (vote == null || vote.productionDate == null || vote.expiryDate == null) {
+            return false;
+        }
+        int spanDays = DateRules.daysBetween(
+                vote.productionDate.value,
+                vote.expiryDate.value
+        );
+        return spanDays >= 0 && spanDays <= (366 * 5);
+    }
     private static DateOcrParser.Result withDominantProductionDate(
             DateOcrParser.Result parsed,
             String normalized

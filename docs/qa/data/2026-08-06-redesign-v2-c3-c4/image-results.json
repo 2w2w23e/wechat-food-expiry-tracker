@@ -1,0 +1,63 @@
+[
+    {
+        "sample":  "c3-low-contrast.jpg",
+        "pass":  true,
+        "completed":  true,
+        "productName":  "",
+        "barcode":  "",
+        "productionDate":  "2025-09-12",
+        "expiryDate":  "2027-03-11",
+        "elapsedMs":  19458,
+        "expectedName":  "",
+        "expectedBarcode":  "",
+        "expectedProduction":  "2025-09-12",
+        "expectedExpiry":  "2027-03-11",
+        "attempts":  1
+    },
+    {
+        "sample":  "public-exp-date.jpg",
+        "pass":  true,
+        "completed":  true,
+        "productName":  "",
+        "barcode":  "",
+        "productionDate":  "2022-08-23",
+        "expiryDate":  "",
+        "elapsedMs":  45511,
+        "expectedName":  "",
+        "expectedBarcode":  "",
+        "expectedProduction":  "2022-08-23",
+        "expectedExpiry":  "",
+        "attempts":  1
+    },
+    {
+        "sample":  "public-german-package.jpeg",
+        "pass":  true,
+        "completed":  true,
+        "productName":  "",
+        "barcode":  "",
+        "productionDate":  "",
+        "expiryDate":  "",
+        "elapsedMs":  48171,
+        "expectedName":  "",
+        "expectedBarcode":  "",
+        "expectedProduction":  "",
+        "expectedExpiry":  "",
+        "attempts":  2,
+        "firstAttempt":  "avd_timeout_during_ocr"
+    },
+    {
+        "sample":  "public-negative.jpeg",
+        "pass":  true,
+        "completed":  true,
+        "productName":  "",
+        "barcode":  "",
+        "productionDate":  "",
+        "expiryDate":  "",
+        "elapsedMs":  21446,
+        "expectedName":  "",
+        "expectedBarcode":  "",
+        "expectedProduction":  "",
+        "expectedExpiry":  "",
+        "attempts":  1
+    }
+]

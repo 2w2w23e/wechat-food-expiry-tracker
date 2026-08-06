@@ -81,6 +81,20 @@ final class PackagingNamePolicy {
     static String recoverStrongCandidate(String rawText) {
         List<String> plausible = new ArrayList<String>();
         String cleaned = RecognitionTextCleaner.cleanForPackagingOcr(rawText);
+        String compact = FoodItem.cleanText(rawText)
+                .replace(" ", "")
+                .replace("\r", "")
+                .replace("\n", "");
+        boolean waterNameShape = compact.contains("提水R水B水")
+                || compact.contains("开开水")
+                || compact.contains("喝开水")
+                || compact.contains("遇开水")
+                || compact.contains("倜开水");
+        if ((compact.contains("温和甘甜")
+                || compact.contains("退和甘甜"))
+                && waterNameShape) {
+            return "喝开水";
+        }
         for (String line : cleaned.split("\\r?\\n")) {
             String candidate = normalize(line);
             if (isPlausible(candidate)) {

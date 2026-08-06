@@ -113,6 +113,60 @@ public final class LocalLogicTest {
                 );
             }
         });
+        test("RecognitionFieldGapPlan narrows work to the missing field", new TestCase() {
+            public void run() {
+                RecognitionFieldGapPlan automatic = RecognitionFieldGapPlan.evaluate(
+                        RecognitionFieldGapPlan.Target.AUTOMATIC,
+                        false,
+                        true,
+                        true,
+                        false,
+                        false,
+                        2
+                );
+                assertFalse(automatic.scanProductName, "stable name should not be rescanned");
+                assertFalse(automatic.scanBarcode, "stable barcode should not be rescanned");
+                assertTrue(automatic.scanDates, "missing dates should become the automatic target");
+                assertTrue(automatic.allowsHeavyPass(0), "automatic date gap gets a bounded heavy pass");
+                assertFalse(automatic.allowsHeavyPass(3), "automatic mode must stop after its small budget");
+                assertEquals("自动识别", automatic.label);
+
+                RecognitionFieldGapPlan product = RecognitionFieldGapPlan.evaluate(
+                        RecognitionFieldGapPlan.Target.PRODUCT_NAME,
+                        false,
+                        false,
+                        true,
+                        true,
+                        false,
+                        4
+                );
+                assertTrue(product.scanProductName, "product rescan must read packaging text");
+                assertFalse(product.scanBarcode, "product rescan must not spend barcode budget");
+                assertFalse(product.scanDates, "product rescan must not spend date budget");
+                assertTrue(product.isCompleteForTarget(true, false, false), "name target completes on a stable name");
+
+                RecognitionFieldGapPlan dateOnly = RecognitionFieldGapPlan.evaluate(
+                        RecognitionFieldGapPlan.Target.PRODUCT_NAME,
+                        true,
+                        true,
+                        true,
+                        false,
+                        true,
+                        3
+                );
+                assertEquals(RecognitionFieldGapPlan.Target.DATES, dateOnly.target);
+                assertTrue(dateOnly.scanDates, "date-only mode must override a stale UI target");
+                assertFalse(dateOnly.scanProductName, "date-only mode preserves the existing name");
+                assertTrue(dateOnly.allowsDateBandPass(5), "date close-up keeps its larger budget");
+                assertFalse(dateOnly.allowsDateBandPass(6), "date close-up budget is finite");
+            }
+        });
+        test("RecognitionReplayCompletion ignores generic short identity text", new TestCase() {
+            public void run() {
+                assertFalse(RecognitionReplayCompletion.isRichTextIdentity("果汁"), "a generic category must not end replay");
+                assertTrue(RecognitionReplayCompletion.isRichTextIdentity("柠檬芭乐果汁"), "a rich Chinese product phrase may end replay");
+            }
+        });
         test("DateRules validates strict yyyy-MM-dd dates", new TestCase() {
             public void run() {
                 assertTrue(DateRules.isValidDateString("2024-02-29"), "leap day should be valid");
@@ -200,12 +254,39 @@ public final class LocalLogicTest {
                 VerifiedBarcodeCatalog.Entry entry = VerifiedBarcodeCatalog.find("6920-4599-40310");
                 assertTrue(entry != null, "verified sample barcode should be available offline");
                 assertEquals("康师傅喝开水", entry.name);
+                VerifiedBarcodeCatalog.Entry noodles = VerifiedBarcodeCatalog.find("6971416494254");
+                assertTrue(noodles != null, "video01 barcode should have an offline verified product name");
+                assertEquals("大董老北京炸酱面", noodles.name);
                 assertEquals("熟水饮用水", entry.generalName);
                 assertEquals("550毫升", entry.specification);
                 VerifiedBarcodeCatalog.Entry chips = VerifiedBarcodeCatalog.find("6926265313430");
                 assertTrue(chips != null, "shelf-life sample barcode should be available offline");
                 assertEquals("上好佳薯条", chips.name);
                 assertEquals("原味 80克", chips.specification);
+                assertEquals(null, VerifiedBarcodeCatalog.find("692626531343"));
+                assertEquals(
+                        "692626531343",
+                        VerifiedBarcodeCatalog.preferCatalogBackedBarcode("692626531343", "")
+                );
+                assertEquals(
+                        "6926265313430",
+                        VerifiedBarcodeCatalog.recoverTruncatedOcrBarcode(
+                                "692626531343",
+                                "www.oishi.com.cn 薯条 保质期9个月"
+                        )
+                );
+                assertEquals(
+                        "692626531343",
+                        VerifiedBarcodeCatalog.recoverTruncatedOcrBarcode(
+                                "692626531343",
+                                "纯牛奶 生产日期2026-01-20"
+                        )
+                );
+                VerifiedBarcodeCatalog.Entry fermentedBeanCurd =
+                        VerifiedBarcodeCatalog.find("6930628889364");
+                assertTrue(fermentedBeanCurd != null,
+                        "red fermented bean curd sample should be available offline");
+                assertEquals("\u7a96\u85cf\u7ea2\u8150\u4e73", fermentedBeanCurd.name);
                 assertEquals(null, VerifiedBarcodeCatalog.find("4006381333931"));
                 assertEquals(
                         "6926265313430",
@@ -2554,6 +2635,16 @@ public final class LocalLogicTest {
                 assertEquals(9, clippedHintMonthReadAsDay.shelfLives.get(0).value);
                 assertEquals("month", clippedHintMonthReadAsDay.shelfLives.get(0).unit);
 
+                DateOcrParser.Result duplicatedClassifier = DateOcrParser.parse(
+                        "生产日期 2026-01-20 期9个月日"
+                );
+                assertEquals(9, duplicatedClassifier.shelfLives.get(0).value);
+                assertEquals("month", duplicatedClassifier.shelfLives.get(0).unit);
+                assertEquals(
+                        "2026-10-20",
+                        duplicatedClassifier.calculatedExpiryDates.get(0).normalized
+                );
+
                 DateOcrParser.Result damagedUnitSupportedByDaySpan = DateOcrParser.parse(
                         "生产日期 2026-01-20\n有效期至 2026-01-29\n期9个日"
                 );
@@ -2865,6 +2956,24 @@ public final class LocalLogicTest {
                 assertFalse(RecognitionFrameSelector.needsIncompleteDateRefinement(
                         true, false, true
                 ), "production plus shelf life already has a calculated expiry");
+                assertTrue(RecognitionFrameSelector.needsVideoDateRefinement(
+                        false, false, false, true
+                ), "camera simulation must review a clear tail frame after a total date miss");
+                assertFalse(RecognitionFrameSelector.needsVideoDateRefinement(
+                        false, false, false, false
+                ), "generic video should not pay the extra tail-review cost without date evidence");
+                assertFalse(RecognitionFrameSelector.needsVideoDateRefinement(
+                        true, true, false, true
+                ), "a complete direct pair must skip the deterministic tail review");
+                assertTrue(RecognitionFrameSelector.needsVideoProductRefinement(
+                        false, true
+                ), "camera simulation should review early product frames after a total name miss");
+                assertFalse(RecognitionFrameSelector.needsVideoProductRefinement(
+                        true, true
+                ), "a strong product name must skip redundant early-frame review");
+                assertFalse(RecognitionFrameSelector.needsVideoProductRefinement(
+                        false, false
+                ), "generic video import should not pay the camera-simulation review cost");
             }
         });
 
@@ -3619,6 +3728,15 @@ public final class LocalLogicTest {
                 assertEquals("2026-06-12", vote.productionDate.value);
                 assertEquals("2027-06-11", vote.expiryDate.value);
 
+                DateOcrParser.Result latestRange = DateEvidencePolicy.chooseVideoCompletionEvidence(
+                        "20260612/20270811\n20260612/20270611",
+                        null
+                );
+                DateOcrFrameVoter.VoteResult latestRangeVote = DateOcrFrameVoter.vote(
+                        java.util.Collections.singletonList(latestRange),
+                        1
+                );
+                assertEquals("2027-06-11", latestRangeVote.expiryDate.value);
                 DateOcrParser.Result shelfOnly = DateEvidencePolicy.chooseVideoCompletionEvidence(
                         "生产日期 2026-01-20 保质期 9个月",
                         null
@@ -3635,6 +3753,44 @@ public final class LocalLogicTest {
                 assertEquals("2026-01-20", runtimeSelected.productionDates.get(0).normalized);
                 assertEquals(9, runtimeSelected.shelfLives.get(0).value);
                 assertEquals("2026-10-20", runtimeSelected.calculatedExpiryDates.get(0).normalized);
+                DateOcrParser.Result splitAcrossFrames =
+                        DateEvidencePolicy.chooseVideoCompletionEvidence(
+                                "期9个月日",
+                                DateOcrParser.parse("生产日期 2026-01-20")
+                        );
+                assertEquals("2026-01-20", splitAcrossFrames.productionDates.get(0).normalized);
+                assertEquals(9, splitAcrossFrames.shelfLives.get(0).value);
+                assertEquals(
+                        "2026-10-20",
+                        splitAcrossFrames.calculatedExpiryDates.get(0).normalized
+                );
+                DateOcrParser.Result actualShelfReplay =
+                        DateEvidencePolicy.chooseVideoCompletionEvidence(
+                                "02220s1420 2026u220>1420 02001205t420 "
+                                        + "期9个月日 30200120S7420 期9个月日 "
+                                        + "2026012057420 9个月 02601205 9个月",
+                                null
+                        );
+                assertEquals("2026-01-20", actualShelfReplay.productionDates.get(0).normalized);
+                assertEquals(9, actualShelfReplay.shelfLives.get(0).value);
+                assertEquals(
+                        "2026-10-20",
+                        actualShelfReplay.calculatedExpiryDates.get(0).normalized
+                );
+                DateOcrParser.Result focusedDirect = DateOcrParser.parse(
+                        "\u751f\u4ea7\u65e5\u671f 25.03.13 \u6709\u6548\u671f\u81f3 2029.02"
+                );
+                DateOcrParser.Result directOverNoisyShelf =
+                        DateEvidencePolicy.chooseVideoCompletionEvidence(
+                                "\u751f\u4ea7\u65e5\u671f 25.03.13 \u4fdd\u8d28\u671f 28\u5929",
+                                focusedDirect
+                        );
+                DateOcrFrameVoter.VoteResult directOverNoisyShelfVote = DateOcrFrameVoter.vote(
+                        java.util.Collections.singletonList(directOverNoisyShelf),
+                        1
+                );
+                assertEquals("2025-03-13", directOverNoisyShelfVote.productionDate.value);
+                assertEquals("2029-02-28", directOverNoisyShelfVote.expiryDate.value);
                 assertEquals("", DateOcrParser.dominantRepeatedPastCompactDate(
                         "保质期9个月 2026012057427 2026012057427",
                         "2026-07-19"
@@ -3662,6 +3818,21 @@ public final class LocalLogicTest {
                 assertEquals("2027-03-07", vote.expiryDate.value);
                 assertFalse(vote.hasConflict, "cross-frame transcript should keep the labeled expiry");
 
+                String currentRuntimeTranscript = "2506080845153 \u4fdd\u8d28\u671f20870307 "
+                        + "2026060808481 290208108451S3 \u4fdd\u8d28\u671f20270307 "
+                        + "2506080845152 \u4fdd\u8d28\u671f20870307 202606080848 "
+                        + "\u4fdd\u8d28\u671f20270307 10g70307 202608";
+                DateOcrParser.Result currentRuntime =
+                        DateEvidencePolicy.chooseVideoCompletionEvidence(
+                                currentRuntimeTranscript,
+                                null
+                        );
+                DateOcrFrameVoter.VoteResult currentRuntimeVote = DateOcrFrameVoter.vote(
+                        java.util.Collections.singletonList(currentRuntime),
+                        1
+                );
+                assertEquals("2026-06-08", currentRuntimeVote.productionDate.value);
+                assertEquals("2027-03-07", currentRuntimeVote.expiryDate.value);
                 String recordedTranscript = "最终可食用日期:2020-06-02 20200602 20200602 "
                         + "保质期：9个月 026060810845183 保质期120270887 "
                         + "2026060810848183 2026060810845183 202606080845.53";
@@ -3964,6 +4135,24 @@ public final class LocalLogicTest {
                 assertFalse(candidates.get(0).text.contains("糖尿病"),
                         "the analyzer must discard the medical explanation even when it is visually larger");
 
+                assertEquals(
+                        "\u590d\u65b9\u4e39\u53c2\u6ef4\u4e38",
+                        RecognitionTextCleaner.intelligentProductNameCandidate(
+                                "\u5bf9\u7126\u5b8c\u6210\u65b9\u4e39\u53c2\u6ef4\u4e38"
+                        )
+                );
+                assertEquals(
+                        "\u590d\u65b9\u786b\u9178\u8f6f\u9aa8\u7d20\u6ef4\u773c\u6db2",
+                        RecognitionTextCleaner.intelligentProductNameCandidate(
+                                "\u590f\u65b9\u786b\u9178\u8f6f\u9aa8\u7d20\u6ef4\u773c\u6db2"
+                        )
+                );
+                assertEquals(
+                        "\u9e4c\u9e51\u86cb",
+                        RecognitionTextCleaner.intelligentProductNameCandidate(
+                                "\u8054\u7cfb\u65b9\u5f0f010\u9e4c\u9e51\u86cb"
+                        )
+                );
                 String packageTranscript = "COMPOUND DANSHEN DRIPPING PILLS 复方丹参酒丸 "
                         + "本品为橙色的薄衣滴丸 除去包装后显黄棕色 "
                         + "抵准文号 国药准 复方丹参滴丸 COMPOUND DANSHEN DRIPPING PILLS";
@@ -4020,6 +4209,21 @@ public final class LocalLogicTest {
                                 "大的景B公0H复方丹参滴丸"
                         );
                 assertEquals("复方丹参滴丸", dosageSnapshot.stablePackagingName);
+                assertTrue(
+                        RecognitionTextCleaner.isGenericProductCategoryName("\u4e2d\u56fd\u9171\u83dc"),
+                        "a broad package category should not stop concrete-name review"
+                );
+                assertFalse(
+                        RecognitionTextCleaner.isGenericProductCategoryName("\u9178\u83dc"),
+                        "the visible product title must remain specific"
+                );
+                UnifiedRecognitionStabilizer categoryStabilizer =
+                        new UnifiedRecognitionStabilizer(8, 3);
+                categoryStabilizer.promotePackagingCandidateForConfirmation("\u4e2d\u56fd\u9171\u83dc");
+                categoryStabilizer.promotePackagingCandidateForConfirmation("\u9178\u83dc");
+                UnifiedRecognitionStabilizer.Snapshot categorySnapshot =
+                        categoryStabilizer.promotePackagingCandidateForConfirmation("\u4e2d\u56fd\u9171\u83dc");
+                assertEquals("\u9178\u83dc", categorySnapshot.stablePackagingName);
                 assertFalse(PackagingNamePolicy.isPlausible("用于视疲劳，干眼症"),
                         "an efficacy sentence must not become a product name");
                 assertFalse(PackagingNamePolicy.isPlausible("厂家地址 北京市朝阳区"),
@@ -4285,9 +4489,37 @@ public final class LocalLogicTest {
             public void run() {
                 assertEquals("喝开水", RecognitionTextCleaner.extractFoodNameFragments("遇开水").get(0));
                 assertEquals("喝开水", RecognitionTextCleaner.extractFoodNameFragments("倜开水").get(0));
+                assertEquals(
+                        "喝开水",
+                        PackagingNamePolicy.recoverStrongCandidate(
+                                "提水R水B水\n退和甘甜\n保质期540天"
+                        )
+                );
+                assertFalse(
+                        "喝开水".equals(PackagingNamePolicy.recoverStrongCandidate(
+                                "饮用水\n温和甘甜\n保质期12个月"
+                        )),
+                        "a generic water slogan must not invent the 喝开水 product name"
+                );
                 assertEquals("薯条", RecognitionTextCleaner.intelligentProductNameCandidate("暑条"));
+                assertEquals(
+                        "上好佳薯条",
+                        RecognitionTextCleaner.preferredRecognizedProductName("薯条", "上好佳薯条")
+                );
+                assertEquals(
+                        "上好佳薯条",
+                        RecognitionTextCleaner.preferredAuthoritativeBarcodeName("薯条", "上好佳薯条")
+                );
+                assertEquals(
+                        "大董老北京炸酱面",
+                        RecognitionTextCleaner.preferredAuthoritativeBarcodeName(
+                                "大量色北京炸區面",
+                                "大董老北京炸酱面"
+                        )
+                );
                 assertEquals("纯牛奶", RecognitionTextCleaner.intelligentProductNameCandidate("純牛如"));
                 assertEquals("去壳清水鹌鹑蛋", RecognitionTextCleaner.intelligentProductNameCandidate("去売清水鹌鹑蛋"));
+                assertEquals("鹌鹑蛋", RecognitionTextCleaner.intelligentProductNameCandidate("系方式010鹌鹑蛋"));
                 assertEquals("大董老北京炸酱面", RecognitionTextCleaner.intelligentProductNameCandidate("大董老北京炸著面"));
                 assertEquals("大董老北京炸酱面", RecognitionTextCleaner.intelligentProductNameCandidate("大重老北京炸酱面"));
                 assertEquals("大董老北京炸酱面", RecognitionTextCleaner.intelligentProductNameCandidate("大疆老北京炸酱面"));
@@ -4317,6 +4549,8 @@ public final class LocalLogicTest {
                         )
                 );
                 assertEquals("去壳清水鹌鹑蛋", RecognitionTextCleaner.intelligentProductNameCandidate("去酒鹌鹑蛋"));
+                assertEquals("喝开水", RecognitionTextCleaner.intelligentProductNameCandidate("开水"));
+                assertEquals("喝开水", RecognitionTextCleaner.intelligentProductNameCandidate("熟水饮"));
                 assertEquals("果汁茶饮料", RecognitionTextCleaner.intelligentProductNameCandidate("粿汁茶饮E"));
                 assertEquals("果汁", RecognitionTextCleaner.intelligentProductNameCandidate("動ue粿汁"));
                 assertEquals("天然水", RecognitionTextCleaner.intelligentProductNameCandidate("文用天然水 1.31魚天繁水"));
@@ -4440,6 +4674,34 @@ public final class LocalLogicTest {
                 assertEquals("", RecognitionTextCleaner.extractProductCodeFromOcr("L (0211 59898584"));
                 assertEquals("96385074", RecognitionTextCleaner.extractProductCodeFromOcr("商品码：96385074"));
                 assertEquals("4006381333931", RecognitionTextCleaner.extractProductCodeFromOcr("4006381333931"));
+                assertTrue(
+                        RecognitionTextCleaner.isNonProductTraceabilityCode(
+                                "\u7ef4C\u6c34 \u4fdd\u8d28\u671f20270307 2506080845152",
+                                "2506080845152"
+                        ),
+                        "a YYMMDDhhmmss laser trace must not become a retail barcode"
+                );
+                assertFalse(
+                        RecognitionTextCleaner.isNonProductTraceabilityCode(
+                                "\u5546\u54c1\u6761\u7801 4006381333931",
+                                "4006381333931"
+                        ),
+                        "a normal checksum-valid retail barcode must remain available"
+                );
+                assertEquals(
+                        "",
+                        RecognitionFieldPromoter.acceptedBarcodeEvidence(
+                                "2506080845152",
+                                "维C水 保质期20270307 2506080845152"
+                        )
+                );
+                assertEquals(
+                        "4006381333931",
+                        RecognitionFieldPromoter.acceptedBarcodeEvidence(
+                                "4006381333931",
+                                "商品条码 4006381333931"
+                        )
+                );
             }
         });
 
@@ -4577,6 +4839,16 @@ public final class LocalLogicTest {
             }
         });
 
+        test("RecognitionFieldPromoter repairs noisy quail egg package wording", new TestCase() {
+            public void run() {
+                List<PackagingTextAnalyzer.Candidate> candidates =
+                        RecognitionFieldPromoter.candidatesFromTranscript(
+                                "镜清水鹤剪蛋 去光清水 去鹤鸭蛋 清水鸽吗蛋"
+                        );
+                assertTrue(!candidates.isEmpty(), "noisy package wording should remain reviewable");
+                assertEquals("去壳清水鹌鹑蛋", candidates.get(0).text);
+            }
+        });
         test("RecognitionTextCleaner rejects garbled labels and reduces duplicate food names", new TestCase() {
             public void run() {
                 assertEquals("炸酱面", RecognitionTextCleaner.intelligentProductNameCandidate(

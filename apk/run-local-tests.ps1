@@ -67,6 +67,7 @@ $MainSources = @(
   'RecognitionDiagnostics.java',
   'RecognitionFrameSelector.java',
   'RecognitionRoiBudget.java',
+  'RecognitionFieldGapPlan.java',
   'RecognitionReplayCompletion.java',
   'CameraOcrFeedback.java',
   'CameraFocusRecoveryPolicy.java',

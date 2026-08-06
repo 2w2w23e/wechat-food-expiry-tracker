@@ -17,6 +17,8 @@ apk/debug.keystore
 .cxx/
 .externalNativeBuild/
 captures/
+artifacts/replay-qa/
+artifacts/validation-public/
 *.apk
 *.apks
 *.aab

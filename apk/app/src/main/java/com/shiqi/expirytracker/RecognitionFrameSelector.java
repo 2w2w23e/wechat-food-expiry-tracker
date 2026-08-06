@@ -336,6 +336,27 @@ final class RecognitionFrameSelector {
                 && !hasCalculatedExpiryDate;
     }
 
+    static boolean needsVideoDateRefinement(
+            boolean hasProductionDate,
+            boolean hasDirectExpiryDate,
+            boolean hasCalculatedExpiryDate,
+            boolean cameraSimulation
+    ) {
+        boolean completePair = hasProductionDate
+                && (hasDirectExpiryDate || hasCalculatedExpiryDate);
+        return needsIncompleteDateRefinement(
+                hasProductionDate,
+                hasDirectExpiryDate,
+                hasCalculatedExpiryDate
+        ) || (cameraSimulation && !completePair);
+    }
+
+    static boolean needsVideoProductRefinement(
+            boolean hasStrongProductName,
+            boolean cameraSimulation
+    ) {
+        return cameraSimulation && !hasStrongProductName;
+    }
     static double highRateVideoFrameScore(
             double visualScore,
             double sharpness,
