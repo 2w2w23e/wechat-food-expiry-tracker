@@ -23,6 +23,7 @@ import android.net.Uri;
 import android.os.Bundle;
 import android.os.Build;
 import android.os.SystemClock;
+import android.text.InputType;
 import android.util.Log;
 import android.view.Gravity;
 import android.view.HapticFeedbackConstants;
@@ -31,6 +32,7 @@ import android.view.ViewGroup;
 import android.view.Window;
 import android.view.WindowManager;
 import android.widget.Button;
+import android.widget.EditText;
 import android.widget.FrameLayout;
 import android.widget.HorizontalScrollView;
 import android.widget.ImageButton;
@@ -59,11 +61,8 @@ import com.google.mlkit.vision.text.chinese.ChineseTextRecognizerOptions;
 import com.google.mlkit.vision.text.latin.TextRecognizerOptions;
 
 import java.io.File;
-import java.io.FileOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
-import java.io.OutputStreamWriter;
-import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.Comparator;
@@ -169,6 +168,7 @@ public final class DateOcrScanActivity extends ComponentActivity {
     private boolean showingEvidenceFrame;
     private AlertDialog evidenceDialog;
     private AlertDialog diagnosticsDialog;
+    private AlertDialog productNameEditorDialog;
     private TextView diagnosticsSummaryView;
     private volatile int recognitionGeneration;
     private volatile long lastAnalyzeAt;
@@ -211,6 +211,7 @@ public final class DateOcrScanActivity extends ComponentActivity {
     private long lastCameraAcceptedAtMs;
     private long lastCameraAcceptedSignature;
     private long lastValuableFramePromptAtMs;
+    private long lastDiagnosticsCheckpointAtMs;
     private int cameraProbeCount;
     private volatile double latestTextFocusXRatio = 0.5d;
     private volatile double latestTextFocusYRatio = 0.48d;
@@ -248,6 +249,9 @@ public final class DateOcrScanActivity extends ComponentActivity {
         dateOnlyMode = intent != null
                 && intent.getBooleanExtra(EXTRA_DATE_ONLY_MODE, false);
         diagnostics.reset(SystemClock.elapsedRealtime(), "launch");
+        diagnostics.value("debug_capture", Boolean.toString(
+                RecognitionDebugStore.isEnabled(this)
+        ));
 
         cameraAnalyzerExecutor = Executors.newSingleThreadExecutor();
         cameraExecutor = Executors.newSingleThreadExecutor();
@@ -315,7 +319,14 @@ public final class DateOcrScanActivity extends ComponentActivity {
         requestExitRecognition();
     }
     @Override
+    protected void onPause() {
+        persistDiagnosticsSnapshot("activity.pause");
+        super.onPause();
+    }
+
+    @Override
     protected void onDestroy() {
+        persistDiagnosticsSnapshot("activity.destroy");
         recognitionGeneration++;
         stopVideoReplay();
         if (evidenceDialog != null) {
@@ -326,6 +337,10 @@ public final class DateOcrScanActivity extends ComponentActivity {
             diagnosticsDialog.dismiss();
             diagnosticsDialog = null;
             diagnosticsSummaryView = null;
+        }
+        if (productNameEditorDialog != null) {
+            productNameEditorDialog.dismiss();
+            productNameEditorDialog = null;
         }
         stopCamera();
         clearLastReplayFrame();
@@ -565,8 +580,7 @@ public final class DateOcrScanActivity extends ComponentActivity {
         bottomShell.addView(progressRow, fixedHeight(compactScannerLayout ? 60 : 72));
 
         reviewResultButton = outlinedActionButton("查看当前识别结果");
-        reviewResultButton.setEnabled(false);
-        reviewResultButton.setAlpha(0.46f);
+        reviewResultButton.setEnabled(true);
         reviewResultButton.setOnClickListener(new View.OnClickListener() {
             @Override
             public void onClick(View view) {
@@ -584,7 +598,7 @@ public final class DateOcrScanActivity extends ComponentActivity {
             @Override
             public void onClick(View view) {
                 ScanUiPresentation.State state = currentUiPresentation();
-                if (state.ready || (compactScannerLayout && state.hasReviewableResult)) {
+                if (state.ready || compactScannerLayout) {
                     showConfirmationScreen();
                     return;
                 }
@@ -775,7 +789,7 @@ public final class DateOcrScanActivity extends ComponentActivity {
         content.addView(horizontalDivider(), fixedHeight(1));
 
         confirmationProductValue = reviewValue("尚未识别商品名称");
-        confirmationProductNote = reviewNote("点击此行可补扫商品名或查看证据");
+        confirmationProductNote = reviewNote("点击可修改错字、选择建议或补扫");
         View productRow = buildReviewRow(
                 R.drawable.ic_v2_type,
                 "商品名称",
@@ -1163,13 +1177,17 @@ public final class DateOcrScanActivity extends ComponentActivity {
         updateScanField(dateProgressView, state.date);
 
         if (reviewResultButton != null) {
-            reviewResultButton.setText(state.reviewAction);
-            reviewResultButton.setEnabled(state.hasReviewableResult);
-            reviewResultButton.setAlpha(state.hasReviewableResult ? 1f : 0.46f);
+            reviewResultButton.setText(state.hasReviewableResult
+                    ? state.reviewAction
+                    : "跳过识别，手动填写");
+            reviewResultButton.setEnabled(true);
+            reviewResultButton.setAlpha(1f);
         }
         if (prioritizeDateButton != null) {
-            String primaryAction = compactScannerLayout && state.hasReviewableResult
+            String primaryAction = compactScannerLayout
+                    ? (state.hasReviewableResult
                     ? state.reviewAction
+                    : "跳过识别，手动填写")
                     : state.primaryScanAction;
             prioritizeDateButton.setText(barcodeLookupOnly
                     ? "对准条码继续识别"
@@ -1191,9 +1209,9 @@ public final class DateOcrScanActivity extends ComponentActivity {
                     : "尚未识别商品名称");
         }
         if (confirmationProductNote != null) {
-            confirmationProductNote.setText(state.productName == ScanUiPresentation.FieldState.READY
-                    ? "系统只推荐一个结果，请结合包装核对"
-                    : "对准包装正面的较大中文名称");
+            confirmationProductNote.setText(productName.length() > 0
+                    ? "点击可直接修改错字；识别建议仅供核对"
+                    : "未识别也可继续填写，或点击补扫商品名");
         }
 
         if (confirmationBarcodeValue != null) {
@@ -1233,13 +1251,10 @@ public final class DateOcrScanActivity extends ComponentActivity {
         }
         updateKnownProductBanner(snapshot);
 
-        boolean fillable = dateOnlyMode
-                ? snapshot.hasStableDateCandidate()
-                : snapshot.hasFillableCandidate() || selectedPackagingName.length() > 0;
         if (fillButton != null) {
-            fillButton.setText(dateOnlyMode ? "使用本批次日期" : "使用这些结果");
-            fillButton.setEnabled(fillable);
-            fillButton.setAlpha(fillable ? 1f : 0.45f);
+            fillButton.setText(dateOnlyMode ? "返回填写日期" : "继续填写");
+            fillButton.setEnabled(true);
+            fillButton.setAlpha(1f);
         }
         updateModeButtons();
     }
@@ -1318,10 +1333,7 @@ public final class DateOcrScanActivity extends ComponentActivity {
 
     private void showConfirmationScreen() {
         ScanUiPresentation.State state = currentUiPresentation();
-        if (!state.hasReviewableResult) {
-            Toast.makeText(this, "还没有可核对的字段", Toast.LENGTH_SHORT).show();
-            return;
-        }
+        diagnosticEvent("confirmation.open", "partial=" + !state.ready);
         liveCameraResultFrozen = true;
         if (cameraBound || videoReplayActive) {
             recognitionGeneration++;
@@ -1417,7 +1429,7 @@ public final class DateOcrScanActivity extends ComponentActivity {
     }
 
     private void showConfirmationMenu() {
-        final String[] actions = isDebuggable()
+        final String[] actions = isDiagnosticsAvailable()
                 ? new String[] {"查看全部文字", "识别诊断（测试版）"}
                 : new String[] {"查看全部文字"};
         new AlertDialog.Builder(this)
@@ -1449,15 +1461,111 @@ public final class DateOcrScanActivity extends ComponentActivity {
     }
 
     private void showProductReview() {
-        UnifiedRecognitionStabilizer.Snapshot snapshot = latestSnapshot;
-        if (snapshot != null && snapshot.rankedPackagingCandidates.size() > 1) {
-            showProductAlternatives(snapshot.rankedPackagingCandidates);
-            return;
+        showProductNameEditor(latestSnapshot);
+    }
+
+    private void showProductNameEditor(final UnifiedRecognitionStabilizer.Snapshot snapshot) {
+        LinearLayout content = new LinearLayout(this);
+        content.setOrientation(LinearLayout.VERTICAL);
+        content.setPadding(dp(20), dp(4), dp(20), 0);
+
+        TextView helper = reviewNote("识别结果只是草稿，可直接修正漏字或错字。");
+        helper.setTextSize(13);
+        helper.setPadding(0, 0, 0, dp(10));
+        content.addView(helper, matchWrap());
+
+        final EditText input = new EditText(this);
+        String currentName = recommendedProductName(snapshot);
+        input.setText(currentName);
+        input.setHint("输入完整商品名称");
+        input.setTextColor(Color.rgb(23, 33, 43));
+        input.setTextSize(17);
+        input.setSingleLine(false);
+        input.setMaxLines(2);
+        input.setInputType(InputType.TYPE_CLASS_TEXT
+                | InputType.TYPE_TEXT_FLAG_CAP_SENTENCES
+                | InputType.TYPE_TEXT_FLAG_MULTI_LINE);
+        input.setPadding(dp(12), dp(10), dp(12), dp(10));
+        input.setBackground(rounded(Color.WHITE, dp(8), Color.rgb(180, 199, 246)));
+        if (currentName.length() > 0) {
+            input.setSelection(currentName.length());
         }
-        if (showEvidenceForField(RecognitionEvidence.FIELD_PRODUCT_NAME)) {
-            return;
+        content.addView(input, matchWrap());
+
+        String suggestions = productNameSuggestions(snapshot);
+        if (suggestions.length() > 0) {
+            TextView suggestionView = reviewNote("识别建议：" + suggestions);
+            suggestionView.setPadding(0, dp(10), 0, 0);
+            suggestionView.setMaxLines(3);
+            content.addView(suggestionView, matchWrap());
         }
-        beginDirectedRescan(RecognitionFieldGapPlan.Target.PRODUCT_NAME);
+
+        final AlertDialog dialog = new AlertDialog.Builder(this)
+                .setTitle("修改商品名称")
+                .setView(content)
+                .setPositiveButton("保存修改", null)
+                .setNeutralButton("补扫商品名", null)
+                .setNegativeButton("取消", null)
+                .create();
+        productNameEditorDialog = dialog;
+        dialog.setOnShowListener(new DialogInterface.OnShowListener() {
+            @Override
+            public void onShow(DialogInterface ignored) {
+                dialog.getButton(AlertDialog.BUTTON_POSITIVE)
+                        .setOnClickListener(new View.OnClickListener() {
+                            @Override
+                            public void onClick(View view) {
+                                String edited = FoodItem.cleanText(input.getText().toString());
+                                if (edited.length() == 0) {
+                                    input.setError("请输入商品名称，或取消后直接继续填写");
+                                    return;
+                                }
+                                if (edited.length() > 60) {
+                                    input.setError("商品名称最多 60 个字符");
+                                    return;
+                                }
+                                String previous = recommendedProductName(snapshot);
+                                selectedPackagingName = edited;
+                                diagnosticEvent(
+                                        "field.product.edit",
+                                        "changed=" + !edited.equals(previous)
+                                                + " value=" + edited
+                                );
+                                updateResultUi(latestSnapshot);
+                                dialog.dismiss();
+                            }
+                        });
+                dialog.getButton(AlertDialog.BUTTON_NEUTRAL)
+                        .setOnClickListener(new View.OnClickListener() {
+                            @Override
+                            public void onClick(View view) {
+                                dialog.dismiss();
+                                beginDirectedRescan(RecognitionFieldGapPlan.Target.PRODUCT_NAME);
+                            }
+                        });
+            }
+        });
+        dialog.show();
+        input.requestFocus();
+    }
+
+    private String productNameSuggestions(UnifiedRecognitionStabilizer.Snapshot snapshot) {
+        if (snapshot == null || snapshot.rankedPackagingCandidates.isEmpty()) {
+            return "";
+        }
+        StringBuilder output = new StringBuilder();
+        int count = Math.min(3, snapshot.rankedPackagingCandidates.size());
+        for (int index = 0; index < count; index++) {
+            String candidate = FoodItem.cleanText(snapshot.rankedPackagingCandidates.get(index).text);
+            if (candidate.length() == 0 || output.indexOf(candidate) >= 0) {
+                continue;
+            }
+            if (output.length() > 0) {
+                output.append(" / ");
+            }
+            output.append(candidate);
+        }
+        return output.toString();
     }
 
     private boolean showEvidenceForField(String field) {
@@ -8054,6 +8162,12 @@ public final class DateOcrScanActivity extends ComponentActivity {
                         showBestEvidenceForValue(selectedPackagingName);
                     }
                 })
+                .setNeutralButton("手动修改", new DialogInterface.OnClickListener() {
+                    @Override
+                    public void onClick(DialogInterface dialog, int which) {
+                        showProductNameEditor(latestSnapshot);
+                    }
+                })
                 .setNegativeButton("取消", null)
                 .show();
     }
@@ -8472,29 +8586,12 @@ public final class DateOcrScanActivity extends ComponentActivity {
 
     private void shareDiagnosticsLog() {
         diagnosticEvent("log.share", "requested");
-        File directory = new File(getCacheDir(), "shared-transfers");
-        if (!directory.exists() && !directory.mkdirs()) {
-            Toast.makeText(this, "无法准备诊断日志", Toast.LENGTH_SHORT).show();
-            return;
-        }
-        File file = new File(
-                directory,
-                "shiqi-ocr-diagnostic-" + System.currentTimeMillis() + ".txt"
-        );
-        try (OutputStreamWriter writer = new OutputStreamWriter(
-                new FileOutputStream(file),
-                StandardCharsets.UTF_8
-        )) {
-            writer.write(diagnostics.report(
-                    SystemClock.elapsedRealtime(),
-                    Build.MANUFACTURER + "/" + Build.MODEL
-                            + "; sdk=" + Build.VERSION.SDK_INT
-                            + "; package=" + getPackageName()
-            ));
-            writer.write("\nraw_ocr\n");
-            writer.write(FoodItem.cleanText(latestRawText));
-            writer.flush();
-
+        persistDiagnosticsSnapshot("log.share");
+        try {
+            String transientReport = RecognitionDebugStore.isEnabled(this)
+                    ? ""
+                    : currentDiagnosticsReport("transient.share");
+            File file = RecognitionDebugStore.buildShareFile(this, transientReport);
             Uri contentUri = FileProvider.getUriForFile(
                     this,
                     getPackageName() + ".fileprovider",
@@ -8503,10 +8600,10 @@ public final class DateOcrScanActivity extends ComponentActivity {
             Intent share = new Intent(Intent.ACTION_SEND);
             share.setType("text/plain");
             share.putExtra(Intent.EXTRA_STREAM, contentUri);
-            share.putExtra(Intent.EXTRA_SUBJECT, "食期管家 OCR 诊断日志");
-            share.setClipData(ClipData.newRawUri("OCR 诊断日志", contentUri));
+            share.putExtra(Intent.EXTRA_SUBJECT, "食期管家识别调试日志");
+            share.setClipData(ClipData.newRawUri("识别调试日志", contentUri));
             share.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
-            startActivity(Intent.createChooser(share, "分享识别诊断日志"));
+            startActivity(Intent.createChooser(share, "分享到 QQ、微信或其他应用"));
         } catch (IOException | IllegalArgumentException | ActivityNotFoundException error) {
             Toast.makeText(
                     this,
@@ -8516,28 +8613,111 @@ public final class DateOcrScanActivity extends ComponentActivity {
         }
     }
 
+    private void persistDiagnosticsSnapshot(String reason) {
+        if (!RecognitionDebugStore.isEnabled(this)) {
+            return;
+        }
+        try {
+            RecognitionDebugStore.saveSession(
+                    this,
+                    diagnostics.sessionId(),
+                    reason,
+                    currentDiagnosticsReport(reason)
+            );
+        } catch (IOException error) {
+            Log.w("ShiqiDiag", "persist failed: " + FoodItem.cleanText(error.getMessage()));
+        }
+    }
+
+    private String currentDiagnosticsReport(String reason) {
+        captureDiagnosticsState(reason);
+        return diagnostics.report(
+                SystemClock.elapsedRealtime(),
+                diagnosticsEnvironment()
+        ) + "\nraw_ocr\n" + FoodItem.cleanText(latestRawText);
+    }
+
+    private void captureDiagnosticsState(String reason) {
+        UnifiedRecognitionStabilizer.Snapshot snapshot = latestSnapshot == null
+                ? stabilizer.snapshot()
+                : latestSnapshot;
+        Runtime runtime = Runtime.getRuntime();
+        diagnostics.value("persist_reason", reason);
+        diagnostics.value(
+                "debug_capture",
+                Boolean.toString(RecognitionDebugStore.isEnabled(this))
+        );
+        diagnostics.value("paddle_models_ready", Boolean.toString(paddleModelsReady));
+        diagnostics.value("camera_bound", Boolean.toString(cameraBound));
+        diagnostics.value("video_replay_active", Boolean.toString(videoReplayActive));
+        diagnostics.value("date_only_mode", Boolean.toString(dateOnlyMode));
+        diagnostics.value("barcode_only_mode", Boolean.toString(barcodeLookupOnly));
+        diagnostics.value("selected_product_name", selectedPackagingName);
+        diagnostics.value("stable_barcode", snapshot.stableBarcode);
+        diagnostics.value(
+                "stable_product_name",
+                snapshot.bestPackagingNameForConfirmation()
+        );
+        FoodItem dateDraft = DateOcrResultPayload.toDraft(snapshot.stableDateVote);
+        diagnostics.value("stable_production_date", dateDraft.productionDate);
+        diagnostics.value("stable_expiry_date", dateDraft.expiryDate);
+        diagnostics.value(
+                "runtime_memory_mb",
+                (runtime.totalMemory() - runtime.freeMemory()) / (1024L * 1024L)
+                        + "/" + runtime.maxMemory() / (1024L * 1024L)
+        );
+        diagnostics.value(
+                "private_storage_free_mb",
+                Long.toString(getFilesDir().getUsableSpace() / (1024L * 1024L))
+        );
+    }
+
+    private String diagnosticsEnvironment() {
+        String version = "unknown";
+        try {
+            version = getPackageManager().getPackageInfo(getPackageName(), 0).versionName;
+        } catch (PackageManager.NameNotFoundException ignored) {
+            // Package metadata is best-effort diagnostics only.
+        }
+        int width = getResources().getDisplayMetrics().widthPixels;
+        int height = getResources().getDisplayMetrics().heightPixels;
+        String abi = Build.SUPPORTED_ABIS.length > 0 ? Build.SUPPORTED_ABIS[0] : "unknown";
+        boolean cameraPermission = Build.VERSION.SDK_INT < Build.VERSION_CODES.M
+                || checkSelfPermission(Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED;
+        return "device=" + Build.MANUFACTURER + "/" + Build.MODEL
+                + "; sdk=" + Build.VERSION.SDK_INT
+                + "; abi=" + abi
+                + "; app=" + version
+                + "; package=" + getPackageName()
+                + "; screen=" + width + "x" + height
+                + "; density=" + getResources().getDisplayMetrics().densityDpi
+                + "; orientation=" + getResources().getConfiguration().orientation
+                + "; camera_permission=" + cameraPermission;
+    }
+
     private void diagnosticEvent(String stage, String details) {
-        if (!isDebuggable()) {
+        if (!isDiagnosticsAvailable()) {
             return;
         }
         long now = SystemClock.elapsedRealtime();
         diagnostics.event(now, stage, details);
         Log.i("ShiqiDiag", stage + " " + FoodItem.cleanText(details));
+        if (RecognitionDebugStore.isEnabled(this)
+                && now - lastDiagnosticsCheckpointAtMs >= 8000L) {
+            lastDiagnosticsCheckpointAtMs = now;
+            persistDiagnosticsSnapshot("checkpoint." + stage);
+        }
     }
 
     private void finishWithCandidate() {
         UnifiedRecognitionStabilizer.Snapshot snapshot = latestSnapshot == null
                 ? stabilizer.snapshot()
                 : latestSnapshot;
-        if (dateOnlyMode && !snapshot.hasStableDateCandidate()) {
-            Toast.makeText(this, "本批次日期还没有稳定结果", Toast.LENGTH_SHORT).show();
-            return;
-        }
-        if (!snapshot.hasFillableCandidate() && selectedPackagingName.length() == 0) {
-            Toast.makeText(this, "还没有可填入字段", Toast.LENGTH_SHORT).show();
-            return;
-        }
-
+        diagnosticEvent(
+                "confirmation.continue",
+                "partial=" + !snapshot.hasFillableCandidate()
+                        + " dateOnly=" + dateOnlyMode
+        );
         FoodItem dateDraft = DateOcrResultPayload.toDraft(snapshot.stableDateVote);
         BarcodeProductInfo info = latestProductBarcode.equals(snapshot.stableBarcode) ? latestProductInfo : null;
         String packagingName = selectedPackagingName.length() > 0
@@ -8568,6 +8748,7 @@ public final class DateOcrScanActivity extends ComponentActivity {
                 snapshot.stableDateVote,
                 info != null && info.found
         ));
+        persistDiagnosticsSnapshot("confirmation.continue");
         setResult(RESULT_OK, result);
         finish();
     }
@@ -8581,6 +8762,10 @@ public final class DateOcrScanActivity extends ComponentActivity {
             return text;
         }
         return text.substring(0, maxLength) + "...";
+    }
+
+    private boolean isDiagnosticsAvailable() {
+        return isDebuggable() || RecognitionDebugStore.isEnabled(this);
     }
 
     private boolean isDebuggable() {

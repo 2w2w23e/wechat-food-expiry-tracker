@@ -74,6 +74,15 @@ public final class LocalLogicTest {
                 assertTrue(dateOnly.ready, "date-only replenishment should require only a date");
                 assertEquals(1, dateOnly.requiredCount);
 
+                ScanUiPresentation.State textOnlyDate = ScanUiPresentation.from(
+                        true, false, false, false, true, false, false
+                );
+                assertFalse(textOnlyDate.ready, "raw text is not a recognized date");
+                assertTrue(
+                        textOnlyDate.hasReviewableResult,
+                        "text-only date scan must allow return to manual batch fields"
+                );
+
                 ScanUiPresentation.State conflict = ScanUiPresentation.from(
                         false, true, false, false, true, true, true
                 );

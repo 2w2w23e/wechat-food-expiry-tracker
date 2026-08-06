@@ -82,7 +82,7 @@ final class ScanUiPresentation {
         boolean ready = dateOnlyMode
                 ? stableDate
                 : stableDate && (stableBarcode || stableProductName);
-        boolean hasReviewableResult = recognizedCount > 0 || sawDateCandidate;
+        boolean hasReviewableResult = recognizedCount > 0 || sawDateCandidate || sawText;
 
         String subtitle;
         if (ready) {

@@ -6,6 +6,7 @@ import static org.junit.Assert.assertTrue;
 
 import android.content.ContentValues;
 import android.content.Context;
+import android.content.Intent;
 import android.content.SharedPreferences;
 import android.graphics.Bitmap;
 import android.net.Uri;
@@ -43,12 +44,14 @@ public final class MainActivityBusinessPagesInstrumentedTest {
                 Context.MODE_PRIVATE
         );
         assertTrue(preferences.edit().clear().commit());
+        RecognitionDebugStore.resetForTests(context);
     }
 
     @After
     public void tearDown() {
         RoomInventoryStore.resetForTests(context);
         preferences.edit().clear().commit();
+        RecognitionDebugStore.resetForTests(context);
     }
 
     @Test
@@ -167,6 +170,56 @@ public final class MainActivityBusinessPagesInstrumentedTest {
         }
     }
 
+    @Test
+    public void incompleteRecognitionStillOpensManualEditor() {
+        ActivityScenario<MainActivity> scenario = ActivityScenario.launch(MainActivity.class);
+        try {
+            scenario.onActivity(new ActivityScenario.ActivityAction<MainActivity>() {
+                @Override
+                public void perform(MainActivity activity) {
+                    try {
+                        Method method = MainActivity.class.getDeclaredMethod(
+                                "handleUnifiedRecognitionResult",
+                                Intent.class
+                        );
+                        method.setAccessible(true);
+                        method.invoke(activity, new Intent());
+                    } catch (Exception error) {
+                        throw new AssertionError("Could not invoke partial recognition flow.", error);
+                    }
+                    View root = activity.getWindow().getDecorView();
+                    assertNotNull(findText(root, "新增商品"));
+                    assertNotNull(findText(root, "基本信息"));
+                }
+            });
+        } finally {
+            scenario.close();
+        }
+    }
+
+    @Test
+    public void recognitionSettingsExposeUserControlledDebugCapture() throws Exception {
+        ActivityScenario<MainActivity> scenario = ActivityScenario.launch(MainActivity.class);
+        try {
+            scenario.onActivity(new ActivityScenario.ActivityAction<MainActivity>() {
+                @Override
+                public void perform(MainActivity activity) {
+                    clickText(activity, "设置");
+                    clickText(activity, "识别状态");
+                    View root = activity.getWindow().getDecorView();
+                    assertNotNull(findText(root, "开启识别调试模式"));
+                    assertNotNull(findText(root, "分享调试日志"));
+
+                    clickText(activity, "开启识别调试模式");
+                    assertTrue(RecognitionDebugStore.isEnabled(context));
+                    assertNotNull(findText(activity.getWindow().getDecorView(), "记录中"));
+                }
+            });
+            captureScreenshot("d2-recognition-debug-enabled-1080x2400.png");
+        } finally {
+            scenario.close();
+        }
+    }
     @Test
     public void backupPageShowsOnlyVerifiedCandidateAndKeepsRestoreExplicit()
             throws Exception {

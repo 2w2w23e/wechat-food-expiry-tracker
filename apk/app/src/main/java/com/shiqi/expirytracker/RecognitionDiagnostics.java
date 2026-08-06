@@ -210,6 +210,10 @@ final class RecognitionDiagnostics {
         return new ArrayList<String>(events);
     }
 
+    synchronized String sessionId() {
+        return sessionId;
+    }
+
     synchronized String bottleneckCode() {
         long detector = averageTimingMs("text_detector");
         long recognizer = averageTimingMs("line_recognizer");

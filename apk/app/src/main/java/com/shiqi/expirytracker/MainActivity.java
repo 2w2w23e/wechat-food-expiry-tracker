@@ -1598,6 +1598,7 @@ public final class MainActivity extends Activity {
                 "识别状态",
                 "本地包装识别组件"
         );
+        boolean debugEnabled = RecognitionDebugStore.isEnabled(this);
         addSectionHeader(page.content, "当前能力", "", null);
         page.content.addView(settingsStatusRow(
                 "中文包装文字",
@@ -1619,10 +1620,73 @@ public final class MainActivity extends Activity {
         ), matchWrap());
         page.content.addView(settingsStatusRow(
                 "识别诊断",
-                "扫描期间记录耗时、聚焦和候选状态",
-                "测试版",
-                COLOR_PRIMARY
+                "帧、对焦、文字区域、模型耗时与最终字段",
+                debugEnabled ? "记录中" : "已关闭",
+                debugEnabled ? COLOR_SUCCESS : COLOR_PRIMARY
         ), matchWrap());
+
+        addSectionHeader(page.content, "真机调试", "", null);
+        final CheckBox debugToggle = new CheckBox(this);
+        debugToggle.setText("开启识别调试模式");
+        debugToggle.setTextColor(COLOR_TEXT);
+        debugToggle.setTextSize(15);
+        debugToggle.setTypeface(Typeface.DEFAULT, Typeface.BOLD);
+        debugToggle.setGravity(Gravity.CENTER_VERTICAL);
+        debugToggle.setMinHeight(dp(58));
+        debugToggle.setPadding(dp(10), 0, dp(10), 0);
+        debugToggle.setBackground(rounded(Color.WHITE, dp(8), COLOR_LINE));
+        debugToggle.setChecked(debugEnabled);
+        final boolean[] updatingToggle = new boolean[] { false };
+        debugToggle.setOnCheckedChangeListener(new CompoundButton.OnCheckedChangeListener() {
+            @Override
+            public void onCheckedChanged(CompoundButton button, boolean checked) {
+                if (updatingToggle[0]) {
+                    return;
+                }
+                if (checked) {
+                    try {
+                        RecognitionDebugStore.enable(
+                                MainActivity.this,
+                                recognitionDebugEnvironment()
+                        );
+                        toast("调试模式已开启，下一次识别会记录完整状态");
+                        renderUtilityPage();
+                    } catch (IOException error) {
+                        updatingToggle[0] = true;
+                        debugToggle.setChecked(false);
+                        updatingToggle[0] = false;
+                        toast("无法开启调试模式：" + FoodItem.cleanText(error.getMessage()));
+                    }
+                    return;
+                }
+                updatingToggle[0] = true;
+                debugToggle.setChecked(true);
+                updatingToggle[0] = false;
+                showDisableRecognitionDebugDialog();
+            }
+        });
+        page.content.addView(debugToggle, matchWrap());
+
+        String shareSubtitle = RecognitionDebugStore.hasShareableLog(this)
+                ? "已生成本机日志，可发送到 QQ、微信或其他应用"
+                : "完成一次识别后可分享";
+        page.content.addView(settingsActionRow(
+                "分享调试日志",
+                shareSubtitle,
+                android.R.drawable.ic_menu_share,
+                new View.OnClickListener() {
+                    @Override
+                    public void onClick(View view) {
+                        shareRecognitionDebugLog();
+                    }
+                }
+        ), withMargins(matchWrap(), 0, dp(8), 0, 0));
+        page.content.addView(noticeBand(
+                "日志只在开启期间写入本机，包含设备状态、相机与模型耗时、识别文字和最终字段；分享前由你确认接收应用。",
+                COLOR_MUTED,
+                Color.rgb(241, 245, 249),
+                COLOR_LINE
+        ), withMargins(matchWrap(), 0, dp(12), 0, 0));
 
         addUtilityFooter(
                 page,
@@ -1636,6 +1700,60 @@ public final class MainActivity extends Activity {
                 },
                 true
         );
+    }
+
+    private void showDisableRecognitionDebugDialog() {
+        new AlertDialog.Builder(this)
+                .setTitle("关闭识别调试模式？")
+                .setMessage("关闭后不再记录新状态。可以先把现有日志分享到 QQ、微信或其他应用。")
+                .setPositiveButton("关闭并分享", new DialogInterface.OnClickListener() {
+                    @Override
+                    public void onClick(DialogInterface dialog, int which) {
+                        RecognitionDebugStore.disable(MainActivity.this);
+                        renderUtilityPage();
+                        shareRecognitionDebugLog();
+                    }
+                })
+                .setNeutralButton("仅关闭", new DialogInterface.OnClickListener() {
+                    @Override
+                    public void onClick(DialogInterface dialog, int which) {
+                        RecognitionDebugStore.disable(MainActivity.this);
+                        renderUtilityPage();
+                        toast("调试模式已关闭，已有日志仍保留在本机");
+                    }
+                })
+                .setNegativeButton("取消", null)
+                .show();
+    }
+
+    private void shareRecognitionDebugLog() {
+        try {
+            File file = RecognitionDebugStore.buildShareFile(this, "");
+            Uri contentUri = FileProvider.getUriForFile(
+                    this,
+                    getPackageName() + ".fileprovider",
+                    file
+            );
+            Intent share = new Intent(Intent.ACTION_SEND);
+            share.setType("text/plain");
+            share.putExtra(Intent.EXTRA_STREAM, contentUri);
+            share.putExtra(Intent.EXTRA_SUBJECT, "食期管家识别调试日志");
+            share.setClipData(ClipData.newRawUri("识别调试日志", contentUri));
+            share.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
+            startActivity(Intent.createChooser(share, "分享到 QQ、微信或其他应用"));
+        } catch (IOException | IllegalArgumentException | ActivityNotFoundException error) {
+            toast("日志分享失败：" + FoodItem.cleanText(error.getMessage()));
+        }
+    }
+
+    private String recognitionDebugEnvironment() {
+        return "device=" + Build.MANUFACTURER + "/" + Build.MODEL
+                + "; sdk=" + Build.VERSION.SDK_INT
+                + "; app=" + appVersionLabel()
+                + "; package=" + getPackageName()
+                + "; screen=" + getResources().getDisplayMetrics().widthPixels
+                + "x" + getResources().getDisplayMetrics().heightPixels
+                + "; density=" + getResources().getDisplayMetrics().densityDpi;
     }
 
     private void buildAboutPage() {
@@ -2819,13 +2937,8 @@ public final class MainActivity extends Activity {
 
         final FoodItem draft = recognitionDraftFromIntent(data);
         if (!UnifiedRecognitionPayload.hasUsableDraft(draft)) {
-            String rawText = dateOcrSnippet(data.getStringExtra(DateOcrResultPayload.EXTRA_RAW_TEXT), 260);
-            new AlertDialog.Builder(this)
-                    .setTitle("没有可填入的候选")
-                    .setMessage("已读取到包装文字，但没有形成商品名、条码或日期候选。"
-                            + "请返回识别页继续选择更稳定的候选。\n\n原始片段：\n" + rawText)
-                    .setPositiveButton("知道了", null)
-                    .show();
+            showFoodForm(draft, false);
+            toast("识别结果不完整，请手动补充后保存");
             return;
         }
 
@@ -2866,12 +2979,7 @@ public final class MainActivity extends Activity {
 
         FoodItem recognized = recognitionDraftFromIntent(data);
         if (!ReplenishmentRecognitionMerge.hasRecognizedDate(recognized)) {
-            String rawText = dateOcrSnippet(data.getStringExtra(DateOcrResultPayload.EXTRA_RAW_TEXT), 220);
-            new AlertDialog.Builder(this)
-                    .setTitle("没有识别到本批次日期")
-                    .setMessage("请让日期小字占满取景框并轻点文字对焦，再重新识别。\n\n原始片段：\n" + rawText)
-                    .setPositiveButton("知道了", null)
-                    .show();
+            toast("未识别到本批次日期，请在当前表单手动填写");
             return;
         }
 
