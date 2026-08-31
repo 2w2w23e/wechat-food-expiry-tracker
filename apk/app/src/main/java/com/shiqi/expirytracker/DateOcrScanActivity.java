@@ -14,7 +14,6 @@ import android.graphics.Matrix;
 import android.graphics.Rect;
 import android.graphics.Typeface;
 import android.graphics.drawable.GradientDrawable;
-import android.media.MediaMetadataRetriever;
 import android.media.ExifInterface;
 import android.net.Uri;
 import android.os.Bundle;
@@ -1981,7 +1980,6 @@ public final class DateOcrScanActivity extends ComponentActivity {
     }
 
     private void replayVideoFrames(Uri uri, String path) {
-        MediaMetadataRetriever retriever = new MediaMetadataRetriever();
         int analyzedFrames = 0;
         int scannedFrames = 0;
         Bitmap selectedFrame = null;
@@ -1990,19 +1988,19 @@ public final class DateOcrScanActivity extends ComponentActivity {
         double selectedFrameScore = -1d;
         boolean selectedDetailFrame = false;
         final int replayGeneration = recognitionGeneration;
-        try {
-            if (path != null && path.length() > 0) {
-                retriever.setDataSource(path);
-            } else {
-                retriever.setDataSource(this, uri);
-            }
-            long durationUs = videoDurationUs(retriever);
+        try (VideoReplayFrameSource frameSource = VideoReplayFrameSource.open(
+                this,
+                uri,
+                path,
+                VIDEO_MAX_FRAME_SIDE
+        )) {
+            long durationUs = frameSource.durationUs();
             if (durationUs <= 0) {
                 durationUs = 30000000L;
             }
 
             longVideoProfile = durationUs > 20000000L;
-            Bitmap recordingProbe = retrieveReplayFrame(retriever, 0L);
+            Bitmap recordingProbe = frameSource.frameAt(0L);
             if (recordingProbe != null && isLikelyPhoneScreenRecording(recordingProbe, durationUs)) {
                 cameraSimulationScreenRecording = cameraSimulationActive;
                 appScreenRecordingDetected = !cameraSimulationActive;
@@ -2011,7 +2009,10 @@ public final class DateOcrScanActivity extends ComponentActivity {
             recycleBitmap(recordingProbe);
             List<Long> frameTimesUs = cameraSimulationScreenRecording
                     ? RecognitionFrameSelector.cameraScreenRecordingFrameTimes(durationUs)
-                    : videoFrameTimes(durationUs, longVideoProfile);
+                    : RecognitionFrameSelector.highRateVideoFrameTimes(
+                            durationUs,
+                            longVideoProfile
+                    );
             int selectionWindow = cameraSimulationScreenRecording
                     ? RecognitionFrameSelector.cameraScreenRecordingSelectionWindow(frameTimesUs.size())
                     : RecognitionFrameSelector.highRateVideoSelectionWindow(
@@ -2030,7 +2031,7 @@ public final class DateOcrScanActivity extends ComponentActivity {
                 currentVideoFrameRatio = frameRatio;
                 currentFrameTimestampUs = frameUs;
                 videoDetailFrame = longVideoProfile || frameUs >= Math.round(durationUs * 0.58d);
-                Bitmap frame = retrieveReplayFrame(retriever, frameUs);
+                Bitmap frame = frameSource.frameAt(frameUs);
                 scannedFrames++;
                 if (frame == null) {
                     updateHighFrameVideoReplayProgress(
@@ -2191,8 +2192,8 @@ public final class DateOcrScanActivity extends ComponentActivity {
                 }
             }
 
-            refineIncompleteVideoDateFromKeyframe(retriever, durationUs);
-            refineIncompleteVideoProductNameFromEarlyFrames(retriever, durationUs);
+            refineIncompleteVideoDateFromKeyframe(frameSource, durationUs);
+            refineIncompleteVideoProductNameFromEarlyFrames(frameSource, durationUs);
             final int finalFrameCount = analyzedFrames;
             runOnUiThread(new Runnable() {
                 @Override
@@ -2235,10 +2236,6 @@ public final class DateOcrScanActivity extends ComponentActivity {
             longVideoProfile = false;
             videoDetailFrame = false;
             currentVideoFrameRatio = 0d;
-            try {
-                retriever.release();
-            } catch (Exception ignored) {
-            }
         }
     }
 
@@ -5150,54 +5147,6 @@ public final class DateOcrScanActivity extends ComponentActivity {
         return Math.max(min, Math.min(max, value));
     }
 
-    private Bitmap retrieveReplayFrame(MediaMetadataRetriever retriever, long frameUs) {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O_MR1) {
-            int sourceWidth = videoMetadataInt(
-                    retriever,
-                    MediaMetadataRetriever.METADATA_KEY_VIDEO_WIDTH
-            );
-            int sourceHeight = videoMetadataInt(
-                    retriever,
-                    MediaMetadataRetriever.METADATA_KEY_VIDEO_HEIGHT
-            );
-            int largestSide = Math.max(sourceWidth, sourceHeight);
-            if (sourceWidth > 0 && sourceHeight > 0 && largestSide > 0) {
-                double scale = Math.min(1d, VIDEO_MAX_FRAME_SIDE / (double) largestSide);
-                int targetWidth = Math.max(1, (int) Math.round(sourceWidth * scale));
-                int targetHeight = Math.max(1, (int) Math.round(sourceHeight * scale));
-                try {
-                    return retriever.getScaledFrameAtTime(
-                            frameUs,
-                            MediaMetadataRetriever.OPTION_CLOSEST,
-                            targetWidth,
-                            targetHeight
-                    );
-                } catch (RuntimeException error) {
-                    Log.d("ShiqiRecognition", "Scaled video frame unavailable; using full frame", error);
-                }
-            }
-        }
-        return retriever.getFrameAtTime(frameUs, MediaMetadataRetriever.OPTION_CLOSEST);
-    }
-
-    private int videoMetadataInt(MediaMetadataRetriever retriever, int key) {
-        try {
-            String value = retriever.extractMetadata(key);
-            return value == null ? 0 : Math.max(0, Integer.parseInt(value));
-        } catch (Exception ignored) {
-            return 0;
-        }
-    }
-
-    private long videoDurationUs(MediaMetadataRetriever retriever) {
-        try {
-            String value = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_DURATION);
-            return Long.parseLong(value) * 1000L;
-        } catch (Exception ignored) {
-            return 0L;
-        }
-    }
-
     private void addEmbossedFrameCrop(
             List<RecognitionFrameVariant> variants,
             Bitmap source,
@@ -5237,10 +5186,6 @@ public final class DateOcrScanActivity extends ComponentActivity {
                     heightRatio
             ));
         }
-    }
-
-    private List<Long> videoFrameTimes(long durationUs, boolean longVideo) {
-        return RecognitionFrameSelector.highRateVideoFrameTimes(durationUs, longVideo);
     }
 
     private Bitmap scaleReplayFrame(Bitmap bitmap) {
@@ -5438,7 +5383,7 @@ public final class DateOcrScanActivity extends ComponentActivity {
     }
 
     private void refineIncompleteVideoProductNameFromEarlyFrames(
-            MediaMetadataRetriever retriever,
+            VideoReplayFrameSource frameSource,
             long durationUs
     ) {
         String existingProductName = bestProductNameFromSessionEvidence();
@@ -5447,7 +5392,7 @@ public final class DateOcrScanActivity extends ComponentActivity {
         if (!RecognitionFrameSelector.needsVideoProductRefinement(
                 hasStrongProductName,
                 cameraSimulationActive
-        ) || retriever == null || durationUs <= 0L) {
+        ) || frameSource == null || durationUs <= 0L) {
             return;
         }
 
@@ -5461,7 +5406,7 @@ public final class DateOcrScanActivity extends ComponentActivity {
                     "ShiqiRecognition",
                     "Reviewing deterministic product frame timestampUs=" + frameTimeUs
             );
-            Bitmap frame = retrieveReplayFrame(retriever, frameTimeUs);
+            Bitmap frame = frameSource.frameAt(frameTimeUs);
             if (frame == null) {
                 continue;
             }
@@ -5566,7 +5511,7 @@ public final class DateOcrScanActivity extends ComponentActivity {
         }
     }
     private void refineIncompleteVideoDateFromKeyframe(
-            MediaMetadataRetriever retriever,
+            VideoReplayFrameSource frameSource,
             long durationUs
     ) {
         String transcript = videoTranscriptText.length() > 0
@@ -5599,13 +5544,13 @@ public final class DateOcrScanActivity extends ComponentActivity {
         )) {
             return;
         }
-        if (retriever == null) {
+        if (frameSource == null) {
             return;
         }
 
         SessionKeyframe keyframe = bestDateReviewKeyframe();
         if (keyframe == null) {
-            refineDateFromReplayTailFrames(retriever, durationUs, transcript);
+            refineDateFromReplayTailFrames(frameSource, durationUs, transcript);
             return;
         }
         Log.i(
@@ -5660,10 +5605,7 @@ public final class DateOcrScanActivity extends ComponentActivity {
                     0L,
                     Math.min(durationUs, keyframe.evidence.timestampUs + offsetUs)
             );
-            Bitmap frame = retriever.getFrameAtTime(
-                    frameTimeUs,
-                    MediaMetadataRetriever.OPTION_CLOSEST
-            );
+            Bitmap frame = frameSource.rawFrameAt(frameTimeUs);
             if (frame == null) {
                 continue;
             }
@@ -5688,16 +5630,16 @@ public final class DateOcrScanActivity extends ComponentActivity {
             }
         }
         if (cameraSimulationActive) {
-            refineDateFromReplayTailFrames(retriever, durationUs, transcript);
+            refineDateFromReplayTailFrames(frameSource, durationUs, transcript);
         }
     }
 
     private boolean refineDateFromReplayTailFrames(
-            MediaMetadataRetriever retriever,
+            VideoReplayFrameSource frameSource,
             long durationUs,
             String transcript
     ) {
-        if (!cameraSimulationActive || retriever == null || durationUs <= 0L) {
+        if (!cameraSimulationActive || frameSource == null || durationUs <= 0L) {
             return false;
         }
         double[] tailRatios = new double[] {0.98d, 0.90d, 0.82d};
@@ -5710,7 +5652,7 @@ public final class DateOcrScanActivity extends ComponentActivity {
                     "ShiqiRecognition",
                     "Reviewing deterministic tail date timestampUs=" + frameTimeUs
             );
-            Bitmap frame = retrieveReplayFrame(retriever, frameTimeUs);
+            Bitmap frame = frameSource.frameAt(frameTimeUs);
             if (frame == null) {
                 continue;
             }

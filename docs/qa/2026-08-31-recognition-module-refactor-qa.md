@@ -8,6 +8,7 @@
 - 将取景框、实时文字框、对焦点和识别依据框从 `DateOcrScanActivity` 拆为独立 `RecognitionGuideOverlay`。
 - 将 OCR 图像变体及其来源坐标、质量和回收语义拆为 `RecognitionFrameVariant`。
 - 新增 `RecognitionWorkSession`，集中管理识别代次、全量重置、保留证据补扫、确认冻结和 Activity 销毁后的异步回调失效。
+- 新增 `VideoReplayFrameSource`，集中持有 `MediaMetadataRetriever`、视频元数据、缩放取帧、原始复核帧和幂等释放；Activity 不再直接管理解码器。
 - 不更换 OCR 模型、不修改字段投票阈值、不改变库存写入。
 
 ## 自动验证
@@ -27,8 +28,15 @@
 - 人工查看 `docs/qa/screenshots/redesign-v2-android/c1-overlay-extracted-1080x2400.png`：标题、对焦状态、取景框、日期单字段状态和手动回退按钮均可见，无重叠、截断或空白覆盖。
 - 720x1280 的同页面基线仍由 `scanner-date-final-720x1280.png` 覆盖；本切片未改变尺寸、颜色或布局参数，只移动绘制所有权。
 
+## 用户视频回放
+
+- 使用 `Record_2026-07-29-18-13-34_e7c84e4b72b45d7acf770bbb7219e5ff.mp4` 通过调试入口运行新的 `VideoReplayFrameSource`。
+- 5 个选择窗口共接受 5 帧，34.514 秒完成，无解码异常或 Activity 崩溃。
+- 字段结果：商品名“复方硫酸软骨素滴眼液”和条码 `6917246211883` 稳定；日期出现冲突且没有静默预选，用户仍可继续扫描或继续填写。
+- 视觉证据：`docs/qa/screenshots/redesign-v2-android/c1-video-july29-after-frame-source-1080x2400.png`。
+
 ## 仍未完成
 
-- `DateOcrScanActivity` 仍有 9115 行，视频回放、全帧 OCR 编排、Paddle 日期慢通道、关键帧和字段融合仍在 Activity 内。
+- `DateOcrScanActivity` 仍有 9057 行，视频循环调度、全帧 OCR 编排、Paddle 日期慢通道、关键帧和字段融合仍在 Activity 内。
 - 本切片证明拆分未破坏 UI 和生命周期，不代表用户视频字段召回率或真机对焦已经通过。
 - C1 继续拆出 replay frame source、识别调度和字段草稿/证据控制器后才能标记完成。
