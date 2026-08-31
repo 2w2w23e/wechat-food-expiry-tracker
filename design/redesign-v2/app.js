@@ -1,241 +1,450 @@
 (() => {
-  const shell = document.querySelector(".app-shell");
-  const screens = [...document.querySelectorAll(".screen")];
+  const rootScreens = new Set(["today", "inventory", "settings"]);
+  const screens = new Map(
+    [...document.querySelectorAll("[data-screen]")].map((screen) => [
+      screen.dataset.screen,
+      screen,
+    ]),
+  );
+  const nav = document.querySelector(".main-nav");
   const navButtons = [...document.querySelectorAll("[data-nav]")];
-  const toast = document.querySelector(".toast");
-  const history = ["home"];
-  let currentScreen = "home";
-  let toastTimer = null;
-  let dateFound = false;
-  let scanMode = "auto";
-  let scanTimer = null;
+  const historyStack = [];
+  let currentScreen = "today";
+  let snackbarTimer;
+  let selectedFilter = "全部库存";
+  let editorMode = "add";
+  let reminderDirty = false;
 
-  const refreshIcons = () => {
+  function refreshIcons() {
     if (window.lucide) {
-      window.lucide.createIcons({ attrs: { "aria-hidden": "true" } });
+      window.lucide.createIcons({
+        attrs: {
+          "stroke-width": 2,
+          "aria-hidden": "true",
+        },
+      });
     }
-  };
+  }
 
-  const showToast = (message) => {
-    window.clearTimeout(toastTimer);
-    toast.textContent = message;
-    toast.classList.add("is-visible");
-    toastTimer = window.setTimeout(() => toast.classList.remove("is-visible"), 2200);
-  };
-
-  const updateNavigation = (name) => {
+  function showScreen(name, options = {}) {
+    if (!screens.has(name) || name === currentScreen) {
+      return;
+    }
+    if (options.push !== false) {
+      historyStack.push(currentScreen);
+    }
+    screens.get(currentScreen)?.classList.remove("is-active");
+    currentScreen = name;
+    const next = screens.get(name);
+    next.classList.add("is-active");
+    next.querySelector(".screen-scroll")?.scrollTo({ top: 0 });
+    nav.classList.toggle("is-hidden", !rootScreens.has(name));
     navButtons.forEach((button) => {
       button.classList.toggle("is-selected", button.dataset.nav === name);
     });
-  };
-
-  const showScreen = (name, options = {}) => {
-    const target = screens.find((screen) => screen.dataset.screen === name);
-    if (!target) return;
-
-    screens.forEach((screen) => screen.classList.toggle("is-active", screen === target));
-    if (options.push !== false && currentScreen !== name) {
-      history.push(name);
-    }
-    currentScreen = name;
-    updateNavigation(name);
-    shell.dataset.currentScreen = name;
     refreshIcons();
-  };
+  }
 
-  const goBack = () => {
-    if (history.length > 1) history.pop();
-    const previous = history[history.length - 1] || "home";
-    showScreen(previous, { push: false });
-  };
+  function goBack() {
+    if (currentScreen === "reminders" && reminderDirty) {
+      const leave = window.confirm("提醒设置还没有保存。放弃修改并返回吗？");
+      if (!leave) {
+        return;
+      }
+      reminderDirty = false;
+    }
+    const previous = historyStack.pop();
+    if (previous && screens.has(previous)) {
+      showScreen(previous, { push: false });
+      return;
+    }
+    if (!rootScreens.has(currentScreen)) {
+      showScreen("today", { push: false });
+    }
+  }
 
-  const setScanMode = (mode) => {
-    scanMode = mode;
-    document.querySelectorAll("[data-scan-mode]").forEach((button) => {
-      button.classList.toggle("is-selected", button.dataset.scanMode === mode);
+  function showSnackbar(message, actionLabel = "") {
+    const bar = document.querySelector(".snackbar");
+    const text = bar.querySelector("[data-snackbar-text]");
+    const action = bar.querySelector("[data-snackbar-action]");
+    text.textContent = message;
+    action.textContent = actionLabel;
+    action.hidden = !actionLabel;
+    bar.hidden = false;
+    clearTimeout(snackbarTimer);
+    snackbarTimer = setTimeout(() => {
+      bar.hidden = true;
+    }, 3600);
+  }
+
+  function configureEditor(mode, productName = "") {
+    editorMode = mode;
+    const title = document.querySelector("[data-editor-title]");
+    const eyebrow = document.querySelector("[data-editor-eyebrow]");
+    const summary = document.querySelector("[data-restock-summary]");
+    const nameInput = document.querySelector("#product-name");
+    const barcodeInput = document.querySelector("#barcode-value");
+    const saveLabel = document.querySelector("[data-save-label]");
+
+    clearEditorErrors();
+    document.querySelector("#date-pending").checked = false;
+    document.querySelector("#quantity").value = "1";
+
+    if (mode === "restock") {
+      const name = productName || "鲜牛奶";
+      title.textContent = "补货新批次";
+      eyebrow.textContent = "旧批次不会被覆盖";
+      summary.hidden = false;
+      summary.querySelector("strong").textContent = `补货到${name}`;
+      nameInput.value = name;
+      nameInput.readOnly = true;
+      barcodeInput.value = name === "鲜牛奶" ? "6900000000012" : "";
+      saveLabel.textContent = "确认补货";
+    } else {
+      title.textContent = "新增物品";
+      eyebrow.textContent = "手动可直接完成";
+      summary.hidden = true;
+      nameInput.value = "";
+      nameInput.readOnly = false;
+      barcodeInput.value = "";
+      saveLabel.textContent = "保存入库";
+    }
+    showScreen("editor");
+  }
+
+  function clearEditorErrors() {
+    document.querySelectorAll(".field.has-error").forEach((field) => {
+      field.classList.remove("has-error");
     });
-    document.querySelector("[data-scan-title]").textContent =
-      mode === "date" ? "日期特写" : "自动识别";
-    document.querySelector(".name-box").hidden = mode === "date";
-    document.querySelector(".barcode-box").hidden = mode === "date";
-    document.querySelector(".date-box").classList.toggle("date-box-priority", mode === "date");
-  };
+    document.querySelectorAll("[data-error-for]").forEach((node) => {
+      node.textContent = "";
+    });
+  }
 
-  const renderDateState = () => {
-    const dateStep = document.querySelector("[data-date-step]");
-    const dateLabel = document.querySelector("[data-date-box-label]");
-    const scanStatus = document.querySelector("[data-scan-status]");
-    const resultButton = document.querySelector("[data-review-result]");
-    const reviewValue = document.querySelector("[data-date-review-value]");
-    const reviewNote = document.querySelector("[data-date-review-note]");
-    const fieldCount = document.querySelector("[data-field-count]");
-    const saveButton = document.querySelector("[data-save-batch]");
-    const secondary = document.querySelector("[data-confirm-secondary]");
-    const subtitle = document.querySelector("[data-confirm-subtitle]");
-    const priorityButton = document.querySelector("[data-prioritize-date]");
-    const dateEvidence = document.querySelector(".evidence-thumb[data-rescan-date]");
-    const dateReviewRow = document.querySelector(".review-row[data-rescan-date]");
-    const dateReviewIcon = dateReviewRow.querySelector(".review-icon");
-
-    dateStep.classList.toggle("is-done", dateFound);
-    dateStep.querySelector("strong").textContent = dateFound ? "已识别" : "查找中";
-    dateLabel.textContent = dateFound ? "有效期至" : "可能的日期";
-    document.querySelector(".date-box").classList.toggle("is-recognized", dateFound);
-    scanStatus.textContent = dateFound
-      ? "名称、条码和日期已齐"
-      : "已找到 2 项，继续查找日期";
-    resultButton.textContent = dateFound ? "核对全部结果" : "核对已识别的 2 项";
-    reviewValue.textContent = dateFound ? "有效期至 2028-06-30" : "尚未找到清楚日期";
-    reviewNote.textContent = dateFound
-      ? "日期特写 · 3 帧一致"
-      : "继续对准喷码、拓印或激光日期";
-    fieldCount.textContent = dateFound ? "4 / 4" : "2 / 4";
-    saveButton.disabled = !dateFound;
-    secondary.textContent = dateFound ? "重新扫描" : "补扫日期";
-    subtitle.textContent = dateFound ? "4 项信息已齐，请确认后保存" : "已识别 2 项，日期待补充";
-    priorityButton.hidden = dateFound;
-    dateEvidence.classList.toggle("is-missing", !dateFound);
-    dateEvidence.setAttribute("aria-label", dateFound ? "日期关键帧" : "补扫日期");
-    dateEvidence.innerHTML = dateFound
-      ? '<img src="./assets/eye-drops-preview.png" alt=""><span>日期</span>'
-      : '<i data-lucide="camera"></i><span>补扫日期</span>';
-    dateReviewRow.classList.toggle("needs-attention", !dateFound);
-    dateReviewIcon.classList.toggle("warning-icon", !dateFound);
-    dateReviewIcon.classList.toggle("success-icon", dateFound);
-    refreshIcons();
-  };
-
-  const beginScan = (mode = "auto") => {
-    window.clearTimeout(scanTimer);
-    setScanMode(mode);
-    renderDateState();
-    showScreen("scanner");
-
-    if (mode === "date") {
-      document.querySelector("[data-scan-status]").textContent = "请靠近日期并保持稳定";
-      scanTimer = window.setTimeout(() => {
-        dateFound = true;
-        renderDateState();
-        showToast("日期关键帧更清楚，已识别有效期");
-      }, 1350);
+  function setFieldError(inputId, message, errorKey = inputId) {
+    const input = document.querySelector(`#${inputId}`);
+    input?.closest(".field")?.classList.add("has-error");
+    const error = document.querySelector(`[data-error-for="${errorKey}"]`);
+    if (error) {
+      error.textContent = message;
     }
-  };
+    return input;
+  }
+
+  function saveEditor() {
+    clearEditorErrors();
+    const nameInput = document.querySelector("#product-name");
+    const quantityInput = document.querySelector("#quantity");
+    const datePending = document.querySelector("#date-pending").checked;
+    const activeMode = document.querySelector("[data-date-mode].is-selected")?.dataset.dateMode;
+    const production = document.querySelector("#production-date").value;
+    const shelfLife = Number(document.querySelector("#shelf-life").value);
+    const directExpiry = document.querySelector("#expiry-date").value;
+    let firstInvalid = null;
+
+    if (!nameInput.value.trim()) {
+      firstInvalid = setFieldError("product-name", "请填写商品名称。");
+    }
+    if (!Number.isFinite(Number(quantityInput.value)) || Number(quantityInput.value) <= 0) {
+      const invalidQuantity = setFieldError(
+        "quantity",
+        "新批次数量必须大于 0。",
+      );
+      firstInvalid ||= invalidQuantity;
+    }
+    const hasCalculatedDate = activeMode === "calculated" && production && shelfLife > 0;
+    const hasDirectDate = activeMode === "direct" && directExpiry;
+    if (!datePending && !hasCalculatedDate && !hasDirectDate) {
+      document.querySelector('[data-error-for="date"]').textContent =
+        "请填写日期，或明确选择“暂时不知道日期”。";
+      firstInvalid ||= document.querySelector("#production-date");
+    }
+
+    if (firstInvalid) {
+      firstInvalid.scrollIntoView({ behavior: "smooth", block: "center" });
+      firstInvalid.focus();
+      showSnackbar("还有内容需要修正，已定位到第一个问题");
+      return;
+    }
+
+    const message =
+      editorMode === "restock"
+        ? `已为${nameInput.value.trim()}新增独立批次`
+        : `已加入库存：${nameInput.value.trim()}`;
+    historyStack.length = 0;
+    showScreen(editorMode === "restock" ? "detail" : "today", { push: false });
+    showSnackbar(message, "撤销");
+  }
+
+  function updateExpiryPreview() {
+    const production = document.querySelector("#production-date").value;
+    const shelf = Number(document.querySelector("#shelf-life").value);
+    const unit = document.querySelector("#shelf-unit").value;
+    const output = document.querySelector("[data-expiry-preview]");
+    if (!production || !shelf || shelf <= 0) {
+      output.textContent = "请先填写完整日期";
+      return;
+    }
+    const date = new Date(`${production}T12:00:00`);
+    if (unit === "天") {
+      date.setDate(date.getDate() + shelf);
+    } else if (unit === "月") {
+      date.setMonth(date.getMonth() + shelf);
+    } else {
+      date.setFullYear(date.getFullYear() + shelf);
+    }
+    output.textContent = date.toISOString().slice(0, 10);
+  }
+
+  function openFilterSheet() {
+    document.querySelector("[data-sheet-backdrop]").hidden = false;
+    document.querySelector("[data-filter-sheet]").hidden = false;
+  }
+
+  function closeFilterSheet() {
+    document.querySelector("[data-sheet-backdrop]").hidden = true;
+    document.querySelector("[data-filter-sheet]").hidden = true;
+  }
+
+  function showScanner(mode = "auto") {
+    const preview = document.querySelector(".camera-preview");
+    document.querySelector("[data-scan-heading]").textContent =
+      mode === "date" ? "拍日期" : "拍包装识别";
+    preview.style.backgroundImage = mode === "date"
+      ? 'url("./assets/low-contrast-date.jpg")'
+      : 'url("./assets/auto-camera.jpg")';
+    preview.setAttribute("aria-label", mode === "date"
+      ? "相机中的低对比度喷码日期"
+      : "相机中的中文商品包装");
+    preview.classList.toggle("date-mode", mode === "date");
+    preview.classList.toggle("auto-mode", mode !== "date");
+    document.querySelectorAll("[data-auto-scan-only]").forEach((node) => {
+      node.hidden = mode === "date";
+    });
+    document.querySelector(".field-progress").classList.toggle(
+      "date-only",
+      mode === "date",
+    );
+    document.querySelector("[data-scan-status-title]").textContent =
+      mode === "date" ? "正在寻找低对比度日期" : "画面清楚，正在找日期";
+    document.querySelector("[data-scan-status-detail]").textContent =
+      mode === "date" ? "尚未形成可采用的日期" : "已读到商品名和条码";
+    const useRecognition = document.querySelector("[data-use-recognition]");
+    useRecognition.disabled = mode === "date";
+    useRecognition.textContent = mode === "date"
+      ? "日期清楚后可采用"
+      : "使用已识别的 2 项";
+    showScreen("scanner");
+  }
 
   document.addEventListener("click", (event) => {
-    const target = event.target.closest("button");
-    if (!target) return;
-
-    if (target.dataset.nav) {
-      showScreen(target.dataset.nav);
+    const go = event.target.closest("[data-go]");
+    if (go) {
+      showScreen(go.dataset.go);
       return;
     }
 
-    if (target.dataset.go) {
-      showScreen(target.dataset.go);
-      return;
-    }
-
-    if (target.hasAttribute("data-back")) {
+    const back = event.target.closest("[data-back]");
+    if (back) {
       goBack();
       return;
     }
 
-    if (target.dataset.startScan) {
-      beginScan(target.dataset.startScan);
+    const navButton = event.target.closest("[data-nav]");
+    if (navButton) {
+      historyStack.length = 0;
+      showScreen(navButton.dataset.nav, { push: false });
       return;
     }
 
-    if (target.hasAttribute("data-restock")) {
-      dateFound = false;
-      beginScan("date");
-      showToast("已复用商品档案，只识别本批次日期");
+    if (event.target.closest("[data-start-add]")) {
+      configureEditor("add");
       return;
     }
 
-    if (target.hasAttribute("data-review-result")) {
-      renderDateState();
-      showScreen("confirm");
+    const restock = event.target.closest("[data-restock]");
+    if (restock) {
+      configureEditor("restock", restock.dataset.restock);
       return;
     }
 
-    if (target.hasAttribute("data-prioritize-date") || target.hasAttribute("data-rescan-date")) {
-      beginScan("date");
+    const startScan = event.target.closest("[data-start-scan]");
+    if (startScan) {
+      showScanner(startScan.dataset.startScan || "auto");
       return;
     }
 
-    if (target.dataset.scanMode) {
-      setScanMode(target.dataset.scanMode);
-      if (target.dataset.scanMode === "date" && !dateFound) {
-        beginScan("date");
+    if (event.target.closest("[data-return-manual]")) {
+      while (historyStack.length && historyStack.at(-1) !== "editor") {
+        historyStack.pop();
+      }
+      showScreen("editor", { push: false });
+      showSnackbar("已保留原表单内容");
+      return;
+    }
+
+    if (event.target.closest("[data-use-recognition]")) {
+      showScreen("review");
+      return;
+    }
+
+    if (event.target.closest("[data-accept-recognition]")) {
+      document.querySelector("#product-name").value =
+        document.querySelector("#review-name").value.trim();
+      document.querySelector("#barcode-value").value =
+        document.querySelector("#review-barcode").value.trim();
+      while (historyStack.length && historyStack.at(-1) !== "editor") {
+        historyStack.pop();
+      }
+      showScreen("editor", { push: false });
+      showSnackbar("已采用名称和条码，日期仍可手动填写");
+      return;
+    }
+
+    if (event.target.closest("[data-save-item]")) {
+      saveEditor();
+      return;
+    }
+
+    if (event.target.closest("[data-editor-back]")) {
+      showSnackbar("草稿已保留，可稍后继续");
+      goBack();
+      return;
+    }
+
+    if (event.target.closest("[data-editor-cancel]")) {
+      const confirmed = window.confirm("放弃这次填写？已输入的内容会被删除。");
+      if (confirmed) {
+        goBack();
       }
       return;
     }
 
-    if (target.dataset.focusRegion) {
-      const box = target.getBoundingClientRect();
-      const shellBox = shell.getBoundingClientRect();
-      const reticle = document.querySelector("[data-focus-reticle]");
-      reticle.style.left = `${box.left - shellBox.left + box.width / 2}px`;
-      reticle.style.top = `${box.top - shellBox.top + box.height / 2}px`;
-      reticle.classList.remove("is-visible");
-      window.requestAnimationFrame(() => reticle.classList.add("is-visible"));
-      showToast(target.dataset.focusRegion === "date" ? "正在优先对焦日期" : "正在重新对焦");
-      return;
-    }
-
-    if (target.hasAttribute("data-decrement")) {
-      const row = target.closest(".stock-row, .batch-row");
-      row?.classList.add("quantity-updated");
-      document.querySelector("[data-detail-quantity]").textContent = "0 盒";
-      showToast("已减少 1，可在总览撤销");
-      return;
-    }
-
-    if (target.dataset.filter) {
-      document.querySelectorAll("[data-filter]").forEach((chip) => {
-        chip.classList.toggle("is-selected", chip === target);
+    const modeButton = event.target.closest("[data-date-mode]");
+    if (modeButton) {
+      document.querySelectorAll("[data-date-mode]").forEach((button) => {
+        button.classList.toggle("is-selected", button === modeButton);
       });
-      document.querySelectorAll(".stock-row").forEach((row) => {
-        row.hidden =
-          target.dataset.filter !== "all" &&
-          row.dataset.stockStatus !== target.dataset.filter;
+      document.querySelectorAll("[data-date-panel]").forEach((panel) => {
+        panel.hidden = panel.dataset.datePanel !== modeButton.dataset.dateMode;
       });
       return;
     }
 
-    if (target.dataset.filterJump) {
-      showScreen("inventory");
-      const chip = document.querySelector(`[data-filter="${target.dataset.filterJump}"]`);
-      chip?.click();
+    if (event.target.closest("[data-open-filter]")) {
+      openFilterSheet();
       return;
     }
 
-    if (target.hasAttribute("data-toggle")) {
-      target.classList.toggle("is-on");
+    if (
+      event.target.closest("[data-close-filter]") ||
+      event.target.matches("[data-sheet-backdrop]")
+    ) {
+      closeFilterSheet();
       return;
     }
 
-    if (target.hasAttribute("data-save-batch")) {
-      document.querySelector("[data-detail-expiry]").textContent = "2028-06-30";
-      document.querySelector("[data-batch-date]").textContent = "有效期至 2028-06-30 · 1 盒";
-      showScreen("detail");
-      showToast("已保存为独立新批次");
+    const filterOption = event.target.closest("[data-filter-option]");
+    if (filterOption) {
+      selectedFilter = filterOption.dataset.filterOption;
+      document.querySelectorAll("[data-filter-option]").forEach((button) => {
+        button.classList.toggle("is-selected", button === filterOption);
+      });
       return;
     }
 
-    if (target.dataset.toast) {
-      showToast(target.dataset.toast);
+    if (event.target.closest("[data-apply-filter]")) {
+      document.querySelector("[data-filter-summary]").textContent =
+        `${selectedFilter} · 最早到期优先`;
+      closeFilterSheet();
+      showSnackbar(`已筛选：${selectedFilter}`);
+      return;
+    }
+
+    const decrement = event.target.closest("[data-decrement]");
+    if (decrement) {
+      const quantity = document.querySelector("[data-detail-quantity]");
+      if (quantity && currentScreen === "detail") {
+        quantity.textContent = "1 / 2 盒";
+      }
+      showSnackbar("已从最早到期批次减少 1 件", "撤销");
+      return;
+    }
+
+    const focusBox = event.target.closest("[data-focus-box]");
+    if (focusBox) {
+      const ring = document.querySelector(".focus-ring");
+      const box = focusBox.getBoundingClientRect();
+      const shell = document.querySelector(".app-shell").getBoundingClientRect();
+      ring.style.left = `${box.left - shell.left + box.width / 2 - 27}px`;
+      ring.style.top = `${box.top - shell.top + box.height / 2 - 27}px`;
+      ring.classList.add("is-visible");
+      setTimeout(() => ring.classList.remove("is-visible"), 900);
+      showSnackbar("已重新对焦这个区域");
+      return;
+    }
+
+    const radio = event.target.closest('input[name="barcode-product"]');
+    if (radio) {
+      const button = document.querySelector("[data-barcode-restock]");
+      button.disabled = false;
+      button.textContent = `补货到${radio.value}`;
+      return;
+    }
+
+    if (event.target.closest("[data-barcode-restock]")) {
+      const selected = document.querySelector('input[name="barcode-product"]:checked');
+      if (selected) {
+        configureEditor("restock", selected.value);
+      }
+      return;
+    }
+
+    const reminderMode = event.target.closest("[data-reminder-mode]");
+    if (reminderMode) {
+      reminderDirty = true;
+      document.querySelectorAll("[data-reminder-mode]").forEach((button) => {
+        button.classList.toggle("is-selected", button === reminderMode);
+      });
+      showSnackbar(
+        reminderMode.dataset.reminderMode === "smart"
+          ? "将使用智能提醒"
+          : "将使用固定提前天数",
+      );
+      return;
+    }
+
+    if (event.target.closest("[data-save-reminders]")) {
+      reminderDirty = false;
+      goBack();
+      showSnackbar("提醒设置已保存；无状态变化时不会每天重算");
+      return;
+    }
+
+    const message = event.target.closest("[data-snackbar]");
+    if (message) {
+      showSnackbar(message.dataset.snackbar);
     }
   });
 
-  const searchInput = document.querySelector(".search-field input");
-  searchInput.addEventListener("input", () => {
-    const query = searchInput.value.trim().toLowerCase();
-    document.querySelectorAll(".stock-row").forEach((row) => {
-      row.hidden = Boolean(query) && !row.textContent.toLowerCase().includes(query);
-    });
+  document.querySelector("#production-date").addEventListener("input", updateExpiryPreview);
+  document.querySelector("#shelf-life").addEventListener("input", updateExpiryPreview);
+  document.querySelector("#shelf-unit").addEventListener("change", updateExpiryPreview);
+
+  document.querySelector("#debug-switch").addEventListener("change", (event) => {
+    const share = document.querySelector("[data-share-debug]");
+    share.disabled = event.target.checked;
+    share.innerHTML = event.target.checked
+      ? '<i data-lucide="activity"></i>正在记录本次识别状态'
+      : '<i data-lucide="share-2"></i>关闭调试后分享日志';
+    refreshIcons();
+    showSnackbar(event.target.checked ? "调试模式已开启" : "调试模式已关闭，可分享日志");
   });
 
-  renderDateState();
+  document.querySelector("[data-snackbar-action]").addEventListener("click", () => {
+    showSnackbar("已撤销刚才的操作");
+  });
+
   refreshIcons();
+  updateExpiryPreview();
 })();

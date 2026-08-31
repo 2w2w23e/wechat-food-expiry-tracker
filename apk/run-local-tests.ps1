@@ -49,6 +49,12 @@ $Java = Resolve-JavaTool 'java'
 
 $MainSources = @(
   'DateRules.java',
+  'FoodValidationRules.java',
+  'InventoryRules.java',
+  'ProductProfileEditor.java',
+  'InventoryRepository.java',
+  'InventoryCommandResult.java',
+  'InventoryCommandService.java',
   'AppNavigation.java',
   'FoodEditorSession.java',
   'InventorySnapshot.java',
@@ -71,6 +77,7 @@ $MainSources = @(
   'RecognitionReplayCompletion.java',
   'CameraOcrFeedback.java',
   'CameraFocusRecoveryPolicy.java',
+  'RecognitionWorkSession.java',
   'LatestFrameProcessor.java',
   'DateOcrResultPayload.java',
   'RecognitionTextCleaner.java',
@@ -127,6 +134,7 @@ try {
   Invoke-Checked $Java @('-cp', $Classes, 'com.shiqi.expirytracker.FoodEditorSessionTest')
   Invoke-Checked $Java @('-cp', $Classes, 'com.shiqi.expirytracker.InventorySnapshotMapperTest')
   Invoke-Checked $Java @('-cp', $Classes, 'com.shiqi.expirytracker.BusinessPageStateTest')
+  Invoke-Checked $Java @('-cp', $Classes, 'com.shiqi.expirytracker.InventoryCommandServiceTest')
 } finally {
   if (Test-Path $TempRoot) {
     Remove-Item -LiteralPath $TempRoot -Recurse -Force

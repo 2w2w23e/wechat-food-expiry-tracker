@@ -38,7 +38,7 @@ public final class LocalLogicTest {
                                 AppNavigation.SCAN
                         )
                 );
-                assertEquals("总览", AppNavigation.label(AppNavigation.OVERVIEW));
+                assertEquals("今日", AppNavigation.label(AppNavigation.OVERVIEW));
                 assertEquals("库存", AppNavigation.label(AppNavigation.INVENTORY));
                 assertEquals("扫描", AppNavigation.label(AppNavigation.SCAN));
                 assertEquals("设置", AppNavigation.label(AppNavigation.SETTINGS));
@@ -183,6 +183,23 @@ public final class LocalLogicTest {
                 assertFalse(DateRules.isValidDateString("2026-13-01"), "month 13 should be invalid");
                 assertFalse(DateRules.isValidDateString("2026-1-01"), "non-padded dates should be invalid");
                 assertFalse(DateRules.isValidDateString(null), "null should be invalid");
+            }
+        });
+
+        test("FoodValidationRules rejects impossible manual dates", new TestCase() {
+            public void run() {
+                String today = DateRules.todayString();
+                String tomorrow = DateRules.addDaysString(today, 1);
+                String yesterday = DateRules.addDaysString(today, -1);
+                assertEquals("", FoodValidationRules.productionDateError(today, today));
+                assertTrue(FoodValidationRules.productionDateError(tomorrow, today).length() > 0,
+                        "future production dates must be rejected");
+                assertTrue(FoodValidationRules.expiryDateError(today, yesterday).length() > 0,
+                        "expiry before production must be rejected");
+                assertTrue(FoodValidationRules.openedDateError(today, tomorrow, tomorrow, today).length() > 0,
+                        "future opened dates must be rejected");
+                assertTrue(FoodValidationRules.openedDateError(today, yesterday, tomorrow, today).length() > 0,
+                        "opened dates before production must be rejected");
             }
         });
 
@@ -1098,11 +1115,17 @@ public final class LocalLogicTest {
                 item.name = "Renamed drink";
                 item.notes = "updated note";
                 item.location = "fridge";
-                item.remainingQuantity = 0;
                 assertFalse(ReminderPolicy.ensureSmartSchedule(item),
-                        "name notes location and quantity must not recalculate reminder dates");
+                        "name notes and location must not recalculate reminder dates");
                 assertEquals(original, item.smartReminderOffsets);
                 assertEquals(originalFingerprint, item.smartReminderFingerprint);
+
+                item.remainingQuantity = 0;
+                assertTrue(ReminderPolicy.ensureSmartSchedule(item),
+                        "depletion is a state change and must clear reminder dates");
+                assertEquals(0, item.smartReminderOffsets.size());
+                assertEquals("", item.smartReminderFingerprint);
+                InventoryRules.restoreToActive(item);
 
                 item.storageMethod = "refrigerated";
                 assertTrue(ReminderPolicy.ensureSmartSchedule(item), "storage changes should recalculate reminder dates");
@@ -1674,8 +1697,45 @@ public final class LocalLogicTest {
                 );
             }
         });
-    }
+        test("ProductProfileEditor updates shared identity but preserves batch fields", new TestCase() {
+            public void run() {
+                FoodItem first = food("Milk", "dairy", "refrigerated", "2026-07-01", "2026-07-20", 2);
+                first.id = "batch-first";
+                first.productProfileId = "profile-shared";
+                first.unit = "box";
+                first.notes = "first note";
 
+                FoodItem second = food("Milk", "dairy", "refrigerated", "2026-07-05", "2026-07-24", 3);
+                second.id = "batch-second";
+                second.productProfileId = "profile-shared";
+                second.unit = "box";
+                second.notes = "second note";
+
+                FoodItem edited = first.copy();
+                edited.name = "Whole milk";
+                edited.category = "beverage";
+                edited.unit = "bottle";
+                edited.productionDate = "2026-07-02";
+                edited.notes = "edited first note";
+                edited.updatedAt = "2026-08-13T12:00:00+0800";
+
+                List<FoodItem> updated = ProductProfileEditor.applyEdit(
+                        Arrays.asList(first, second),
+                        first,
+                        edited
+                );
+                assertEquals(2, updated.size());
+                assertEquals("Whole milk", updated.get(0).name);
+                assertEquals("Whole milk", updated.get(1).name);
+                assertEquals("beverage", updated.get(1).category);
+                assertEquals("bottle", updated.get(1).unit);
+                assertEquals("2026-07-02", updated.get(0).productionDate);
+                assertEquals("2026-07-05", updated.get(1).productionDate);
+                assertEquals("edited first note", updated.get(0).notes);
+                assertEquals("second note", updated.get(1).notes);
+            }
+        });
+    }
     private void runFoodExcelExporterTests() {
         test("FoodExcelExporter writes xlsx workbook and escapes fields", new TestCase() {
             public void run() {
@@ -1904,9 +1964,26 @@ public final class LocalLogicTest {
                 assertEquals(1, preview.totalRows);
                 assertEquals(1, preview.importableRows);
                 assertEquals(0, preview.errorRows);
-                assertEquals(1, preview.warningRows);
+                assertEquals(0, preview.warningRows);
                 FoodItem imported = preview.importableFoods().get(0);
                 assertEquals("none", imported.dateSource);
+                assertEquals("", imported.productionDate);
+                assertEquals("", imported.expiryDate);
+            }
+        });
+
+        test("FoodExcelImporter round-trips explicit unknown-date food", new TestCase() {
+            public void run() {
+                FoodItem item = food("Date pending item", "other", "room_temp", "", "", 1);
+                item.dateSource = "unknown";
+
+                FoodExcelImporter.ImportPreview preview = readWorkbookPreview(Arrays.asList(item));
+
+                assertEquals(1, preview.totalRows);
+                assertEquals(1, preview.importableRows);
+                assertEquals(0, preview.errorRows);
+                FoodItem imported = preview.importableFoods().get(0);
+                assertEquals("unknown", imported.dateSource);
                 assertEquals("", imported.productionDate);
                 assertEquals("", imported.expiryDate);
             }

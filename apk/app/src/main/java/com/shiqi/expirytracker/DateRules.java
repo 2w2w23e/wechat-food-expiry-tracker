@@ -98,6 +98,15 @@ final class DateRules {
         return (int) ((toUtcMillis(end) - toUtcMillis(start)) / DAY_MS);
     }
 
+    static int compareDates(String leftDate, String rightDate) {
+        DateParts left = parseDateParts(leftDate);
+        DateParts right = parseDateParts(rightDate);
+        if (left == null || right == null) {
+            return Integer.MIN_VALUE;
+        }
+        return Long.compare(toUtcMillis(left), toUtcMillis(right));
+    }
+
     static int daysUntil(String date) {
         return daysBetween(getTodayString(), date);
     }

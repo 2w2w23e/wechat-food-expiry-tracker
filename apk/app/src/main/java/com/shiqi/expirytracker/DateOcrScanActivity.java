@@ -9,12 +9,9 @@ import android.content.Intent;
 import android.content.pm.PackageManager;
 import android.graphics.Bitmap;
 import android.graphics.BitmapFactory;
-import android.graphics.Canvas;
 import android.graphics.Color;
 import android.graphics.Matrix;
-import android.graphics.Paint;
 import android.graphics.Rect;
-import android.graphics.RectF;
 import android.graphics.Typeface;
 import android.graphics.drawable.GradientDrawable;
 import android.media.MediaMetadataRetriever;
@@ -114,6 +111,11 @@ public final class DateOcrScanActivity extends ComponentActivity {
     private TextView confirmationBarcodeNote;
     private TextView confirmationDateValue;
     private TextView confirmationDateNote;
+    private TextView confirmationFieldsTitle;
+    private View confirmationDateDivider;
+    private View confirmationProductRow;
+    private View confirmationProductDivider;
+    private View confirmationBarcodeRow;
     private TextView knownProductBanner;
     private TextView evidenceQualityLabel;
     private ScanFieldView barcodeProgressView;
@@ -170,11 +172,14 @@ public final class DateOcrScanActivity extends ComponentActivity {
     private AlertDialog diagnosticsDialog;
     private AlertDialog productNameEditorDialog;
     private TextView diagnosticsSummaryView;
+    private final RecognitionWorkSession recognitionWorkSession =
+            new RecognitionWorkSession();
     private volatile int recognitionGeneration;
     private volatile long lastAnalyzeAt;
     private volatile boolean videoReplayActive;
     private volatile boolean barcodeLookupOnly;
     private volatile boolean dateOnlyMode;
+    private boolean dateOnlyEntryMode;
     private volatile RecognitionFieldGapPlan.Target directedScanTarget =
             RecognitionFieldGapPlan.Target.AUTOMATIC;
     private volatile boolean cameraSimulationActive;
@@ -248,6 +253,7 @@ public final class DateOcrScanActivity extends ComponentActivity {
                 && intent.getBooleanExtra(EXTRA_BARCODE_LOOKUP_ONLY, false);
         dateOnlyMode = intent != null
                 && intent.getBooleanExtra(EXTRA_DATE_ONLY_MODE, false);
+        dateOnlyEntryMode = dateOnlyMode;
         diagnostics.reset(SystemClock.elapsedRealtime(), "launch");
         diagnostics.value("debug_capture", Boolean.toString(
                 RecognitionDebugStore.isEnabled(this)
@@ -327,7 +333,7 @@ public final class DateOcrScanActivity extends ComponentActivity {
     @Override
     protected void onDestroy() {
         persistDiagnosticsSnapshot("activity.destroy");
-        recognitionGeneration++;
+        recognitionGeneration = recognitionWorkSession.close().generation;
         stopVideoReplay();
         if (evidenceDialog != null) {
             evidenceDialog.dismiss();
@@ -542,6 +548,7 @@ public final class DateOcrScanActivity extends ComponentActivity {
         modeRow.addView(automaticModeButton, weightMatch(1));
         modeRow.addView(dateModeButton, weightMatch(1));
         bottomShell.addView(modeRow, fixedHeight(compactScannerLayout ? 42 : 48));
+        modeRow.setVisibility(dateOnlyEntryMode ? View.GONE : View.VISIBLE);
 
         automaticModeButton.setOnClickListener(new View.OnClickListener() {
             @Override
@@ -572,11 +579,15 @@ public final class DateOcrScanActivity extends ComponentActivity {
         barcodeProgressView = buildScanField(R.drawable.ic_v2_barcode, "条码");
         productProgressView = buildScanField(R.drawable.ic_v2_type, "名称");
         dateProgressView = buildScanField(R.drawable.ic_v2_calendar, "日期");
-        progressRow.addView(barcodeProgressView.root, weightMatch(1));
-        progressRow.addView(verticalDivider(), fixedLinear(1, 58));
-        progressRow.addView(productProgressView.root, weightMatch(1));
-        progressRow.addView(verticalDivider(), fixedLinear(1, 58));
-        progressRow.addView(dateProgressView.root, weightMatch(1));
+        if (dateOnlyEntryMode) {
+            progressRow.addView(dateProgressView.root, weightMatch(1));
+        } else {
+            progressRow.addView(barcodeProgressView.root, weightMatch(1));
+            progressRow.addView(verticalDivider(), fixedLinear(1, 58));
+            progressRow.addView(productProgressView.root, weightMatch(1));
+            progressRow.addView(verticalDivider(), fixedLinear(1, 58));
+            progressRow.addView(dateProgressView.root, weightMatch(1));
+        }
         bottomShell.addView(progressRow, fixedHeight(compactScannerLayout ? 60 : 72));
 
         reviewResultButton = outlinedActionButton("查看当前识别结果");
@@ -588,7 +599,9 @@ public final class DateOcrScanActivity extends ComponentActivity {
             }
         });
         bottomShell.addView(reviewResultButton, fixedHeight(48));
-        reviewResultButton.setVisibility(compactScannerLayout ? View.GONE : View.VISIBLE);
+        reviewResultButton.setVisibility(
+                compactScannerLayout || dateOnlyEntryMode ? View.GONE : View.VISIBLE
+        );
 
         Space actionGap = new Space(this);
         bottomShell.addView(actionGap, fixedHeight(compactScannerLayout ? 4 : 6));
@@ -597,6 +610,18 @@ public final class DateOcrScanActivity extends ComponentActivity {
         prioritizeDateButton.setOnClickListener(new View.OnClickListener() {
             @Override
             public void onClick(View view) {
+                if (dateOnlyEntryMode) {
+                    UnifiedRecognitionStabilizer.Snapshot snapshot = latestSnapshot == null
+                            ? stabilizer.snapshot()
+                            : latestSnapshot;
+                    if (snapshot.hasStableDateCandidate()) {
+                        showConfirmationScreen();
+                    } else {
+                        setResult(RESULT_CANCELED);
+                        finish();
+                    }
+                    return;
+                }
                 ScanUiPresentation.State state = currentUiPresentation();
                 if (state.ready || compactScannerLayout) {
                     showConfirmationScreen();
@@ -613,7 +638,9 @@ public final class DateOcrScanActivity extends ComponentActivity {
 
         FrameLayout.LayoutParams bottomParams = new FrameLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
-                dp(compactScannerLayout ? 174 : 248)
+                dp(dateOnlyEntryMode
+                        ? (compactScannerLayout ? 136 : 154)
+                        : (compactScannerLayout ? 174 : 248))
         );
         bottomParams.gravity = Gravity.BOTTOM;
         scanner.addView(bottomShell, bottomParams);
@@ -759,9 +786,12 @@ public final class DateOcrScanActivity extends ComponentActivity {
         LinearLayout fieldHeading = new LinearLayout(this);
         fieldHeading.setGravity(Gravity.CENTER_VERTICAL);
         fieldHeading.setPadding(0, dp(18), 0, dp(6));
-        fieldHeading.addView(sectionTitle("商品与批次"), weightWrap(1));
+        confirmationFieldsTitle = sectionTitle(
+                dateOnlyEntryMode ? "日期信息" : "商品与批次"
+        );
+        fieldHeading.addView(confirmationFieldsTitle, weightWrap(1));
         confirmationFieldCount = new TextView(this);
-        confirmationFieldCount.setText("0 / 3");
+        confirmationFieldCount.setText(dateOnlyEntryMode ? "0 / 1" : "0 / 3");
         confirmationFieldCount.setTextColor(Color.rgb(100, 116, 139));
         confirmationFieldCount.setTextSize(13);
         fieldHeading.addView(confirmationFieldCount, wrapWrap());
@@ -786,38 +816,40 @@ public final class DateOcrScanActivity extends ComponentActivity {
             }
         });
         content.addView(dateRow, matchWrap());
-        content.addView(horizontalDivider(), fixedHeight(1));
+        confirmationDateDivider = horizontalDivider();
+        content.addView(confirmationDateDivider, fixedHeight(1));
 
         confirmationProductValue = reviewValue("尚未识别商品名称");
         confirmationProductNote = reviewNote("点击可修改错字、选择建议或补扫");
-        View productRow = buildReviewRow(
+        confirmationProductRow = buildReviewRow(
                 R.drawable.ic_v2_type,
                 "商品名称",
                 confirmationProductValue,
                 confirmationProductNote,
                 false
         );
-        productRow.setContentDescription("核对商品名称");
-        productRow.setOnClickListener(new View.OnClickListener() {
+        confirmationProductRow.setContentDescription("核对商品名称");
+        confirmationProductRow.setOnClickListener(new View.OnClickListener() {
             @Override
             public void onClick(View view) {
                 showProductReview();
             }
         });
-        content.addView(productRow, matchWrap());
-        content.addView(horizontalDivider(), fixedHeight(1));
+        content.addView(confirmationProductRow, matchWrap());
+        confirmationProductDivider = horizontalDivider();
+        content.addView(confirmationProductDivider, fixedHeight(1));
 
         confirmationBarcodeValue = reviewValue("尚未识别商品码");
         confirmationBarcodeNote = reviewNote("点击此行可补扫条码或查看证据");
-        View barcodeRow = buildReviewRow(
+        confirmationBarcodeRow = buildReviewRow(
                 R.drawable.ic_v2_barcode,
                 "条码",
                 confirmationBarcodeValue,
                 confirmationBarcodeNote,
                 false
         );
-        barcodeRow.setContentDescription("查看条码识别依据");
-        barcodeRow.setOnClickListener(new View.OnClickListener() {
+        confirmationBarcodeRow.setContentDescription("查看条码识别依据");
+        confirmationBarcodeRow.setOnClickListener(new View.OnClickListener() {
             @Override
             public void onClick(View view) {
                 if (!showEvidenceForField(RecognitionEvidence.FIELD_BARCODE)) {
@@ -825,7 +857,14 @@ public final class DateOcrScanActivity extends ComponentActivity {
                 }
             }
         });
-        content.addView(barcodeRow, matchWrap());
+        content.addView(confirmationBarcodeRow, matchWrap());
+
+        if (dateOnlyEntryMode) {
+            confirmationDateDivider.setVisibility(View.GONE);
+            confirmationProductRow.setVisibility(View.GONE);
+            confirmationProductDivider.setVisibility(View.GONE);
+            confirmationBarcodeRow.setVisibility(View.GONE);
+        }
 
         productValue = confirmationProductValue;
         barcodeValue = confirmationBarcodeValue;
@@ -1184,20 +1223,31 @@ public final class DateOcrScanActivity extends ComponentActivity {
             reviewResultButton.setAlpha(1f);
         }
         if (prioritizeDateButton != null) {
-            String primaryAction = compactScannerLayout
-                    ? (state.hasReviewableResult
-                    ? state.reviewAction
-                    : "跳过识别，手动填写")
-                    : state.primaryScanAction;
-            prioritizeDateButton.setText(barcodeLookupOnly
-                    ? "对准条码继续识别"
-                    : primaryAction);
+            if (dateOnlyEntryMode) {
+                boolean hasDate = snapshot.hasStableDateCandidate();
+                prioritizeDateButton.setText(hasDate
+                        ? "核对识别日期"
+                        : "返回手动填写");
+                prioritizeDateButton.setEnabled(true);
+                prioritizeDateButton.setAlpha(1f);
+            } else {
+                String primaryAction = compactScannerLayout
+                        ? (state.hasReviewableResult
+                        ? state.reviewAction
+                        : "跳过识别，手动填写")
+                        : state.primaryScanAction;
+                prioritizeDateButton.setText(barcodeLookupOnly
+                        ? "对准条码继续识别"
+                        : primaryAction);
+            }
         }
         if (confirmationSubtitle != null) {
             confirmationSubtitle.setText(state.confirmationSubtitle);
         }
         if (confirmationFieldCount != null) {
-            confirmationFieldCount.setText(state.recognizedCount + " / 3");
+            confirmationFieldCount.setText(dateOnlyEntryMode
+                    ? (snapshot.hasStableDateCandidate() ? "1 / 1" : "0 / 1")
+                    : state.recognizedCount + " / 3");
         }
 
         String productName = recommendedProductName(snapshot);
@@ -1308,6 +1358,23 @@ public final class DateOcrScanActivity extends ComponentActivity {
             }
             return;
         }
+        if (dateOnlyEntryMode) {
+            automaticModeButton.setVisibility(View.GONE);
+            dateModeButton.setVisibility(View.GONE);
+            if (barcodeProgressView != null) {
+                barcodeProgressView.root.setVisibility(View.GONE);
+            }
+            if (productProgressView != null) {
+                productProgressView.root.setVisibility(View.GONE);
+            }
+            if (dateProgressView != null) {
+                dateProgressView.root.setVisibility(View.VISIBLE);
+            }
+            if (reviewResultButton != null) {
+                reviewResultButton.setVisibility(View.GONE);
+            }
+            return;
+        }
         automaticModeButton.setText("自动");
         dateModeButton.setVisibility(View.VISIBLE);
         if (productProgressView != null) {
@@ -1335,9 +1402,9 @@ public final class DateOcrScanActivity extends ComponentActivity {
         ScanUiPresentation.State state = currentUiPresentation();
         diagnosticEvent("confirmation.open", "partial=" + !state.ready);
         liveCameraResultFrozen = true;
-        if (cameraBound || videoReplayActive) {
-            recognitionGeneration++;
-        }
+        recognitionGeneration = recognitionWorkSession
+                .showConfirmation(cameraBound || videoReplayActive)
+                .generation;
         if (cameraBound) {
             stopCamera();
         }
@@ -1357,6 +1424,7 @@ public final class DateOcrScanActivity extends ComponentActivity {
     }
 
     private void showScannerScreen() {
+        recognitionGeneration = recognitionWorkSession.resumeScanner().generation;
         confirmationVisible = false;
         if (confirmationScreen != null) {
             confirmationScreen.setVisibility(View.GONE);
@@ -1750,7 +1818,9 @@ public final class DateOcrScanActivity extends ComponentActivity {
 
     private void prepareCameraSurfacePreservingRecognition() {
         stopVideoReplay();
-        recognitionGeneration++;
+        recognitionGeneration = recognitionWorkSession
+                .restartPreservingEvidence()
+                .generation;
         resetLatestCameraFrames();
         showingEvidenceFrame = false;
         analyzedFrameSequence = 0;
@@ -2542,7 +2612,7 @@ public final class DateOcrScanActivity extends ComponentActivity {
         boolean dedicatedStillDateStrip = singleFrameConfirmation && isLikelyDateStrip(bitmap);
         boolean paddlePrimaryPass = runFullPaddleTextDetection
                 && (singleFrameConfirmation || cameraLive || videoReplayActive);
-        List<FrameVariant> variants = buildFrameVariants(
+        List<RecognitionFrameVariant> variants = buildFrameVariants(
                 bitmap,
                 cameraLive,
                 singleFrameConfirmation,
@@ -2552,7 +2622,7 @@ public final class DateOcrScanActivity extends ComponentActivity {
         );
         int processedVariants = 0;
         try {
-            for (FrameVariant variant : variants) {
+            for (RecognitionFrameVariant variant : variants) {
                 processedVariants++;
                 diagnostics.increment("variants_processed");
                 if (expectedGeneration != recognitionGeneration) {
@@ -3056,7 +3126,7 @@ public final class DateOcrScanActivity extends ComponentActivity {
         });
     }
 
-    private List<FrameVariant> buildFrameVariants(
+    private List<RecognitionFrameVariant> buildFrameVariants(
             Bitmap bitmap,
             boolean cameraLive,
             boolean singleFrameConfirmation,
@@ -3064,33 +3134,33 @@ public final class DateOcrScanActivity extends ComponentActivity {
             boolean runningLowContrastRecovery,
             boolean dedicatedStillDateStrip
     ) {
-        List<FrameVariant> variants = new ArrayList<FrameVariant>();
+        List<RecognitionFrameVariant> variants = new ArrayList<RecognitionFrameVariant>();
         if (singleFrameConfirmation) {
-            variants.add(new FrameVariant(bitmap, 0, true, true, true, false, 0.90d));
-            variants.add(new FrameVariant(bitmap, 90, false, true, true, false, 0.80d, true, true));
-            variants.add(new FrameVariant(bitmap, 270, false, true, true, false, 0.80d, true, true));
+            variants.add(new RecognitionFrameVariant(bitmap, 0, true, true, true, false, 0.90d));
+            variants.add(new RecognitionFrameVariant(bitmap, 90, false, true, true, false, 0.80d, true, true));
+            variants.add(new RecognitionFrameVariant(bitmap, 270, false, true, true, false, 0.80d, true, true));
             if (dedicatedStillDateStrip) {
                 Bitmap laser = LowContrastTextPreprocessor.enhanceLaserPrintedText(bitmap);
                 if (laser != null) {
-                    variants.add(new FrameVariant(laser, 0, false, true, true, true, 0.96d, true, true));
-                    variants.add(new FrameVariant(laser, 90, false, true, true, false, 0.88d, true, true));
-                    variants.add(new FrameVariant(laser, 270, false, true, true, false, 0.88d, true, true));
+                    variants.add(new RecognitionFrameVariant(laser, 0, false, true, true, true, 0.96d, true, true));
+                    variants.add(new RecognitionFrameVariant(laser, 90, false, true, true, false, 0.88d, true, true));
+                    variants.add(new RecognitionFrameVariant(laser, 270, false, true, true, false, 0.88d, true, true));
                 }
                 Bitmap embossed = LowContrastTextPreprocessor.enhanceEmbossedText(bitmap);
                 if (embossed != null) {
-                    variants.add(new FrameVariant(embossed, 0, false, true, true, true, 0.96d, true, true));
+                    variants.add(new RecognitionFrameVariant(embossed, 0, false, true, true, true, 0.96d, true, true));
                 }
                 Bitmap binary = LowContrastTextPreprocessor.binarizeText(bitmap, false);
                 if (binary != null) {
-                    variants.add(new FrameVariant(binary, 0, false, true, true, true, 0.94d, true, true));
+                    variants.add(new RecognitionFrameVariant(binary, 0, false, true, true, true, 0.94d, true, true));
                 }
                 Bitmap inverted = LowContrastTextPreprocessor.binarizeText(bitmap, true);
                 if (inverted != null) {
-                    variants.add(new FrameVariant(inverted, 0, false, true, true, true, 0.94d, true, true));
+                    variants.add(new RecognitionFrameVariant(inverted, 0, false, true, true, true, 0.94d, true, true));
                 }
                 Bitmap brightText = LowContrastTextPreprocessor.isolateBrightText(bitmap);
                 if (brightText != null) {
-                    variants.add(new FrameVariant(brightText, 0, false, true, true, true, 0.97d, true, true));
+                    variants.add(new RecognitionFrameVariant(brightText, 0, false, true, true, true, 0.97d, true, true));
                 }
                 return variants;
             }
@@ -3117,14 +3187,14 @@ public final class DateOcrScanActivity extends ComponentActivity {
             }
             Bitmap enhanced = LowContrastTextPreprocessor.enhanceLaserPrintedText(bitmap);
             if (enhanced != null) {
-                variants.add(new FrameVariant(enhanced, 0, false, true, true, true, 0.92d, true, false));
-                variants.add(new FrameVariant(enhanced, 90, false, true, true, false, 0.86d, true, true));
-                variants.add(new FrameVariant(enhanced, 270, false, true, true, false, 0.86d, true, true));
+                variants.add(new RecognitionFrameVariant(enhanced, 0, false, true, true, true, 0.92d, true, false));
+                variants.add(new RecognitionFrameVariant(enhanced, 90, false, true, true, false, 0.86d, true, true));
+                variants.add(new RecognitionFrameVariant(enhanced, 270, false, true, true, false, 0.86d, true, true));
             }
             return variants;
         }
         if (videoReplayActive && appScreenRecordingDetected) {
-            variants.add(new FrameVariant(bitmap, 0, true, false, false, false, 0.74d));
+            variants.add(new RecognitionFrameVariant(bitmap, 0, true, false, false, false, 0.74d));
             addFrameCrop(
                     variants,
                     bitmap,
@@ -3166,7 +3236,7 @@ public final class DateOcrScanActivity extends ComponentActivity {
             boolean scanBarcode = barcodeLookupOnly || gapPlan.scanBarcode;
             boolean scanAnyText = !barcodeLookupOnly
                     && (gapPlan.scanProductName || gapPlan.scanDates);
-            variants.add(new FrameVariant(
+            variants.add(new RecognitionFrameVariant(
                     bitmap,
                     0,
                     scanBarcode,
@@ -3205,7 +3275,7 @@ public final class DateOcrScanActivity extends ComponentActivity {
                         ? LowContrastTextPreprocessor.enhanceLaserPrintedText(bitmap)
                         : LowContrastTextPreprocessor.enhanceEmbossedText(bitmap);
                 if (enhanced != null) {
-                    variants.add(new FrameVariant(
+                    variants.add(new RecognitionFrameVariant(
                             enhanced,
                             0,
                             false,
@@ -3221,7 +3291,7 @@ public final class DateOcrScanActivity extends ComponentActivity {
             return variants;
         }
         if (videoReplayActive && !longVideoProfile && videoDetailFrame) {
-            variants.add(new FrameVariant(
+            variants.add(new RecognitionFrameVariant(
                     bitmap,
                     0,
                     true,
@@ -3249,7 +3319,7 @@ public final class DateOcrScanActivity extends ComponentActivity {
             return variants;
         }
         if (videoReplayActive && !videoDetailFrame) {
-            variants.add(new FrameVariant(
+            variants.add(new RecognitionFrameVariant(
                     bitmap,
                     0,
                     true,
@@ -3260,7 +3330,7 @@ public final class DateOcrScanActivity extends ComponentActivity {
             ));
             return variants;
         }
-        variants.add(new FrameVariant(bitmap, 0, true, true, false, false, 0.68d));
+        variants.add(new RecognitionFrameVariant(bitmap, 0, true, true, false, false, 0.68d));
         addFrameCrop(variants, bitmap, 0.04f, 0.13f, 0.92f, 0.50f, 1100, 0, false, true, false);
         addFrameCrop(variants, bitmap, 0.14f, 0.20f, 0.72f, 0.40f, 1800, 0, false, true, true, true);
         addFrameCrop(variants, bitmap, 0.38f, 0.48f, 0.60f, 0.44f, 1400, 0, false, true, false, true);
@@ -3268,7 +3338,7 @@ public final class DateOcrScanActivity extends ComponentActivity {
         if (analyzedFrameSequence % 2 == 1) {
             Bitmap enhanced = LowContrastTextPreprocessor.enhanceLaserPrintedText(bitmap);
             if (enhanced != null) {
-                variants.add(new FrameVariant(enhanced, 0, false, true, false, true, 0.88d, false, true));
+                variants.add(new RecognitionFrameVariant(enhanced, 0, false, true, false, true, 0.88d, false, true));
             }
             addEmbossedFrameCrop(variants, bitmap, 0.14f, 0.20f, 0.72f, 0.40f, 1800);
         } else {
@@ -3444,7 +3514,7 @@ public final class DateOcrScanActivity extends ComponentActivity {
         );
     }
     private void addEnhancedFrameCrop(
-            List<FrameVariant> variants,
+            List<RecognitionFrameVariant> variants,
             Bitmap source,
             float leftRatio,
             float topRatio,
@@ -3466,7 +3536,7 @@ public final class DateOcrScanActivity extends ComponentActivity {
         Bitmap enhanced = LowContrastTextPreprocessor.enhanceLaserPrintedText(prepared);
         prepared.recycle();
         if (enhanced != null) {
-            variants.add(new FrameVariant(
+            variants.add(new RecognitionFrameVariant(
                     enhanced,
                     0,
                     false,
@@ -3485,7 +3555,7 @@ public final class DateOcrScanActivity extends ComponentActivity {
     }
 
     private void addFrameCrop(
-            List<FrameVariant> variants,
+            List<RecognitionFrameVariant> variants,
             Bitmap source,
             float leftRatio,
             float topRatio,
@@ -4802,7 +4872,7 @@ public final class DateOcrScanActivity extends ComponentActivity {
     }
 
     private void addFrameCrop(
-            List<FrameVariant> variants,
+            List<RecognitionFrameVariant> variants,
             Bitmap source,
             float leftRatio,
             float topRatio,
@@ -4827,7 +4897,7 @@ public final class DateOcrScanActivity extends ComponentActivity {
             crop.recycle();
         }
         double sourceQuality = Math.min(1d, 0.72d + (widthRatio * heightRatio * 0.45d));
-        variants.add(new FrameVariant(
+        variants.add(new RecognitionFrameVariant(
                 prepared,
                 rotationDegrees,
                 scanBarcode,
@@ -4887,7 +4957,11 @@ public final class DateOcrScanActivity extends ComponentActivity {
         return joined.toString();
     }
 
-    private void appendRecognizedText(StringBuilder builder, Text text, FrameVariant variant) {
+    private void appendRecognizedText(
+            StringBuilder builder,
+            Text text,
+            RecognitionFrameVariant variant
+    ) {
         if (builder == null || text == null || variant == null) {
             return;
         }
@@ -4985,7 +5059,7 @@ public final class DateOcrScanActivity extends ComponentActivity {
         });
     }
 
-    private boolean isAllowedEvidenceRegion(FrameVariant variant, Rect box) {
+    private boolean isAllowedEvidenceRegion(RecognitionFrameVariant variant, Rect box) {
         if (!appScreenRecordingDetected) {
             return true;
         }
@@ -4997,7 +5071,7 @@ public final class DateOcrScanActivity extends ComponentActivity {
     private void appendTextObservations(
             List<PackagingTextAnalyzer.Observation> target,
             Text text,
-            FrameVariant variant,
+            RecognitionFrameVariant variant,
             String engine
     ) {
         int imageWidth = variant == null ? 0 : variant.bitmap.getWidth();
@@ -5064,8 +5138,8 @@ public final class DateOcrScanActivity extends ComponentActivity {
         }
     }
 
-    private void recycleVariants(List<FrameVariant> variants) {
-        for (FrameVariant variant : variants) {
+    private void recycleVariants(List<RecognitionFrameVariant> variants) {
+        for (RecognitionFrameVariant variant : variants) {
             if (variant.recycleBitmap) {
                 variant.bitmap.recycle();
             }
@@ -5125,7 +5199,7 @@ public final class DateOcrScanActivity extends ComponentActivity {
     }
 
     private void addEmbossedFrameCrop(
-            List<FrameVariant> variants,
+            List<RecognitionFrameVariant> variants,
             Bitmap source,
             float leftRatio,
             float topRatio,
@@ -5147,7 +5221,7 @@ public final class DateOcrScanActivity extends ComponentActivity {
         Bitmap enhanced = LowContrastTextPreprocessor.enhanceEmbossedText(prepared);
         prepared.recycle();
         if (enhanced != null) {
-            variants.add(new FrameVariant(
+            variants.add(new RecognitionFrameVariant(
                     enhanced,
                     0,
                     false,
@@ -5923,13 +5997,14 @@ public final class DateOcrScanActivity extends ComponentActivity {
     }
 
     private void resetRecognitionState() {
+        RecognitionWorkSession.State sessionState = recognitionWorkSession.resetAll();
         Log.i(
                 "ShiqiRecognition",
-                "Reset recognition generation=" + (recognitionGeneration + 1)
+                "Reset recognition generation=" + sessionState.generation
                         + " videoActive=" + videoReplayActive
         );
         diagnostics.reset(SystemClock.elapsedRealtime(), "reset");
-        recognitionGeneration++;
+        recognitionGeneration = sessionState.generation;
         resetLatestCameraFrames();
         stabilizer.reset();
         latestSnapshot = stabilizer.snapshot();
@@ -7812,7 +7887,9 @@ public final class DateOcrScanActivity extends ComponentActivity {
                 ? "已读取 " + recognizedChars + " 个字符 · 原文可查看"
                 : "尚未读取到清晰文字");
 
-        boolean fillable = snapshot.hasFillableCandidate() || selectedPackagingName.length() > 0;
+        boolean fillable = dateOnlyEntryMode
+                ? snapshot.hasStableDateCandidate()
+                : snapshot.hasFillableCandidate() || selectedPackagingName.length() > 0;
         fillButton.setEnabled(fillable);
         fillButton.setAlpha(fillable ? 1f : 0.45f);
 
@@ -8462,6 +8539,24 @@ public final class DateOcrScanActivity extends ComponentActivity {
             statusText.setText("正在挑选清晰画面并合并识别字段。");
             return;
         }
+        if (dateOnlyEntryMode) {
+            if (snapshot != null && snapshot.hasStableDateCandidate()) {
+                statusBadge.setText("日期已识别");
+                statusText.setText("结果已跨帧稳定，请核对日期含义后填入。");
+            } else if (snapshot != null
+                    && snapshot.latestDateVote != null
+                    && snapshot.latestDateVote.hasConflict) {
+                statusBadge.setText("需继续确认");
+                statusText.setText("看到多个日期，请保持画面稳定或只对准其中一处。");
+            } else if (latestRawText.length() > 0) {
+                statusBadge.setText("正在确认日期");
+                statusText.setText("已看到文字，继续保持稳定以确认日期。");
+            } else {
+                statusBadge.setText("识别日期");
+                statusText.setText("把生产日期、保质期或有效期放入识别框。");
+            }
+            return;
+        }
         if (selectedPackagingName.length() > 0) {
             statusBadge.setText("已选择");
             statusText.setText("已选择商品名候选，可继续识别日期或直接填入表单。");
@@ -8853,151 +8948,6 @@ public final class DateOcrScanActivity extends ComponentActivity {
         return value * getResources().getDisplayMetrics().scaledDensity;
     }
 
-    private static final class FrameVariant {
-        final Bitmap bitmap;
-        final int rotationDegrees;
-        final boolean scanBarcode;
-        final boolean scanText;
-        final boolean scanLatinText;
-        final boolean recycleBitmap;
-        final double sourceQuality;
-        final boolean dateFocused;
-        final boolean datePairSupplement;
-        final double sourceLeft;
-        final double sourceTop;
-        final double sourceWidth;
-        final double sourceHeight;
-
-        FrameVariant(
-                Bitmap bitmap,
-                int rotationDegrees,
-                boolean scanBarcode,
-                boolean scanText,
-                boolean scanLatinText,
-                boolean recycleBitmap,
-                double sourceQuality
-        ) {
-            this(
-                    bitmap,
-                    rotationDegrees,
-                    scanBarcode,
-                    scanText,
-                    scanLatinText,
-                    recycleBitmap,
-                    sourceQuality,
-                    false,
-                    false,
-                    0d,
-                    0d,
-                    1d,
-                    1d
-            );
-        }
-
-        FrameVariant(
-                Bitmap bitmap,
-                int rotationDegrees,
-                boolean scanBarcode,
-                boolean scanText,
-                boolean scanLatinText,
-                boolean recycleBitmap,
-                double sourceQuality,
-                boolean dateFocused
-        ) {
-            this(
-                    bitmap,
-                    rotationDegrees,
-                    scanBarcode,
-                    scanText,
-                    scanLatinText,
-                    recycleBitmap,
-                    sourceQuality,
-                    dateFocused,
-                    false,
-                    0d,
-                    0d,
-                    1d,
-                    1d
-            );
-        }
-
-        FrameVariant(
-                Bitmap bitmap,
-                int rotationDegrees,
-                boolean scanBarcode,
-                boolean scanText,
-                boolean scanLatinText,
-                boolean recycleBitmap,
-                double sourceQuality,
-                boolean dateFocused,
-                boolean datePairSupplement
-        ) {
-            this(
-                    bitmap,
-                    rotationDegrees,
-                    scanBarcode,
-                    scanText,
-                    scanLatinText,
-                    recycleBitmap,
-                    sourceQuality,
-                    dateFocused,
-                    datePairSupplement,
-                    0d,
-                    0d,
-                    1d,
-                    1d
-            );
-        }
-
-        FrameVariant(
-                Bitmap bitmap,
-                int rotationDegrees,
-                boolean scanBarcode,
-                boolean scanText,
-                boolean scanLatinText,
-                boolean recycleBitmap,
-                double sourceQuality,
-                boolean dateFocused,
-                boolean datePairSupplement,
-                double sourceLeft,
-                double sourceTop,
-                double sourceWidth,
-                double sourceHeight
-        ) {
-            this.bitmap = bitmap;
-            this.rotationDegrees = rotationDegrees;
-            this.scanBarcode = scanBarcode;
-            this.scanText = scanText;
-            this.scanLatinText = scanLatinText;
-            this.recycleBitmap = recycleBitmap;
-            this.sourceQuality = sourceQuality;
-            this.dateFocused = dateFocused;
-            this.datePairSupplement = datePairSupplement;
-            this.sourceLeft = sourceLeft;
-            this.sourceTop = sourceTop;
-            this.sourceWidth = sourceWidth;
-            this.sourceHeight = sourceHeight;
-        }
-
-        FrameVariant withSourceQuality(double quality) {
-            return new FrameVariant(
-                    bitmap,
-                    rotationDegrees,
-                    scanBarcode,
-                    scanText,
-                    scanLatinText,
-                    recycleBitmap,
-                    quality,
-                    dateFocused,
-                    datePairSupplement,
-                    sourceLeft,
-                    sourceTop,
-                    sourceWidth,
-                    sourceHeight
-            );
-        }
-    }
-
     private static final class PaddleDateEvidence {
         final String text;
         final String originalText;
@@ -9160,269 +9110,6 @@ public final class DateOcrScanActivity extends ComponentActivity {
             this.root = root;
             this.icon = icon;
             this.status = status;
-        }
-    }
-    private final class RecognitionGuideOverlay extends View {
-        static final int FOCUS_NONE = 0;
-        static final int FOCUS_RUNNING = 1;
-        static final int FOCUS_SUCCESS = 2;
-        static final int FOCUS_FAILED = 3;
-        static final int FOCUS_UNSUPPORTED = 4;
-
-        private final Paint paint = new Paint(Paint.ANTI_ALIAS_FLAG);
-        private List<RecognitionEvidence.Region> evidenceRegions = Collections.emptyList();
-        private int evidenceImageWidth;
-        private int evidenceImageHeight;
-        private List<PaddleTextDetectionEngine.TextRegion> liveTextRegions = Collections.emptyList();
-        private int liveImageWidth;
-        private int liveImageHeight;
-        private long liveVisibleUntilMs;
-        private float focusX;
-        private float focusY;
-        private int focusState;
-        private long focusVisibleUntilMs;
-
-        RecognitionGuideOverlay(ComponentActivity context) {
-            super(context);
-        }
-
-        void showEvidence(List<RecognitionEvidence.Region> regions, int imageWidth, int imageHeight) {
-            evidenceRegions = regions == null
-                    ? Collections.<RecognitionEvidence.Region>emptyList()
-                    : new ArrayList<RecognitionEvidence.Region>(regions);
-            evidenceImageWidth = imageWidth;
-            evidenceImageHeight = imageHeight;
-            invalidate();
-        }
-
-        void showLiveRegions(
-                List<PaddleTextDetectionEngine.TextRegion> regions,
-                int imageWidth,
-                int imageHeight
-        ) {
-            liveTextRegions = regions == null
-                    ? Collections.<PaddleTextDetectionEngine.TextRegion>emptyList()
-                    : new ArrayList<PaddleTextDetectionEngine.TextRegion>(regions);
-            liveImageWidth = imageWidth;
-            liveImageHeight = imageHeight;
-            liveVisibleUntilMs = liveTextRegions.isEmpty()
-                    ? 0L
-                    : SystemClock.uptimeMillis() + 1200L;
-            invalidate();
-            if (liveVisibleUntilMs > 0L) {
-                postInvalidateDelayed(1250L);
-            }
-        }
-
-        void showFocusPoint(float x, float y, int state) {
-            focusX = x;
-            focusY = y;
-            focusState = state;
-            focusVisibleUntilMs = SystemClock.uptimeMillis()
-                    + (state == FOCUS_RUNNING ? 2600L : 1400L);
-            invalidate();
-            postInvalidateDelayed(state == FOCUS_RUNNING ? 2700L : 1500L);
-        }
-
-        @Override
-        protected void onDraw(Canvas canvas) {
-            super.onDraw(canvas);
-            int width = getWidth();
-            int height = getHeight();
-            if (!evidenceRegions.isEmpty() && evidenceImageWidth > 0 && evidenceImageHeight > 0) {
-                drawEvidence(canvas, width, height);
-                return;
-            }
-            RectF frame = new RectF(
-                    width * 0.07f,
-                    height * 0.15f,
-                    width * 0.93f,
-                    height * 0.58f
-            );
-
-            paint.setStyle(Paint.Style.FILL);
-            paint.setColor(Color.argb(86, 0, 0, 0));
-            canvas.drawRect(0, 0, width, frame.top, paint);
-            canvas.drawRect(0, frame.bottom, width, height, paint);
-            canvas.drawRect(0, frame.top, frame.left, frame.bottom, paint);
-            canvas.drawRect(frame.right, frame.top, width, frame.bottom, paint);
-
-            paint.setStyle(Paint.Style.STROKE);
-            paint.setStrokeWidth(dp(1));
-            paint.setColor(Color.argb(178, 255, 255, 255));
-            canvas.drawRoundRect(frame, dp(10), dp(10), paint);
-
-            paint.setStrokeWidth(dp(4));
-            paint.setColor(Color.rgb(126, 231, 164));
-            float corner = dp(30);
-            drawCorner(canvas, frame.left, frame.top, corner, true, true);
-            drawCorner(canvas, frame.right, frame.top, corner, false, true);
-            drawCorner(canvas, frame.left, frame.bottom, corner, true, false);
-            drawCorner(canvas, frame.right, frame.bottom, corner, false, false);
-
-            drawLiveTextRegions(canvas, width, height);
-            drawFocusPoint(canvas);
-        }
-
-        private void drawLiveTextRegions(Canvas canvas, int width, int height) {
-            if (liveTextRegions.isEmpty()
-                    || liveImageWidth <= 0
-                    || liveImageHeight <= 0
-                    || SystemClock.uptimeMillis() > liveVisibleUntilMs) {
-                if (SystemClock.uptimeMillis() > liveVisibleUntilMs) {
-                    liveTextRegions = Collections.emptyList();
-                }
-                return;
-            }
-            float scale = Math.max(
-                    width / (float) liveImageWidth,
-                    height / (float) liveImageHeight
-            );
-            float displayedWidth = liveImageWidth * scale;
-            float displayedHeight = liveImageHeight * scale;
-            float offsetX = (width - displayedWidth) / 2f;
-            float offsetY = (height - displayedHeight) / 2f;
-            RectF firstRect = null;
-            for (PaddleTextDetectionEngine.TextRegion region : liveTextRegions) {
-                RectF rect = new RectF(
-                        offsetX + (float) (region.left * liveImageWidth * scale),
-                        offsetY + (float) (region.top * liveImageHeight * scale),
-                        offsetX + (float) (region.right * liveImageWidth * scale),
-                        offsetY + (float) (region.bottom * liveImageHeight * scale)
-                );
-                if (firstRect == null) {
-                    firstRect = rect;
-                }
-                int color = region.confidence >= 0.62d
-                        ? Color.rgb(91, 232, 145)
-                        : Color.rgb(255, 204, 82);
-                paint.setStyle(Paint.Style.FILL);
-                paint.setColor(Color.argb(24, Color.red(color), Color.green(color), Color.blue(color)));
-                canvas.drawRoundRect(rect, dp(4), dp(4), paint);
-                paint.setStyle(Paint.Style.STROKE);
-                paint.setStrokeWidth(dp(2));
-                paint.setColor(color);
-                canvas.drawRoundRect(rect, dp(4), dp(4), paint);
-            }
-            if (firstRect == null) {
-                return;
-            }
-            String label = "可能文字区 " + liveTextRegions.size();
-            paint.setTypeface(Typeface.DEFAULT_BOLD);
-            paint.setTextSize(sp(13));
-            float labelWidth = paint.measureText(label) + dp(14);
-            float labelLeft = Math.max(
-                    dp(8),
-                    Math.min(firstRect.left, width - labelWidth - dp(8))
-            );
-            float labelTop = Math.max(dp(112), firstRect.top - dp(28));
-            RectF labelRect = new RectF(
-                    labelLeft,
-                    labelTop,
-                    labelLeft + labelWidth,
-                    labelTop + dp(27)
-            );
-            paint.setStyle(Paint.Style.FILL);
-            paint.setColor(Color.argb(224, 20, 28, 24));
-            canvas.drawRoundRect(labelRect, dp(4), dp(4), paint);
-            paint.setColor(Color.WHITE);
-            canvas.drawText(label, labelRect.left + dp(7), labelRect.bottom - dp(7), paint);
-        }
-
-        private void drawFocusPoint(Canvas canvas) {
-            if (focusState == FOCUS_NONE || SystemClock.uptimeMillis() > focusVisibleUntilMs) {
-                focusState = FOCUS_NONE;
-                return;
-            }
-            int color = focusState == FOCUS_SUCCESS
-                    ? Color.rgb(91, 232, 145)
-                    : focusState == FOCUS_FAILED
-                    ? Color.rgb(255, 118, 104)
-                    : focusState == FOCUS_UNSUPPORTED
-                    ? Color.rgb(190, 198, 193)
-                    : Color.rgb(255, 204, 82);
-            float half = dp(28);
-            RectF focusRect = new RectF(
-                    Math.max(dp(8), focusX - half),
-                    Math.max(dp(68), focusY - half),
-                    Math.min(getWidth() - dp(8), focusX + half),
-                    Math.min(getHeight() - dp(8), focusY + half)
-            );
-            paint.setStyle(Paint.Style.STROKE);
-            paint.setStrokeWidth(dp(3));
-            paint.setColor(color);
-            canvas.drawRoundRect(focusRect, dp(6), dp(6), paint);
-            canvas.drawCircle(focusRect.centerX(), focusRect.centerY(), dp(3), paint);
-        }
-
-        private void drawEvidence(Canvas canvas, int width, int height) {
-            float scale = Math.max(
-                    width / (float) evidenceImageWidth,
-                    height / (float) evidenceImageHeight
-            );
-            float displayedWidth = evidenceImageWidth * scale;
-            float displayedHeight = evidenceImageHeight * scale;
-            float offsetX = (width - displayedWidth) / 2f;
-            float offsetY = (height - displayedHeight) / 2f;
-            for (RecognitionEvidence.Region region : evidenceRegions) {
-                RectF rect = new RectF(
-                        offsetX + (float) (region.rect.left * evidenceImageWidth * scale),
-                        offsetY + (float) (region.rect.top * evidenceImageHeight * scale),
-                        offsetX + (float) (region.rect.right * evidenceImageWidth * scale),
-                        offsetY + (float) (region.rect.bottom * evidenceImageHeight * scale)
-                );
-                int color = evidenceColor(region.field);
-                paint.setStyle(Paint.Style.STROKE);
-                paint.setStrokeWidth(dp(3));
-                paint.setColor(color);
-                canvas.drawRoundRect(rect, dp(5), dp(5), paint);
-
-                String label = fieldLabel(region.field) + " · "
-                        + RecognitionEvidence.confidenceLabel(region.confidence);
-                paint.setTextSize(sp(14));
-                paint.setTypeface(Typeface.DEFAULT_BOLD);
-                float labelWidth = paint.measureText(label) + dp(12);
-                float visibleLabelWidth = Math.min(labelWidth, width - dp(12));
-                float labelLeft = Math.max(
-                        dp(6),
-                        Math.min(rect.left, width - dp(6) - visibleLabelWidth)
-                );
-                float labelTop = Math.max(dp(58), rect.top - dp(25));
-                RectF labelRect = new RectF(
-                        labelLeft,
-                        labelTop,
-                        labelLeft + visibleLabelWidth,
-                        labelTop + dp(30)
-                );
-                paint.setStyle(Paint.Style.FILL);
-                paint.setColor(Color.argb(230, 20, 28, 24));
-                canvas.drawRoundRect(labelRect, dp(4), dp(4), paint);
-                paint.setColor(Color.WHITE);
-                canvas.drawText(label, labelRect.left + dp(6), labelRect.bottom - dp(8), paint);
-            }
-        }
-
-        private int evidenceColor(String field) {
-            if (RecognitionEvidence.FIELD_PRODUCT_NAME.equals(field)) {
-                return Color.rgb(91, 232, 145);
-            }
-            if (RecognitionEvidence.FIELD_PRODUCTION_DATE.equals(field)) {
-                return Color.rgb(255, 204, 82);
-            }
-            if (RecognitionEvidence.FIELD_EXPIRY_DATE.equals(field)) {
-                return Color.rgb(103, 183, 255);
-            }
-            if (RecognitionEvidence.FIELD_TEXT_REGION.equals(field)) {
-                return Color.rgb(99, 148, 255);
-            }
-            return Color.rgb(96, 221, 224);
-        }
-
-        private void drawCorner(Canvas canvas, float x, float y, float length, boolean left, boolean top) {
-            float horizontalEnd = left ? x + length : x - length;
-            float verticalEnd = top ? y + length : y - length;
-            canvas.drawLine(x, y, horizontalEnd, y, paint);
-            canvas.drawLine(x, y, x, verticalEnd, paint);
         }
     }
 }

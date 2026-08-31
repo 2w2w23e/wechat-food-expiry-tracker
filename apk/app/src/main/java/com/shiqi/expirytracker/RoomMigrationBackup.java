@@ -166,7 +166,7 @@ final class RoomMigrationBackup {
             List<FoodItem> restoredFoods = candidate.foods();
             boolean saved = forceFailureForQa
                     ? store.saveFoodsForQaForcedFailure(restoredFoods)
-                    : store.saveFoodsForImport(restoredFoods);
+                    : store.saveFoods(restoredFoods);
             if (!saved) {
                 return RestoreResult.failed("恢复写入失败，当前库存未改动");
             }

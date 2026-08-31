@@ -43,7 +43,7 @@ final class InventoryPresentation {
             String nearestExpiry = "";
             int explicitNoExpiryCount = 0;
             for (FoodItem batch : batches) {
-                if (batch.isFinished) {
+                if (InventoryRules.isFinished(batch)) {
                     finishedCount++;
                     continue;
                 }
@@ -71,7 +71,7 @@ final class InventoryPresentation {
 
         FoodItem decrementTarget() {
             for (FoodItem batch : batches) {
-                if (!batch.isFinished && batch.remainingQuantity > 0) {
+                if (!InventoryRules.isFinished(batch) && batch.remainingQuantity > 0) {
                     return batch.copy();
                 }
             }
@@ -216,10 +216,12 @@ final class InventoryPresentation {
     private static final Comparator<FoodItem> BATCH_COMPARATOR = new Comparator<FoodItem>() {
         @Override
         public int compare(FoodItem left, FoodItem right) {
-            if (left.isFinished != right.isFinished) {
-                return left.isFinished ? 1 : -1;
+            boolean leftFinished = InventoryRules.isFinished(left);
+            boolean rightFinished = InventoryRules.isFinished(right);
+            if (leftFinished != rightFinished) {
+                return leftFinished ? 1 : -1;
             }
-            if (left.isFinished) {
+            if (leftFinished) {
                 int finishedCompare = effectiveTimestamp(right).compareTo(effectiveTimestamp(left));
                 if (finishedCompare != 0) {
                     return finishedCompare;

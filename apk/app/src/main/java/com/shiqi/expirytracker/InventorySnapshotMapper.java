@@ -388,7 +388,7 @@ final class InventorySnapshotMapper {
         record.notes = clean(item.notes);
         record.createdAt = clean(item.createdAt);
         record.updatedAt = clean(item.updatedAt);
-        record.status = item.isFinished ? "finished" : "active";
+        record.status = InventoryRules.isFinished(item) ? "finished" : "active";
         record.finishedAt = clean(item.finishedAt);
         record.sortOrder = sortOrder;
         return record;

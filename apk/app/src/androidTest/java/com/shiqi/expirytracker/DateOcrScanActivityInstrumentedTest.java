@@ -25,6 +25,36 @@ import java.lang.reflect.Field;
 @RunWith(AndroidJUnit4.class)
 public final class DateOcrScanActivityInstrumentedTest {
     @Test
+    public void dateOnlyEntryShowsOnePurposeAndManualFallback() {
+        Context context = ApplicationProvider.getApplicationContext();
+        Intent intent = new Intent(context, DateOcrScanActivity.class);
+        intent.putExtra(DateOcrScanActivity.EXTRA_DATE_ONLY_MODE, true);
+        intent.putExtra(
+                DateOcrScanActivity.EXTRA_QA_IMAGE_PATH,
+                new File(context.getCacheDir(), "missing-date-image.jpg").getAbsolutePath()
+        );
+
+        ActivityScenario<DateOcrScanActivity> scenario = ActivityScenario.launch(intent);
+        try {
+            scenario.onActivity(new ActivityScenario.ActivityAction<DateOcrScanActivity>() {
+                @Override
+                public void perform(DateOcrScanActivity activity) {
+                    View root = activity.getWindow().getDecorView();
+                    assertNotNull(findText(root, "日期"));
+                    assertNotNull(findText(root, "返回手动填写"));
+                    assertNotVisible(root, "自动");
+                    assertNotVisible(root, "日期特写");
+                    assertNotVisible(root, "条码");
+                    assertNotVisible(root, "名称");
+                    assertNotVisible(root, "优先识别日期");
+                }
+            });
+        } finally {
+            scenario.close();
+        }
+    }
+
+    @Test
     public void partialRecognitionNameIsEditableAndMissingDateCanContinue() {
         Context context = ApplicationProvider.getApplicationContext();
         Intent intent = new Intent(context, DateOcrScanActivity.class);
@@ -150,6 +180,11 @@ public final class DateOcrScanActivityInstrumentedTest {
             }
         }
         return null;
+    }
+
+    private static void assertNotVisible(View root, String value) {
+        TextView found = findText(root, value);
+        assertTrue(found == null || !found.isShown());
     }
 
     private static EditText findEditText(View root) {

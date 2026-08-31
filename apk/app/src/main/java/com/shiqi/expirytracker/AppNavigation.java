@@ -36,6 +36,6 @@ final class AppNavigation {
         if (destination == SETTINGS) {
             return "设置";
         }
-        return "总览";
+        return "今日";
     }
 }

@@ -181,6 +181,47 @@ public final class CameraFramePipelineTest {
             }
         });
 
+        test("RecognitionWorkSession invalidates stale callbacks on reset and rescan", new TestCase() {
+            @Override
+            public void run() {
+                RecognitionWorkSession session = new RecognitionWorkSession();
+                int initial = session.snapshot().generation;
+
+                RecognitionWorkSession.State reset = session.resetAll();
+                assertEquals(initial + 1, reset.generation);
+                assertEquals(RecognitionWorkSession.Phase.SCANNING, reset.phase);
+                assertFalse(reset.preserveEvidence, "full reset must clear evidence ownership");
+                assertFalse(session.accepts(initial), "callbacks from the old generation must stop");
+
+                RecognitionWorkSession.State rescan = session.restartPreservingEvidence();
+                assertEquals(reset.generation + 1, rescan.generation);
+                assertTrue(rescan.preserveEvidence, "directed rescan must retain accepted evidence");
+                assertTrue(session.accepts(rescan.generation), "new generation should accept callbacks");
+            }
+        });
+
+        test("RecognitionWorkSession freezes confirmation and closes permanently", new TestCase() {
+            @Override
+            public void run() {
+                RecognitionWorkSession session = new RecognitionWorkSession();
+                int active = session.resetAll().generation;
+
+                RecognitionWorkSession.State confirming = session.showConfirmation(true);
+                assertEquals(active + 1, confirming.generation);
+                assertEquals(RecognitionWorkSession.Phase.CONFIRMING, confirming.phase);
+                assertFalse(session.accepts(active), "confirmation must reject active OCR callbacks");
+
+                RecognitionWorkSession.State resumed = session.resumeScanner();
+                assertEquals(RecognitionWorkSession.Phase.SCANNING, resumed.phase);
+                assertTrue(session.accepts(resumed.generation), "scanner can reuse preserved evidence");
+
+                RecognitionWorkSession.State closed = session.close();
+                assertEquals(RecognitionWorkSession.Phase.CLOSED, closed.phase);
+                assertFalse(session.accepts(closed.generation), "closed Activity must accept no callback");
+                assertEquals(RecognitionWorkSession.Phase.CLOSED, session.resumeScanner().phase);
+            }
+        });
+
         System.out.println("Camera frame pipeline tests: "
                 + passed + " passed, " + failed + " failed.");
         if (failed > 0) {

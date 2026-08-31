@@ -88,10 +88,6 @@ final class FoodStore {
         return saveFoodsInternal(foods, false);
     }
 
-    boolean saveFoodsForImport(List<FoodItem> foods) {
-        return saveFoodsInternal(foods, false);
-    }
-
     boolean saveFoodsForQaForcedFailure(List<FoodItem> foods) {
         return saveFoodsInternal(foods, true);
     }

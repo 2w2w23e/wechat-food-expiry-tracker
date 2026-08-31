@@ -56,7 +56,7 @@ final class FoodData {
             new Option(DateRules.STATUS_TODAY, "今日到期"),
             new Option(DateRules.STATUS_SOON, "即将到期"),
             new Option(DateRules.STATUS_NORMAL, "正常"),
-            new Option(DateRules.STATUS_UNKNOWN, "暂无到期日")
+            new Option(DateRules.STATUS_UNKNOWN, "日期待补充")
     );
 
     private static boolean pinyinAttempted = false;
@@ -158,7 +158,7 @@ final class FoodData {
         if (DateRules.STATUS_FINISHED.equals(value)) {
             return "已用完";
         }
-        return "暂无到期日";
+        return "日期待补充";
     }
 
     static List<String> statusFilterValues() {

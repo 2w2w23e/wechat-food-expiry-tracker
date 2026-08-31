@@ -1,5 +1,6 @@
 package com.shiqi.expirytracker;
 
+import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertNotNull;
 import static org.junit.Assert.assertTrue;
@@ -13,6 +14,7 @@ import android.net.Uri;
 import android.provider.MediaStore;
 import android.view.View;
 import android.view.ViewGroup;
+import android.widget.EditText;
 import android.widget.RadioButton;
 import android.widget.TextView;
 
@@ -27,8 +29,11 @@ import org.junit.Test;
 import org.junit.runner.RunWith;
 
 import java.io.OutputStream;
+import java.lang.reflect.Field;
 import java.lang.reflect.Method;
+import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.List;
 
 @RunWith(AndroidJUnit4.class)
 public final class MainActivityBusinessPagesInstrumentedTest {
@@ -45,6 +50,7 @@ public final class MainActivityBusinessPagesInstrumentedTest {
         );
         assertTrue(preferences.edit().clear().commit());
         RecognitionDebugStore.resetForTests(context);
+        RoomMigrationBackup.deleteBackupsForTests(context);
     }
 
     @After
@@ -52,6 +58,7 @@ public final class MainActivityBusinessPagesInstrumentedTest {
         RoomInventoryStore.resetForTests(context);
         preferences.edit().clear().commit();
         RecognitionDebugStore.resetForTests(context);
+        RoomMigrationBackup.deleteBackupsForTests(context);
     }
 
     @Test
@@ -64,6 +71,7 @@ public final class MainActivityBusinessPagesInstrumentedTest {
         assertTrue(store.saveFoods(Arrays.asList(first, second)));
 
         ActivityScenario<MainActivity> scenario = ActivityScenario.launch(MainActivity.class);
+        assertTrue(waitForStartup(scenario, 5000L));
         try {
             scenario.onActivity(new ActivityScenario.ActivityAction<MainActivity>() {
                 @Override
@@ -100,7 +108,7 @@ public final class MainActivityBusinessPagesInstrumentedTest {
                 @Override
                 public void perform(MainActivity activity) {
                     activity.onBackPressed();
-                    assertNotNull(findText(activity.getWindow().getDecorView(), "总览"));
+                    assertNotNull(findText(activity.getWindow().getDecorView(), "今天要处理"));
                 }
             });
         } finally {
@@ -112,6 +120,7 @@ public final class MainActivityBusinessPagesInstrumentedTest {
     public void verifiedOfflineBarcodeFillsEditorOnlyAfterUserConfirms()
             throws Exception {
         ActivityScenario<MainActivity> scenario = ActivityScenario.launch(MainActivity.class);
+        assertTrue(waitForStartup(scenario, 5000L));
         try {
             scenario.onActivity(new ActivityScenario.ActivityAction<MainActivity>() {
                 @Override
@@ -138,6 +147,7 @@ public final class MainActivityBusinessPagesInstrumentedTest {
     @Test
     public void settingsBusinessPagesReturnToTheirParentWithoutLosingNavigation() {
         ActivityScenario<MainActivity> scenario = ActivityScenario.launch(MainActivity.class);
+        assertTrue(waitForStartup(scenario, 5000L));
         try {
             scenario.onActivity(new ActivityScenario.ActivityAction<MainActivity>() {
                 @Override
@@ -173,6 +183,7 @@ public final class MainActivityBusinessPagesInstrumentedTest {
     @Test
     public void incompleteRecognitionStillOpensManualEditor() {
         ActivityScenario<MainActivity> scenario = ActivityScenario.launch(MainActivity.class);
+        assertTrue(waitForStartup(scenario, 5000L));
         try {
             scenario.onActivity(new ActivityScenario.ActivityAction<MainActivity>() {
                 @Override
@@ -189,7 +200,158 @@ public final class MainActivityBusinessPagesInstrumentedTest {
                     }
                     View root = activity.getWindow().getDecorView();
                     assertNotNull(findText(root, "新增商品"));
-                    assertNotNull(findText(root, "基本信息"));
+                    assertNotNull(findText(root, "商品"));
+                    assertNotNull(findText(root, "日期"));
+                    assertNotNull(findText(root, "暂时不知道完整日期，稍后补充"));
+                }
+            });
+        } finally {
+            scenario.close();
+        }
+    }
+
+    @Test
+    public void manualEditorShowsAllBlockingErrorsTogether() {
+        ActivityScenario<MainActivity> scenario = ActivityScenario.launch(MainActivity.class);
+        assertTrue(waitForStartup(scenario, 5000L));
+        try {
+            scenario.onActivity(new ActivityScenario.ActivityAction<MainActivity>() {
+                @Override
+                public void perform(MainActivity activity) {
+                    clickText(activity, "新增");
+                    clickText(activity, "确认新增");
+
+                    View root = activity.getWindow().getDecorView();
+                    EditText name = findEditTextWithHint(root, "商品名称");
+                    EditText productionDate = findEditTextWithHint(root, "选择生产日期");
+                    EditText shelfLife = findEditTextWithHint(root, "保质期数值");
+                    assertNotNull(name);
+                    assertNotNull(productionDate);
+                    assertNotNull(shelfLife);
+                    assertNotNull(name.getError());
+                    assertNotNull(productionDate.getError());
+                    assertNotNull(shelfLife.getError());
+                }
+            });
+        } finally {
+            scenario.close();
+        }
+    }
+
+    @Test
+    public void manualEditorCanSaveUnknownDateWithoutMarkingNoExpiry() {
+        ActivityScenario<MainActivity> scenario = ActivityScenario.launch(MainActivity.class);
+        assertTrue(waitForStartup(scenario, 5000L));
+        try {
+            scenario.onActivity(new ActivityScenario.ActivityAction<MainActivity>() {
+                @Override
+                public void perform(MainActivity activity) {
+                    clickText(activity, "新增");
+                    View root = activity.getWindow().getDecorView();
+                    EditText name = findEditTextWithHint(root, "商品名称");
+                    assertNotNull(name);
+                    name.setText("日期待补充测试商品");
+                    clickText(activity, "暂时不知道完整日期，稍后补充");
+                    clickText(activity, "确认新增");
+                }
+            });
+
+            List<FoodItem> saved = new FoodStore(context).loadFoods();
+            assertEquals(1, saved.size());
+            assertEquals("unknown", saved.get(0).dateSource);
+            assertEquals("", saved.get(0).expiryDate);
+            assertFalse("none".equals(saved.get(0).dateSource));
+        } finally {
+            scenario.close();
+        }
+    }
+
+    @Test
+    public void manualEditorDraftSurvivesActivityRecreation() {
+        ActivityScenario<MainActivity> scenario = ActivityScenario.launch(MainActivity.class);
+        assertTrue(waitForStartup(scenario, 5000L));
+        try {
+            scenario.onActivity(new ActivityScenario.ActivityAction<MainActivity>() {
+                @Override
+                public void perform(MainActivity activity) {
+                    clickText(activity, "新增");
+                    View root = activity.getWindow().getDecorView();
+                    EditText name = findEditTextWithHint(root, "商品名称");
+                    EditText barcode = findEditTextWithHint(root, "商品条码（可选）");
+                    assertNotNull(name);
+                    assertNotNull(barcode);
+                    name.setText("不会丢失的草莓酸奶");
+                    barcode.setText("6901234567892");
+                    clickText(activity, "暂时不知道完整日期，稍后补充");
+                }
+            });
+
+            scenario.recreate();
+            assertTrue(waitForStartup(scenario, 5000L));
+            scenario.onActivity(new ActivityScenario.ActivityAction<MainActivity>() {
+                @Override
+                public void perform(MainActivity activity) {
+                    View root = activity.getWindow().getDecorView();
+                    assertNotNull(findText(root, "新增商品"));
+                    EditText name = findEditTextWithHint(root, "商品名称");
+                    EditText barcode = findEditTextWithHint(root, "商品条码（可选）");
+                    assertNotNull(name);
+                    assertNotNull(barcode);
+                    assertEquals("不会丢失的草莓酸奶", name.getText().toString());
+                    assertEquals("6901234567892", barcode.getText().toString());
+                    TextView pending = findText(root, "暂时不知道完整日期，稍后补充");
+                    assertNotNull(pending);
+                    assertTrue(((android.widget.CheckBox) pending).isChecked());
+                }
+            });
+        } finally {
+            scenario.close();
+        }
+    }
+
+    @Test
+    public void manualInventoryJourneyAddsEditsDecrementsAndDeletes() {
+        ActivityScenario<MainActivity> scenario = ActivityScenario.launch(MainActivity.class);
+        assertTrue(waitForStartup(scenario, 5000L));
+        try {
+            scenario.onActivity(new ActivityScenario.ActivityAction<MainActivity>() {
+                @Override
+                public void perform(MainActivity activity) {
+                    clickText(activity, "新增");
+                    EditText name = findEditTextWithHint(
+                            activity.getWindow().getDecorView(),
+                            "商品名称"
+                    );
+                    assertNotNull(name);
+                    name.setText("全流程测试商品");
+                    clickText(activity, "暂时不知道完整日期，稍后补充");
+                    clickText(activity, "确认新增");
+
+                    clickText(activity, "全流程测试商品");
+                    clickText(activity, "编辑");
+                    EditText editedName = findEditTextWithHint(
+                            activity.getWindow().getDecorView(),
+                            "商品名称"
+                    );
+                    assertNotNull(editedName);
+                    editedName.setText("全流程测试商品-已修改");
+                    clickText(activity, "保存修改");
+                    assertNotNull(findText(
+                            activity.getWindow().getDecorView(),
+                            "全流程测试商品-已修改"
+                    ));
+
+                    clickContentDescription(
+                            activity,
+                            "全流程测试商品-已修改当前批次减少 1"
+                    );
+                    List<FoodItem> afterDecrease = new FoodStore(context).loadFoods();
+                    assertEquals(1, afterDecrease.size());
+                    assertEquals(0d, afterDecrease.get(0).remainingQuantity, 0d);
+                    assertTrue(afterDecrease.get(0).isFinished);
+
+                    invokeDeleteFood(activity, afterDecrease.get(0));
+                    assertTrue(new FoodStore(context).loadFoods().isEmpty());
                 }
             });
         } finally {
@@ -200,6 +362,7 @@ public final class MainActivityBusinessPagesInstrumentedTest {
     @Test
     public void recognitionSettingsExposeUserControlledDebugCapture() throws Exception {
         ActivityScenario<MainActivity> scenario = ActivityScenario.launch(MainActivity.class);
+        assertTrue(waitForStartup(scenario, 5000L));
         try {
             scenario.onActivity(new ActivityScenario.ActivityAction<MainActivity>() {
                 @Override
@@ -235,6 +398,7 @@ public final class MainActivityBusinessPagesInstrumentedTest {
         );
 
         ActivityScenario<MainActivity> scenario = ActivityScenario.launch(MainActivity.class);
+        assertTrue(waitForStartup(scenario, 5000L));
         try {
             scenario.onActivity(new ActivityScenario.ActivityAction<MainActivity>() {
                 @Override
@@ -258,6 +422,132 @@ public final class MainActivityBusinessPagesInstrumentedTest {
         }
     }
 
+    @Test
+    public void importSaveCreatesBackupAndFailedOverwriteKeepsCurrentInventory()
+            throws Exception {
+        FoodItem original = food("original-batch", "profile-import", "\u539f\u5e93\u5b58\u5546\u54c1");
+        assertTrue(new FoodStore(context).saveFoods(Arrays.asList(original)));
+
+        FoodItem replacement = food("replacement-batch", "profile-import", "\u8986\u76d6\u540e\u5546\u54c1");
+        ActivityScenario<MainActivity> firstScenario = ActivityScenario.launch(MainActivity.class);
+        assertTrue(waitForStartup(firstScenario, 5000L));
+        try {
+            assertTrue(invokeSaveFoodsForImport(
+                    firstScenario,
+                    Arrays.asList(replacement),
+                    false
+            ));
+        } finally {
+            firstScenario.close();
+        }
+
+        List<FoodItem> afterSuccess = new FoodStore(context).loadFoods();
+        assertEquals(1, afterSuccess.size());
+        assertEquals("\u8986\u76d6\u540e\u5546\u54c1", afterSuccess.get(0).name);
+        RoomMigrationBackup.BackupCatalog firstCatalog =
+                RoomMigrationBackup.verifiedCatalog(
+                        context,
+                        FoodStore.CURRENT_SCHEMA_VERSION
+                );
+        assertTrue(containsFoodName(firstCatalog, "\u539f\u5e93\u5b58\u5546\u54c1"));
+
+        FoodItem rejected = food("rejected-batch", "profile-import", "\u4e0d\u5e94\u5199\u5165\u5546\u54c1");
+        ActivityScenario<MainActivity> secondScenario = ActivityScenario.launch(MainActivity.class);
+        assertTrue(waitForStartup(secondScenario, 5000L));
+        try {
+            assertFalse(invokeSaveFoodsForImport(
+                    secondScenario,
+                    Arrays.asList(rejected),
+                    true
+            ));
+        } finally {
+            secondScenario.close();
+        }
+
+        List<FoodItem> afterFailure = new FoodStore(context).loadFoods();
+        assertEquals(1, afterFailure.size());
+        assertEquals("\u8986\u76d6\u540e\u5546\u54c1", afterFailure.get(0).name);
+        RoomMigrationBackup.BackupCatalog finalCatalog =
+                RoomMigrationBackup.verifiedCatalog(
+                        context,
+                        FoodStore.CURRENT_SCHEMA_VERSION
+                );
+        assertTrue(containsFoodName(finalCatalog, "\u8986\u76d6\u540e\u5546\u54c1"));
+    }
+
+    private boolean waitForStartup(
+            final ActivityScenario<MainActivity> scenario,
+            long timeoutMs
+    ) {
+        long deadline = System.currentTimeMillis() + timeoutMs;
+        while (System.currentTimeMillis() < deadline) {
+            final boolean[] complete = new boolean[] { false };
+            scenario.onActivity(new ActivityScenario.ActivityAction<MainActivity>() {
+                @Override
+                public void perform(MainActivity activity) {
+                    complete[0] = activity.startupCompleteForTests();
+                }
+            });
+            if (complete[0]) {
+                return true;
+            }
+            try {
+                Thread.sleep(50L);
+            } catch (InterruptedException error) {
+                Thread.currentThread().interrupt();
+                return false;
+            }
+        }
+        return false;
+    }
+
+    private boolean invokeSaveFoodsForImport(
+            final ActivityScenario<MainActivity> scenario,
+            final List<FoodItem> foods,
+            final boolean forceFailure
+    ) {
+        final boolean[] result = new boolean[] { false };
+        scenario.onActivity(new ActivityScenario.ActivityAction<MainActivity>() {
+            @Override
+            public void perform(MainActivity activity) {
+                try {
+                    if (forceFailure) {
+                        Field field = MainActivity.class.getDeclaredField(
+                                "qaForceNextImportSaveFailure"
+                        );
+                        field.setAccessible(true);
+                        field.setBoolean(activity, true);
+                    }
+                    Method method = MainActivity.class.getDeclaredMethod(
+                            "saveFoodsForImport",
+                            List.class
+                    );
+                    method.setAccessible(true);
+                    result[0] = ((Boolean) method.invoke(
+                            activity,
+                            new ArrayList<FoodItem>(foods)
+                    )).booleanValue();
+                } catch (Exception error) {
+                    throw new AssertionError("Could not invoke import save flow.", error);
+                }
+            }
+        });
+        return result[0];
+    }
+
+    private boolean containsFoodName(
+            RoomMigrationBackup.BackupCatalog catalog,
+            String name
+    ) {
+        for (RoomMigrationBackup.BackupCandidate candidate : catalog.candidates) {
+            for (FoodItem food : candidate.foods()) {
+                if (name.equals(food.name)) {
+                    return true;
+                }
+            }
+        }
+        return false;
+    }
     private boolean waitForText(
             final ActivityScenario<MainActivity> scenario,
             final String value,
@@ -355,6 +645,19 @@ public final class MainActivityBusinessPagesInstrumentedTest {
         }
     }
 
+    private static void invokeDeleteFood(MainActivity activity, FoodItem food) {
+        try {
+            Method method = MainActivity.class.getDeclaredMethod(
+                    "deleteFood",
+                    FoodItem.class
+            );
+            method.setAccessible(true);
+            method.invoke(activity, food);
+        } catch (Exception error) {
+            throw new AssertionError("Could not invoke confirmed delete flow.", error);
+        }
+    }
+
     private static void clickText(MainActivity activity, String value) {
         TextView text = findText(activity.getWindow().getDecorView(), value);
         assertNotNull(text);
@@ -365,6 +668,12 @@ public final class MainActivityBusinessPagesInstrumentedTest {
         }
         assertNotNull(clickable);
         clickable.performClick();
+    }
+
+    private static void clickContentDescription(MainActivity activity, String value) {
+        View view = findContentDescription(activity.getWindow().getDecorView(), value);
+        assertNotNull(view);
+        view.performClick();
     }
 
     private static TextView findText(View root, String value) {
@@ -393,6 +702,41 @@ public final class MainActivityBusinessPagesInstrumentedTest {
             ViewGroup group = (ViewGroup) root;
             for (int index = 0; index < group.getChildCount(); index++) {
                 TextView found = findTextStartingWith(group.getChildAt(index), prefix);
+                if (found != null) {
+                    return found;
+                }
+            }
+        }
+        return null;
+    }
+
+    private static View findContentDescription(View root, String value) {
+        if (root != null
+                && root.getContentDescription() != null
+                && value.contentEquals(root.getContentDescription())) {
+            return root;
+        }
+        if (root instanceof ViewGroup) {
+            ViewGroup group = (ViewGroup) root;
+            for (int index = 0; index < group.getChildCount(); index++) {
+                View found = findContentDescription(group.getChildAt(index), value);
+                if (found != null) {
+                    return found;
+                }
+            }
+        }
+        return null;
+    }
+
+    private static EditText findEditTextWithHint(View root, String hint) {
+        if (root instanceof EditText
+                && hint.contentEquals(((EditText) root).getHint())) {
+            return (EditText) root;
+        }
+        if (root instanceof ViewGroup) {
+            ViewGroup group = (ViewGroup) root;
+            for (int index = 0; index < group.getChildCount(); index++) {
+                EditText found = findEditTextWithHint(group.getChildAt(index), hint);
                 if (found != null) {
                     return found;
                 }
