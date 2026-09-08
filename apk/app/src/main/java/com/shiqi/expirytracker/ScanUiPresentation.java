@@ -45,6 +45,16 @@ final class ScanUiPresentation {
         }
     }
 
+    static final class Status {
+        final String badge;
+        final String message;
+
+        Status(String badge, String message) {
+            this.badge = badge;
+            this.message = message;
+        }
+    }
+
     private ScanUiPresentation() {
     }
 
@@ -186,6 +196,67 @@ final class ScanUiPresentation {
             return "已看到画面，正在寻找清晰文字";
         }
         return frame.length() > 0 ? stripFrameCounters(frame) : "对准包装文字并保持稳定";
+    }
+
+    static Status recognitionStatus(
+            boolean videoAnalyzing,
+            boolean dateOnlyEntry,
+            boolean stableDate,
+            boolean dateConflict,
+            boolean sawRawText,
+            boolean productSelected,
+            boolean stableProductName,
+            boolean stableBarcode,
+            int rankedProductCount
+    ) {
+        if (videoAnalyzing) {
+            return new Status("分析中", "正在挑选清晰画面并合并识别字段。");
+        }
+        if (dateOnlyEntry) {
+            if (stableDate) {
+                return new Status("日期已识别", "结果已跨帧稳定，请核对日期含义后填入。");
+            }
+            if (dateConflict) {
+                return new Status("需继续确认", "看到多个日期，请保持画面稳定或只对准其中一处。");
+            }
+            if (sawRawText) {
+                return new Status("正在确认日期", "已看到文字，继续保持稳定以确认日期。");
+            }
+            return new Status("识别日期", "把生产日期、保质期或有效期放入识别框。");
+        }
+        if (productSelected) {
+            return new Status("已选择", "已选择商品名候选，可继续识别日期或直接填入表单。");
+        }
+        if (stableProductName && !stableBarcode && !stableDate) {
+            return new Status("名称较稳", "中文商品名已多帧重复出现，请核对后使用。");
+        }
+        if (stableBarcode && stableDate) {
+            return new Status("结果较稳", "条码和日期已多帧重复出现，请核对后使用。");
+        }
+        if (stableBarcode) {
+            return new Status("条码已识别", "已识别商品码，可继续寻找中文商品名和日期。");
+        }
+        if (stableDate) {
+            return new Status("日期较稳", "日期已多帧重复出现，请核对后使用。");
+        }
+        if (rankedProductCount > 0) {
+            return new Status(
+                    "请核对",
+                    rankedProductCount == 1
+                            ? "找到一个高可信商品名，请核对后使用。"
+                            : "找到两个高可信商品名，请选择更符合包装的一项。"
+            );
+        }
+        if (dateConflict) {
+            return new Status("需确认", "出现多个日期候选，可继续保持清晰后再核对。");
+        }
+        if (sawRawText) {
+            return new Status("识别中", "已看到包装文字，继续保持稳定以提高候选可靠度。");
+        }
+        return new Status(
+                "识别中",
+                "把条码、生产日期或保质期放入识别框，系统会自动合并结果。"
+        );
     }
 
     private static String stripFrameCounters(String value) {

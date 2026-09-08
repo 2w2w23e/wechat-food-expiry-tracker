@@ -2476,7 +2476,10 @@ public final class DateOcrScanActivity extends ComponentActivity {
         String packagingName = selectedPackagingName.length() > 0
                 ? selectedPackagingName
                 : snapshot.bestPackagingNameForConfirmation();
-        String productName = productNameForResult(packagingName, info);
+        // A confirmed edit is user input, not another OCR candidate to normalize or replace.
+        String productName = selectedPackagingName.length() > 0
+                ? FoodItem.cleanText(selectedPackagingName)
+                : productNameForResult(packagingName, info);
         long elapsedMs = recognitionElapsedMs();
         String shelfLifeValue = dateDraft.shelfLifeValue == null
                 ? ""
@@ -6124,11 +6127,7 @@ public final class DateOcrScanActivity extends ComponentActivity {
 
     private void clearSessionKeyframes() {
         synchronized (sessionKeyframes) {
-            for (SessionKeyframe keyframe : sessionKeyframes) {
-                if (keyframe.bitmap != null && !keyframe.bitmap.isRecycled()) {
-                    keyframe.bitmap.recycle();
-                }
-            }
+            // UI drawables and in-flight reviews may still reference these shared bitmaps.
             sessionKeyframes.clear();
             frameSelector.clear();
             if (incompleteDateReviewFrame != null && !incompleteDateReviewFrame.isRecycled()) {
@@ -7614,30 +7613,22 @@ public final class DateOcrScanActivity extends ComponentActivity {
 
     private void offerSessionKeyframe(SessionKeyframe incoming) {
         synchronized (sessionKeyframes) {
-            if (!frameSelector.offer(incoming.selectorCandidate)) {
+            if (incoming.primaryRegion() == null || !frameSelector.offer(incoming.selectorCandidate)) {
                 incoming.bitmap.recycle();
                 return;
             }
             sessionKeyframes.add(incoming);
-            final List<RecognitionFrameSelector.FrameCandidate> selected = frameSelector.selectedFrames();
             for (int index = sessionKeyframes.size() - 1; index >= 0; index--) {
                 SessionKeyframe existing = sessionKeyframes.get(index);
-                if (!containsSelectedFrame(selected, existing.selectorCandidate.frameId)) {
+                if (!frameSelector.isSelected(existing.selectorCandidate.frameId)) {
                     sessionKeyframes.remove(index);
-                    existing.bitmap.recycle();
+                    // Drop the cache reference; GC releases pixels after the last reader exits.
                 }
             }
             Collections.sort(sessionKeyframes, new Comparator<SessionKeyframe>() {
                 @Override
                 public int compare(SessionKeyframe left, SessionKeyframe right) {
-                    int fieldOrder = Integer.compare(
-                            keyframeFieldOrder(left.primaryRegion().field),
-                            keyframeFieldOrder(right.primaryRegion().field)
-                    );
-                    if (fieldOrder != 0) {
-                        return fieldOrder;
-                    }
-                    return Double.compare(right.score(), left.score());
+                    return RecognitionKeyframePolicy.compare(left.evidence, right.evidence);
                 }
             });
         }
@@ -7650,81 +7641,14 @@ public final class DateOcrScanActivity extends ComponentActivity {
         }
     }
 
-    private boolean containsSelectedFrame(
-            List<RecognitionFrameSelector.FrameCandidate> selected,
-            String frameId
-    ) {
-        return selectedFrameIndex(selected, frameId) >= 0;
-    }
-
-    private int selectedFrameIndex(
-            List<RecognitionFrameSelector.FrameCandidate> selected,
-            String frameId
-    ) {
-        for (int index = 0; index < selected.size(); index++) {
-            if (selected.get(index).frameId.equals(frameId)) {
-                return index;
-            }
-        }
-        return Integer.MAX_VALUE;
-    }
-
     private int evidenceMask(List<RecognitionEvidence.Region> regions) {
-        int mask = RecognitionFrameSelector.EVIDENCE_NONE;
-        for (RecognitionEvidence.Region region : regions) {
-            if (RecognitionEvidence.FIELD_PRODUCT_NAME.equals(region.field)) {
-                mask |= RecognitionFrameSelector.EVIDENCE_PRODUCT_NAME;
-            } else if (RecognitionEvidence.FIELD_PRODUCTION_DATE.equals(region.field)) {
-                mask |= RecognitionFrameSelector.EVIDENCE_PRODUCTION_DATE;
-            } else if (RecognitionEvidence.FIELD_EXPIRY_DATE.equals(region.field)) {
-                mask |= RecognitionFrameSelector.EVIDENCE_EXPIRY_DATE;
-            } else if (RecognitionEvidence.FIELD_BARCODE.equals(region.field)) {
-                mask |= RecognitionFrameSelector.EVIDENCE_BARCODE;
-            }
-        }
-        return mask;
+        return RecognitionKeyframePolicy.evidenceMask(regions);
     }
 
     private int primaryEvidence(List<RecognitionEvidence.Region> regions) {
-        RecognitionEvidence.Region strongest = null;
-        for (RecognitionEvidence.Region region : regions) {
-            if (RecognitionEvidence.FIELD_PRODUCT_NAME.equals(region.field)) {
-                return RecognitionFrameSelector.EVIDENCE_PRODUCT_NAME;
-            }
-            if (strongest == null || region.confidence > strongest.confidence) {
-                strongest = region;
-            }
-        }
-        if (strongest == null) {
-            return RecognitionFrameSelector.EVIDENCE_NONE;
-        }
-        if (RecognitionEvidence.FIELD_PRODUCTION_DATE.equals(strongest.field)) {
-            return RecognitionFrameSelector.EVIDENCE_PRODUCTION_DATE;
-        }
-        if (RecognitionEvidence.FIELD_EXPIRY_DATE.equals(strongest.field)) {
-            return RecognitionFrameSelector.EVIDENCE_EXPIRY_DATE;
-        }
-        if (RecognitionEvidence.FIELD_BARCODE.equals(strongest.field)) {
-            return RecognitionFrameSelector.EVIDENCE_BARCODE;
-        }
-        return RecognitionFrameSelector.EVIDENCE_NONE;
+        return RecognitionKeyframePolicy.primaryEvidence(regions);
     }
 
-    private int keyframeFieldOrder(String field) {
-        if (RecognitionEvidence.FIELD_PRODUCT_NAME.equals(field)) {
-            return 0;
-        }
-        if (RecognitionEvidence.FIELD_PRODUCTION_DATE.equals(field)) {
-            return 1;
-        }
-        if (RecognitionEvidence.FIELD_EXPIRY_DATE.equals(field)) {
-            return 2;
-        }
-        if (RecognitionEvidence.FIELD_TEXT_REGION.equals(field)) {
-            return 3;
-        }
-        return 4;
-    }
     private void renderKeyframesAsync() {
         runOnUiThread(new Runnable() {
             @Override
@@ -8476,66 +8400,25 @@ public final class DateOcrScanActivity extends ComponentActivity {
     }
 
     private void updateStatus(UnifiedRecognitionStabilizer.Snapshot snapshot) {
-        if (videoReplayActive && videoExpectedFrames > 0 && videoAnalyzedFrames < videoExpectedFrames) {
-            statusBadge.setText("分析中");
-            statusText.setText("正在挑选清晰画面并合并识别字段。");
-            return;
-        }
-        if (dateOnlyEntryMode) {
-            if (snapshot != null && snapshot.hasStableDateCandidate()) {
-                statusBadge.setText("日期已识别");
-                statusText.setText("结果已跨帧稳定，请核对日期含义后填入。");
-            } else if (snapshot != null
-                    && snapshot.latestDateVote != null
-                    && snapshot.latestDateVote.hasConflict) {
-                statusBadge.setText("需继续确认");
-                statusText.setText("看到多个日期，请保持画面稳定或只对准其中一处。");
-            } else if (latestRawText.length() > 0) {
-                statusBadge.setText("正在确认日期");
-                statusText.setText("已看到文字，继续保持稳定以确认日期。");
-            } else {
-                statusBadge.setText("识别日期");
-                statusText.setText("把生产日期、保质期或有效期放入识别框。");
-            }
-            return;
-        }
-        if (selectedPackagingName.length() > 0) {
-            statusBadge.setText("已选择");
-            statusText.setText("已选择商品名候选，可继续识别日期或直接填入表单。");
-            return;
-        }
-        if (snapshot != null
-                && snapshot.hasStablePackagingName()
-                && !snapshot.hasStableBarcode()
-                && !snapshot.hasStableDateCandidate()) {
-            statusBadge.setText("名称较稳");
-            statusText.setText("中文商品名已多帧重复出现，请核对后使用。");
-            return;
-        }
-        if (snapshot.hasStableBarcode() && snapshot.hasStableDateCandidate()) {
-            statusBadge.setText("结果较稳");
-            statusText.setText("条码和日期已多帧重复出现，请核对后使用。");
-        } else if (snapshot.hasStableBarcode()) {
-            statusBadge.setText("条码已识别");
-            statusText.setText("已识别商品码，可继续寻找中文商品名和日期。");
-        } else if (snapshot.hasStableDateCandidate()) {
-            statusBadge.setText("日期较稳");
-            statusText.setText("日期已多帧重复出现，请核对后使用。");
-        } else if (!snapshot.rankedPackagingCandidates.isEmpty()) {
-            statusBadge.setText("请核对");
-            statusText.setText(snapshot.rankedPackagingCandidates.size() == 1
-                    ? "找到一个高可信商品名，请核对后使用。"
-                    : "找到两个高可信商品名，请选择更符合包装的一项。");
-        } else if (snapshot.latestDateVote != null && snapshot.latestDateVote.hasConflict) {
-            statusBadge.setText("需确认");
-            statusText.setText("出现多个日期候选，可继续保持清晰后再核对。");
-        } else if (latestRawText.length() > 0) {
-            statusBadge.setText("识别中");
-            statusText.setText("已看到包装文字，继续保持稳定以提高候选可靠度。");
-        } else {
-            statusBadge.setText("识别中");
-            statusText.setText("把条码、生产日期或保质期放入识别框，系统会自动合并结果。");
-        }
+        boolean stableDate = snapshot != null && snapshot.hasStableDateCandidate();
+        boolean dateConflict = snapshot != null
+                && ((snapshot.latestDateVote != null && snapshot.latestDateVote.hasConflict)
+                || (snapshot.stableDateVote != null && snapshot.stableDateVote.hasConflict));
+        ScanUiPresentation.Status status = ScanUiPresentation.recognitionStatus(
+                videoReplayActive
+                        && videoExpectedFrames > 0
+                        && videoAnalyzedFrames < videoExpectedFrames,
+                dateOnlyEntryMode,
+                stableDate,
+                dateConflict,
+                latestRawText.length() > 0,
+                selectedPackagingName.length() > 0,
+                snapshot != null && snapshot.hasStablePackagingName(),
+                snapshot != null && snapshot.hasStableBarcode(),
+                snapshot == null ? 0 : snapshot.rankedPackagingCandidates.size()
+        );
+        statusBadge.setText(status.badge);
+        statusText.setText(status.message);
     }
 
     private void showRawTextDialog() {
@@ -8760,7 +8643,9 @@ public final class DateOcrScanActivity extends ComponentActivity {
         String packagingName = selectedPackagingName.length() > 0
                 ? selectedPackagingName
                 : snapshot.bestPackagingNameForConfirmation();
-        String productName = productNameForResult(packagingName, info);
+        String productName = selectedPackagingName.length() > 0
+                ? FoodItem.cleanText(selectedPackagingName)
+                : productNameForResult(packagingName, info);
         String productCategory = info != null && info.found ? BarcodeCategoryClassifier.inferCategory(info) : "";
         String productNotes = info != null && info.found ? info.notes() : "";
 
@@ -8890,100 +8775,6 @@ public final class DateOcrScanActivity extends ComponentActivity {
         return value * getResources().getDisplayMetrics().scaledDensity;
     }
 
-    private static final class PaddleDateEvidence {
-        final String text;
-        final String originalText;
-        final String packagingText;
-        final double confidence;
-        final double packagingConfidence;
-        final RecognitionEvidence.NormalizedRect rect;
-
-        PaddleDateEvidence(
-                String text,
-                String originalText,
-                double confidence,
-                RecognitionEvidence.NormalizedRect rect
-        ) {
-            this(text, originalText, originalText, confidence, confidence, rect);
-        }
-
-        PaddleDateEvidence(
-                String text,
-                String originalText,
-                String packagingText,
-                double confidence,
-                double packagingConfidence,
-                RecognitionEvidence.NormalizedRect rect
-        ) {
-            this.text = FoodItem.cleanText(text);
-            this.originalText = FoodItem.cleanText(originalText);
-            this.packagingText = FoodItem.cleanText(packagingText);
-            this.confidence = RecognitionEvidence.clamp01(confidence);
-            this.packagingConfidence = RecognitionEvidence.clamp01(packagingConfidence);
-            this.rect = rect == null
-                    ? new RecognitionEvidence.NormalizedRect(0d, 0d, 0d, 0d)
-                    : rect;
-        }
-
-        PackagingTextAnalyzer.Observation toObservation(double sourceQuality) {
-            double width = Math.max(0d, rect.right - rect.left);
-            double height = Math.max(0d, rect.bottom - rect.top);
-            return new PackagingTextAnalyzer.Observation(
-                    text,
-                    height,
-                    width,
-                    (rect.left + rect.right) / 2d,
-                    (rect.top + rect.bottom) / 2d,
-                    sourceQuality,
-                    rect.left,
-                    rect.top,
-                    rect.right,
-                    rect.bottom,
-                    confidence <= 0d ? Double.NaN : confidence,
-                    "PP-OCRv6"
-            );
-        }
-
-        List<PackagingTextAnalyzer.Observation> toPackagingObservations(double sourceQuality) {
-            List<PackagingTextAnalyzer.Observation> observations =
-                    new ArrayList<PackagingTextAnalyzer.Observation>();
-            if (packagingText.length() == 0) {
-                return observations;
-            }
-            String[] lines = packagingText.split("\\n");
-            double width = Math.max(0.02d, rect.right - rect.left);
-            double totalHeight = Math.max(0.02d, rect.bottom - rect.top);
-            double lineHeight = Math.max(0.02d, totalHeight / Math.max(1, lines.length));
-            for (int index = 0; index < lines.length; index++) {
-                String line = FoodItem.cleanText(lines[index]);
-                if (line.length() == 0) {
-                    continue;
-                }
-                double top = Math.min(rect.bottom, rect.top + (lineHeight * index));
-                double bottom = Math.min(rect.bottom, Math.max(top + 0.01d, top + lineHeight));
-                observations.add(new PackagingTextAnalyzer.Observation(
-                        line,
-                        lineHeight,
-                        width,
-                        (rect.left + rect.right) / 2d,
-                        (top + bottom) / 2d,
-                        sourceQuality,
-                        rect.left,
-                        top,
-                        rect.right,
-                        bottom,
-                        packagingConfidence <= 0d ? Double.NaN : packagingConfidence,
-                        "PP-OCRv6 检测"
-                ));
-            }
-            return observations;
-        }
-
-        static PaddleDateEvidence empty() {
-            return new PaddleDateEvidence("", "", 0d, null);
-        }
-    }
-
     private static final class CameraFrameProbe {
         final LowContrastTextPreprocessor.FrameMetrics metrics;
         final List<PaddleTextDetectionEngine.TextRegion> regions;
@@ -9018,28 +8809,11 @@ public final class DateOcrScanActivity extends ComponentActivity {
         }
 
         RecognitionEvidence.Region primaryRegion() {
-            for (RecognitionEvidence.Region region : evidence.regions) {
-                if (RecognitionEvidence.FIELD_PRODUCT_NAME.equals(region.field)) {
-                    return region;
-                }
-            }
-            RecognitionEvidence.Region strongest = null;
-            for (RecognitionEvidence.Region region : evidence.regions) {
-                if (strongest == null || region.confidence > strongest.confidence) {
-                    strongest = region;
-                }
-            }
-            return strongest == null ? evidence.regions.get(0) : strongest;
+            return RecognitionKeyframePolicy.primaryRegion(evidence);
         }
 
         double score() {
-            double strongest = 0d;
-            for (RecognitionEvidence.Region region : evidence.regions) {
-                strongest = Math.max(strongest, region.confidence);
-            }
-            return (evidence.quality * 0.55d)
-                    + (strongest * 0.38d)
-                    + (Math.min(3, evidence.regions.size()) * 0.025d);
+            return RecognitionKeyframePolicy.score(evidence);
         }
     }
 

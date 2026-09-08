@@ -422,6 +422,10 @@ final class RecognitionFrameSelector {
         return Collections.unmodifiableList(new ArrayList<FrameCandidate>(selectedFrames));
     }
 
+    boolean isSelected(String frameId) {
+        return containsFrame(selectedFrames, frameId);
+    }
+
     int size() {
         return selectedFrames.size();
     }

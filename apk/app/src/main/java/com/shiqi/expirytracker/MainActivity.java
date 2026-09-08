@@ -99,6 +99,8 @@ public final class MainActivity extends Activity {
     private static final String STATE_DESTINATION = "main_destination_v2";
     private static final String STATE_DETAIL_PROFILE = "main_detail_profile_v2";
     private static final String STATE_FOOD_EDITOR = "main_food_editor_v2";
+    private static final String STATE_DATE_REQUEST_DRAFT = "main_date_request_draft_v2";
+    private static final String STATE_DATE_RESULT = "main_date_result_v2";
     private static final int UTILITY_BARCODE = 1;
     private static final int UTILITY_REMINDER = 2;
     private static final int UTILITY_JSON = 3;
@@ -137,6 +139,7 @@ public final class MainActivity extends Activity {
     private View undoBar;
     private Runnable hideUndoRunnable;
     private FoodItem pendingUndoFood;
+    private FoodItem pendingUndoExpected;
     private boolean productDetailVisible = false;
     private boolean foodEditorVisible = false;
     private FoodEditorViews activeFoodEditor;
@@ -168,6 +171,9 @@ public final class MainActivity extends Activity {
     private TextView activeFilterSummary;
     private ReminderSettings reminderSettings = ReminderSettings.defaults();
     private ReplenishmentRecognitionTarget pendingReplenishmentRecognitionTarget;
+    private String pendingDateRecognitionDraftId = "";
+    private Intent pendingDateRecognitionResult;
+    private Bundle pendingFoodEditorRestore;
     private EditText searchInput;
     private final List<String> selectedStatuses = new ArrayList<String>(FoodData.statusFilterValues());
     private final List<String> selectedCategories = new ArrayList<String>();
@@ -225,6 +231,11 @@ public final class MainActivity extends Activity {
         final Bundle restoredFoodEditor = savedInstanceState == null
                 ? null
                 : savedInstanceState.getBundle(STATE_FOOD_EDITOR);
+        pendingFoodEditorRestore = restoredFoodEditor;
+        if (restoredFoodEditor != null) {
+            pendingDateRecognitionDraftId = savedInstanceState.getString(STATE_DATE_REQUEST_DRAFT, "");
+            pendingDateRecognitionResult = savedInstanceState.getParcelable(STATE_DATE_RESULT);
+        }
         showStartupLoading();
         new Thread(new Runnable() {
             @Override
@@ -1639,6 +1650,7 @@ public final class MainActivity extends Activity {
         }
 
         foods = copyFoods(result.restoredFoods);
+        dismissUndoBar();
         lastPersistedFoods = copyFoods(result.restoredFoods);
         ReminderScheduler.scheduleDaily(this, reminderSettings);
         renderUtilityPage();
@@ -2010,6 +2022,12 @@ public final class MainActivity extends Activity {
         outState.putInt(STATE_DESTINATION, currentDestination);
         if (foodEditorVisible && activeFoodEditor != null) {
             outState.putBundle(STATE_FOOD_EDITOR, captureFoodEditorState(activeFoodEditor));
+        } else if (pendingFoodEditorRestore != null) {
+            outState.putBundle(STATE_FOOD_EDITOR, new Bundle(pendingFoodEditorRestore));
+        }
+        outState.putString(STATE_DATE_REQUEST_DRAFT, pendingDateRecognitionDraftId);
+        if (pendingDateRecognitionResult != null) {
+            outState.putParcelable(STATE_DATE_RESULT, pendingDateRecognitionResult);
         }
         if (productDetailVisible) {
             outState.putString(STATE_DETAIL_PROFILE, visibleProductProfileId);
@@ -2019,6 +2037,7 @@ public final class MainActivity extends Activity {
 
     private Bundle captureFoodEditorState(FoodEditorViews editor) {
         Bundle state = new Bundle();
+        state.putString("draft_id", editor.draftId);
         FoodItem source = editor.sourceFood == null ? new FoodItem() : editor.sourceFood;
         state.putInt("mode", editor.mode);
         state.putBoolean("protect", editor.protectInitialContent);
@@ -2123,6 +2142,7 @@ public final class MainActivity extends Activity {
         if (editor == null) {
             return;
         }
+        editor.draftId = state.getString("draft_id", editor.draftId);
         editor.nameInput.setText(state.getString("name", ""));
         editor.barcodeInput.setText(state.getString("barcode", ""));
         editor.quantityInput.setText(state.getString("quantity", ""));
@@ -2160,6 +2180,13 @@ public final class MainActivity extends Activity {
             }
         }
         restoreScrollPosition(state.getInt("editor_scroll", 0));
+        pendingFoodEditorRestore = null;
+        if (editor.draftId.equals(pendingDateRecognitionDraftId)) {
+            pendingReplenishmentRecognitionTarget = editor.recognitionTarget;
+            applyPendingDateRecognitionResult();
+        } else {
+            clearPendingDateRecognition();
+        }
     }
 
     private FoodItem findFoodBatch(String batchId) {
@@ -2234,7 +2261,7 @@ public final class MainActivity extends Activity {
                 pendingJsonExportFilter = null;
             }
             if (requestCode == REQUEST_REPLENISHMENT_OCR) {
-                pendingReplenishmentRecognitionTarget = null;
+                clearPendingDateRecognition();
             }
             return;
         }
@@ -3218,12 +3245,49 @@ public final class MainActivity extends Activity {
     }
 
     private void handleReplenishmentRecognitionResult(Intent data) {
-        ReplenishmentRecognitionTarget target = pendingReplenishmentRecognitionTarget;
-        pendingReplenishmentRecognitionTarget = null;
-        if (target == null || data == null) {
+        if (pendingDateRecognitionDraftId.length() == 0 || data == null) {
+            clearPendingDateRecognition();
             toast("补货表单已关闭，未回填识别结果");
             return;
         }
+        pendingDateRecognitionResult = new Intent(data);
+        applyPendingDateRecognitionResult();
+    }
+
+    private void clearPendingDateRecognition() {
+        pendingDateRecognitionDraftId = "";
+        pendingDateRecognitionResult = null;
+        pendingReplenishmentRecognitionTarget = null;
+    }
+
+    private void beginDateRecognition(FoodEditorViews editor) {
+        if (!foodEditorVisible || activeFoodEditor != editor) {
+            return;
+        }
+        clearPendingDateRecognition();
+        pendingDateRecognitionDraftId = editor.draftId;
+        pendingReplenishmentRecognitionTarget = editor.recognitionTarget;
+    }
+
+    private void applyPendingDateRecognitionResult() {
+        if (pendingDateRecognitionResult == null || pendingFoodEditorRestore != null) {
+            return;
+        }
+        if (!foodEditorVisible || activeFoodEditor == null
+                || !activeFoodEditor.draftId.equals(pendingDateRecognitionDraftId)) {
+            clearPendingDateRecognition();
+            return;
+        }
+        ReplenishmentRecognitionTarget target = pendingReplenishmentRecognitionTarget;
+        if (target == null) {
+            return;
+        }
+        if (target != activeFoodEditor.recognitionTarget) {
+            clearPendingDateRecognition();
+            return;
+        }
+        Intent data = pendingDateRecognitionResult;
+        clearPendingDateRecognition();
 
         FoodItem recognized = recognitionDraftFromIntent(data);
         if (!ReplenishmentRecognitionMerge.hasRecognizedDate(recognized)) {
@@ -3333,6 +3397,8 @@ public final class MainActivity extends Activity {
     }
 
     private static final class FoodEditorViews {
+        String draftId = UUID.randomUUID().toString();
+        ReplenishmentRecognitionTarget recognitionTarget;
         FoodItem sourceFood;
         boolean isEdit;
         int mode;
@@ -5412,7 +5478,7 @@ public final class MainActivity extends Activity {
                 ? "已用完并停止提醒"
                 : "已减少 1，剩余 " + formatNumber(updated.remainingQuantity)
                         + " " + displayUnit(updated.unit);
-        showUndoBar(before, message);
+        showUndoBar(before, updated, message);
     }
 
     private FoodItem findFoodById(String id) {
@@ -5425,12 +5491,14 @@ public final class MainActivity extends Activity {
         return null;
     }
 
-    private void showUndoBar(FoodItem before, String message) {
+    private void showUndoBar(FoodItem before, FoodItem expected, String message) {
         dismissUndoBar();
-        if (screenRoot == null || before == null) {
+        if (screenRoot == null || before == null || expected == null) {
             return;
         }
         pendingUndoFood = before.copy();
+        pendingUndoExpected = expected.copy();
+        final FoodItem undoToken = pendingUndoFood;
 
         LinearLayout bar = new LinearLayout(this);
         bar.setOrientation(LinearLayout.HORIZONTAL);
@@ -5450,14 +5518,8 @@ public final class MainActivity extends Activity {
         undo.setOnClickListener(new View.OnClickListener() {
             @Override
             public void onClick(View view) {
-                FoodItem restore = pendingUndoFood == null ? null : pendingUndoFood.copy();
-                dismissUndoBar();
-                if (restore == null) {
-                    return;
-                }
-                replaceFood(restore);
-                if (saveFoodsRefreshReminders()) {
-                    toast("已撤销本次减量");
+                if (pendingUndoFood == undoToken) {
+                    undoPendingDecrement();
                 }
             }
         });
@@ -5483,6 +5545,36 @@ public final class MainActivity extends Activity {
         uiHandler.postDelayed(hideUndoRunnable, UNDO_BAR_DURATION_MS);
     }
 
+    private void undoPendingDecrement() {
+        FoodItem restore = pendingUndoFood;
+        FoodItem expected = pendingUndoExpected;
+        dismissUndoBar();
+        if (restore == null || expected == null) {
+            return;
+        }
+        for (int index = 0; index < foods.size(); index++) {
+            FoodItem current = foods.get(index);
+            if (!expected.id.equals(current.id)) {
+                continue;
+            }
+            try {
+                if (!expected.toJson().toString().equals(current.toJson().toString())) {
+                    return;
+                }
+            } catch (org.json.JSONException error) {
+                return;
+            }
+            FoodItem restored = restore.copy();
+            restored.updatedAt = DateRules.nowIsoLike();
+            foods.set(index, restored);
+            if (saveFoodsRefreshReminders()) {
+                toast("已撤销本次减量");
+            }
+            return;
+        }
+        // A deleted batch must never be recreated by a stale undo action.
+    }
+
     private void repositionUndoBar() {
         if (undoBar == null) {
             return;
@@ -5506,6 +5598,7 @@ public final class MainActivity extends Activity {
         }
         undoBar = null;
         pendingUndoFood = null;
+        pendingUndoExpected = null;
     }
 
     private boolean isNoExpiryFood(FoodItem food) {
@@ -5964,25 +6057,18 @@ public final class MainActivity extends Activity {
         editor.afterOpenShelfLifeInput = afterOpenShelfLifeInput;
         editor.afterOpenShelfLifeUnitInput = afterOpenShelfLifeUnitInput;
         editor.notesInput = notesInput;
+        editor.recognitionTarget = new ReplenishmentRecognitionTarget(
+                productionDateInput, shelfLifeInput, shelfLifeUnitInput, expiryDateInput,
+                datePendingInput, explicitNoExpiryInput, manualExpiryOverride,
+                updatingCalculatedExpiry, updateCalculatedExpiry, updateNoExpiryViews
+        );
 
         showFoodEditorPage(form, editor);
 
         dateCameraButton.setOnClickListener(new View.OnClickListener() {
                 @Override
                 public void onClick(View view) {
-                    final ReplenishmentRecognitionTarget target = new ReplenishmentRecognitionTarget(
-                            productionDateInput,
-                            shelfLifeInput,
-                            shelfLifeUnitInput,
-                            expiryDateInput,
-                            datePendingInput,
-                            explicitNoExpiryInput,
-                            manualExpiryOverride,
-                            updatingCalculatedExpiry,
-                            updateCalculatedExpiry,
-                            updateNoExpiryViews
-                    );
-                    pendingReplenishmentRecognitionTarget = target;
+                    beginDateRecognition(editor);
                     Intent intent = new Intent(MainActivity.this, DateOcrScanActivity.class);
                     intent.putExtra(DateOcrScanActivity.EXTRA_DATE_ONLY_MODE, true);
                     if (isDebuggable() && getIntent() != null) {
@@ -6228,6 +6314,7 @@ public final class MainActivity extends Activity {
                     saved = store.saveFoods(nextFoods);
                 }
                 if (saved) {
+                    dismissUndoBar();
                     foods = copyFoods(nextFoods);
                 }
                 return saved;
@@ -6412,7 +6499,7 @@ public final class MainActivity extends Activity {
         }
         foodEditorVisible = false;
         activeFoodEditor = null;
-        pendingReplenishmentRecognitionTarget = null;
+        clearPendingDateRecognition();
         hideCurrentKeyboard();
 
         if (editor.returnToProductDetail
@@ -6909,6 +6996,7 @@ public final class MainActivity extends Activity {
         lastPersistedFoods = copyFoods(foods);
         ReminderScheduler.scheduleDaily(this, reminderSettings);
         refreshVisibleContentAfterDataChange();
+        dismissUndoBar();
         return true;
     }
 

@@ -1735,6 +1735,65 @@ public final class LocalLogicTest {
                 assertEquals("second note", updated.get(1).notes);
             }
         });
+        test("ScanUiPresentation keeps recognition status deterministic", new TestCase() {
+            public void run() {
+                ScanUiPresentation.Status analyzing = ScanUiPresentation.recognitionStatus(
+                        true, false, true, false, true, true, true, true, 1
+                );
+                assertEquals("分析中", analyzing.badge);
+
+                ScanUiPresentation.Status dateConflict = ScanUiPresentation.recognitionStatus(
+                        false, true, false, true, true, false, false, false, 0
+                );
+                assertEquals("需继续确认", dateConflict.badge);
+                assertTrue(
+                        dateConflict.message.contains("只对准其中一处"),
+                        "date-only conflict should give one concrete recovery action"
+                );
+
+                ScanUiPresentation.Status stableName = ScanUiPresentation.recognitionStatus(
+                        false, false, false, false, true, false, true, false, 1
+                );
+                assertEquals("名称较稳", stableName.badge);
+
+                ScanUiPresentation.Status empty = ScanUiPresentation.recognitionStatus(
+                        false, false, false, false, false, false, false, false, 0
+                );
+                assertEquals("识别中", empty.badge);
+                assertTrue(empty.message.contains("条码"), "empty scan should explain useful targets");
+            }
+        });
+        test("PaddleDateEvidence preserves normalized OCR geometry and confidence", new TestCase() {
+            public void run() {
+                PaddleDateEvidence evidence = new PaddleDateEvidence(
+                        " 2026-08-31 ",
+                        " 生产日期 2026-08-31 ",
+                        "生产日期\n保质期12个月",
+                        2d,
+                        -1d,
+                        new RecognitionEvidence.NormalizedRect(0.1d, 0.2d, 0.7d, 0.5d)
+                );
+                assertEquals("2026-08-31", evidence.text);
+                assertEquals(1d, evidence.confidence);
+                assertEquals(0d, evidence.packagingConfidence);
+
+                PackagingTextAnalyzer.Observation date = evidence.toObservation(0.8d);
+                assertEquals("2026-08-31", date.text);
+                assertTrue(Math.abs(date.normalizedWidth - 0.6d) < 0.0001d,
+                        "date width must preserve normalized OCR geometry");
+                assertTrue(Math.abs(date.centerY - 0.35d) < 0.0001d,
+                        "date center must preserve normalized OCR geometry");
+                assertEquals("PP-OCRv6", date.engine);
+
+                List<PackagingTextAnalyzer.Observation> packaging =
+                        evidence.toPackagingObservations(0.7d);
+                assertEquals(2, packaging.size());
+                assertEquals("生产日期", packaging.get(0).text);
+                assertEquals("保质期12个月", packaging.get(1).text);
+                assertTrue(Double.isNaN(packaging.get(0).modelConfidence),
+                        "missing packaging confidence must stay unknown, not become a false zero");
+            }
+        });
     }
     private void runFoodExcelExporterTests() {
         test("FoodExcelExporter writes xlsx workbook and escapes fields", new TestCase() {
@@ -3219,6 +3278,20 @@ public final class LocalLogicTest {
 
                 selector.clear();
                 assertEquals(0, selector.size());
+            }
+        });
+
+        test("RecognitionFrameSelector membership excludes evicted and cleared frames", new TestCase() {
+            public void run() {
+                RecognitionFrameSelector selector = new RecognitionFrameSelector(500L);
+                assertFalse(selector.isSelected("missing"), "empty selection has no members");
+                selector.offer(recognitionFrame("old", 1000L, "same", 0.2d));
+                selector.offer(recognitionFrame("replacement", 1100L, "same", 0.9d));
+                assertFalse(selector.isSelected("old"), "replaced bitmap must be released by its owner");
+                assertTrue(selector.isSelected("replacement"), "replacement must remain retained");
+                assertFalse(selector.isSelected(null), "null is not a selected frame id");
+                selector.clear();
+                assertFalse(selector.isSelected("replacement"), "cleared frames must not remain members");
             }
         });
 

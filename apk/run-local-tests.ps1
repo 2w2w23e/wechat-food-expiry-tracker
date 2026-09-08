@@ -71,6 +71,8 @@ $MainSources = @(
   'DateEvidencePolicy.java',
   'DateOcrFrameVoter.java',
   'RecognitionDiagnostics.java',
+  'RecognitionEvidence.java',
+  'RecognitionKeyframePolicy.java',
   'RecognitionFrameSelector.java',
   'RecognitionRoiBudget.java',
   'RecognitionFieldGapPlan.java',
@@ -83,6 +85,7 @@ $MainSources = @(
   'RecognitionTextCleaner.java',
   'PackagingNamePolicy.java',
   'PackagingTextAnalyzer.java',
+  'PaddleDateEvidence.java',
   'UnifiedRecognitionStabilizer.java',
   'RecognitionFieldPromoter.java',
   'UnifiedRecognitionPayload.java',
@@ -131,6 +134,7 @@ try {
   Write-Host 'Running APK local Java logic tests...'
   Invoke-Checked $Java @('-cp', $Classes, 'com.shiqi.expirytracker.LocalLogicTest')
   Invoke-Checked $Java @('-cp', $Classes, 'com.shiqi.expirytracker.CameraFramePipelineTest')
+  Invoke-Checked $Java @('-cp', $Classes, 'com.shiqi.expirytracker.RecognitionKeyframePolicyTest')
   Invoke-Checked $Java @('-cp', $Classes, 'com.shiqi.expirytracker.FoodEditorSessionTest')
   Invoke-Checked $Java @('-cp', $Classes, 'com.shiqi.expirytracker.InventorySnapshotMapperTest')
   Invoke-Checked $Java @('-cp', $Classes, 'com.shiqi.expirytracker.BusinessPageStateTest')
