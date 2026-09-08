@@ -160,9 +160,6 @@ final class FoodExcelImporter {
         item.dateSource = normalizeDateSource(value(values, "datesource"));
         String manualExpiryDate = clean(value(values, "expirydate"));
         if ("none".equals(item.dateSource)) {
-            if (!DateRules.isValidDateString(item.productionDate)) {
-                warnings.add("无过期时间且未填写生产日期，已按暂无到期日导入");
-            }
         } else if (manualExpiryDate.length() > 0) {
             if (DateRules.isValidDateString(manualExpiryDate)) {
                 item.expiryDate = manualExpiryDate;
@@ -180,6 +177,8 @@ final class FoodExcelImporter {
         } else if (item.productionDate.length() > 0 && item.shelfLifeValue != null && DateRules.isShelfLifeUnit(item.shelfLifeUnit)) {
             item.expiryDate = DateRules.addShelfLife(item.productionDate, item.shelfLifeValue, item.shelfLifeUnit);
             item.dateSource = "calculated";
+        } else if ("unknown".equals(item.dateSource)) {
+            item.expiryDate = "";
         } else {
             errors.add("必须填写最终可食用日期，或填写生产日期 + 保质期");
         }
@@ -190,8 +189,8 @@ final class FoodExcelImporter {
 
         item.quantity = parseNumber(value(values, "quantity"), 1.0, "数量", errors);
         item.remainingQuantity = parseNumber(value(values, "remainingquantity"), item.quantity, "剩余数量", errors);
-        if (item.quantity < 0) {
-            errors.add("数量不能小于 0");
+        if (item.quantity <= 0) {
+            errors.add("数量必须大于 0");
         }
         if (item.remainingQuantity < 0) {
             errors.add("剩余数量不能小于 0");
@@ -201,6 +200,23 @@ final class FoodExcelImporter {
         }
         item.normalizeQuantityBounds();
 
+        String productionError = FoodValidationRules.productionDateError(
+                item.productionDate,
+                DateRules.todayString()
+        );
+        if (productionError.length() > 0) {
+            errors.add(productionError);
+        }
+        if (DateRules.isValidDateString(item.expiryDate)) {
+            String expiryError = FoodValidationRules.expiryDateError(
+                    item.productionDate,
+                    item.expiryDate
+            );
+            if (expiryError.length() > 0) {
+                errors.add(expiryError);
+            }
+        }
+
         item.unit = firstNonEmpty(value(values, "unit"), "件");
         item.storageMethod = normalizeStorage(value(values, "storagemethod"), value(values, "storagemethodlabel"), warnings);
         item.location = FoodData.normalizeLocationValue(firstNonEmpty(value(values, "location"), value(values, "locationlabel")));
@@ -209,6 +225,9 @@ final class FoodExcelImporter {
         item.finishedAt = clean(value(values, "finishedat"));
         item.createdAt = clean(value(values, "createdat"));
         item.updatedAt = clean(value(values, "updatedat"));
+        if (item.remainingQuantity <= 0d) {
+            InventoryRules.finishIfDepleted(item, item.updatedAt);
+        }
 
         return new RowResult(rowNumber, values, item, errors, warnings);
     }

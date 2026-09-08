@@ -28,6 +28,22 @@ final class VerifiedBarcodeCatalog {
 
     private static final Entry[] ENTRIES = new Entry[] {
             new Entry(
+                    "6971416494254",
+                    "大董老北京炸酱面",
+                    "大董",
+                    "炸酱面",
+                    "方便食品",
+                    "净含量 230克"
+            ),
+            new Entry(
+                    "6930628889364",
+                    "\u7a96\u85cf\u7ea2\u8150\u4e73",
+                    "",
+                    "\u7ea2\u8150\u4e73",
+                    "\u8c03\u5473\u54c1",
+                    ""
+            ),
+            new Entry(
                     "6926265313430",
                     "上好佳薯条",
                     "上好佳",
@@ -57,9 +73,49 @@ final class VerifiedBarcodeCatalog {
         return null;
     }
 
+    static String recoverTruncatedOcrBarcode(String barcode, String rawText) {
+        String code = BarcodeUtils.extractProductCode(barcode);
+        if (code.length() != 12) {
+            return code;
+        }
+        String text = FoodItem.cleanText(rawText);
+        for (Entry entry : ENTRIES) {
+            if (entry.barcode.length() == 13
+                    && entry.barcode.startsWith(code)
+                    && hasProductContext(entry, text)) {
+                return entry.barcode;
+            }
+        }
+        return code;
+    }
+
+    private static boolean hasProductContext(Entry entry, String rawText) {
+        if (entry == null || rawText.length() == 0) {
+            return false;
+        }
+        if (entry.brand.length() >= 2 && rawText.contains(entry.brand)) {
+            return true;
+        }
+        for (String fragment : RecognitionTextCleaner.extractFoodNameFragments(rawText)) {
+            String value = FoodItem.cleanText(fragment);
+            if (value.length() >= 2
+                    && (entry.name.contains(value)
+                    || entry.generalName.contains(value))) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private static String canonicalCatalogBarcode(String barcode) {
+        String code = BarcodeUtils.extractProductCode(barcode);
+        Entry entry = find(code);
+        return entry == null ? code : entry.barcode;
+    }
+
     static String preferCatalogBackedBarcode(String scannedBarcode, String ocrBarcode) {
-        String scanned = BarcodeUtils.extractProductCode(scannedBarcode);
-        String printed = BarcodeUtils.extractProductCode(ocrBarcode);
+        String scanned = canonicalCatalogBarcode(scannedBarcode);
+        String printed = canonicalCatalogBarcode(ocrBarcode);
         if (!BarcodeUtils.isSupportedProductCode(scanned)) {
             return BarcodeUtils.isSupportedProductCode(printed) ? printed : "";
         }

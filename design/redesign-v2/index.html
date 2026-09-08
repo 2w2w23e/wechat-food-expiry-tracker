@@ -1,0 +1,592 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#f4f6f8">
+  <title>食期管家 V2 系统原型</title>
+  <link rel="stylesheet" href="./styles.css">
+</head>
+<body>
+  <main class="app-shell" aria-label="食期管家 V2 可点击原型">
+    <div class="system-bar" aria-hidden="true">
+      <span>09:41</span>
+      <span>5G&nbsp;&nbsp;87%</span>
+    </div>
+
+    <section class="screen is-active" data-screen="today" aria-label="今日">
+      <header class="page-header">
+        <div>
+          <p class="eyebrow">8月31日 周一</p>
+          <h1>今天先处理这些</h1>
+        </div>
+        <button class="button primary compact" type="button" data-start-add>
+          <i data-lucide="plus"></i><span>新增</span>
+        </button>
+      </header>
+
+      <div class="screen-scroll with-nav">
+        <section class="summary-band" aria-label="今日库存摘要">
+          <button type="button" data-go="inventory" data-filter-value="today">
+            <strong class="danger-text">2</strong><span>今天到期</span>
+          </button>
+          <button type="button" data-go="inventory" data-filter-value="soon">
+            <strong class="warning-text">5</strong><span>7 天内</span>
+          </button>
+          <button type="button" data-go="inventory" data-filter-value="low">
+            <strong>3</strong><span>低库存</span>
+          </button>
+        </section>
+
+        <section class="content-section">
+          <div class="section-heading">
+            <div>
+              <p class="eyebrow">按最终日期和库存排序</p>
+              <h2>优先处理</h2>
+            </div>
+            <button class="text-button" type="button" data-go="inventory">查看全部</button>
+          </div>
+
+          <div class="plain-list">
+            <article class="task-row">
+              <button class="row-main" type="button" data-go="detail">
+                <span class="product-mark milk">奶</span>
+                <span class="row-copy">
+                  <strong>鲜牛奶</strong>
+                  <small>冷藏 · 批次 08-29 · 剩 2 盒</small>
+                </span>
+              </button>
+              <span class="date-state danger-text"><strong>今天</strong><small>8月31日</small></span>
+            </article>
+            <article class="task-row">
+              <button class="row-main" type="button" data-go="detail">
+                <span class="product-mark bread">包</span>
+                <span class="row-copy">
+                  <strong>全麦吐司</strong>
+                  <small>常温 · 批次 08-28 · 剩 1 袋</small>
+                </span>
+              </button>
+              <span class="date-state warning-text"><strong>剩 2 天</strong><small>9月2日</small></span>
+            </article>
+            <article class="task-row">
+              <button class="row-main" type="button" data-go="detail">
+                <span class="product-mark care">护</span>
+                <span class="row-copy">
+                  <strong>保湿乳液</strong>
+                  <small>未开封 · 1 瓶</small>
+                </span>
+              </button>
+              <span class="date-state pending-text"><strong>待补日期</strong><small>不等于永不过期</small></span>
+            </article>
+          </div>
+        </section>
+
+        <section class="content-section">
+          <div class="section-heading">
+            <h2>最近操作</h2>
+          </div>
+          <div class="activity-row">
+            <i data-lucide="history"></i>
+            <span><strong>酸奶减少 1 盒</strong><small>当前剩余 2 盒</small></span>
+            <button class="text-button" type="button" data-snackbar="已撤销酸奶减量">撤销</button>
+          </div>
+        </section>
+      </div>
+    </section>
+
+    <section class="screen" data-screen="inventory" aria-label="库存">
+      <header class="page-header">
+        <div>
+          <p class="eyebrow">共 18 种商品 · 27 个批次</p>
+          <h1>库存</h1>
+        </div>
+        <button class="button primary compact" type="button" data-start-add>
+          <i data-lucide="plus"></i><span>新增</span>
+        </button>
+      </header>
+
+      <div class="inventory-toolbar">
+        <label class="search-field">
+          <i data-lucide="search"></i>
+          <input type="search" placeholder="搜索名称、条码或批次" aria-label="搜索库存">
+          <button class="icon-button inside" type="button" data-go="barcode" aria-label="扫码查找">
+            <i data-lucide="scan-barcode"></i>
+          </button>
+        </label>
+        <button class="icon-button outlined" type="button" data-open-filter aria-label="打开筛选">
+          <i data-lucide="list-filter"></i>
+        </button>
+      </div>
+
+      <div class="active-filter-row">
+        <span data-filter-summary>全部库存 · 最早到期优先</span>
+        <button class="text-button" type="button" data-open-filter>筛选</button>
+      </div>
+
+      <div class="screen-scroll inventory-scroll with-nav">
+        <div class="stock-list">
+          <article class="stock-row" data-stock-item="milk">
+            <button class="stock-main" type="button" data-go="detail">
+              <span class="product-mark milk">奶</span>
+              <span class="row-copy"><strong>鲜牛奶</strong><small>2 个批次 · 最早今天 · 共 3 盒</small></span>
+            </button>
+            <div class="quick-actions">
+              <button class="icon-button outlined" type="button" data-decrement aria-label="鲜牛奶减少一盒"><i data-lucide="minus"></i></button>
+              <button class="button secondary compact" type="button" data-restock="鲜牛奶">补货</button>
+            </div>
+          </article>
+          <article class="stock-row" data-stock-item="bread">
+            <button class="stock-main" type="button" data-go="detail">
+              <span class="product-mark bread">包</span>
+              <span class="row-copy"><strong>全麦吐司</strong><small>1 个批次 · 剩 2 天 · 1 袋</small></span>
+            </button>
+            <div class="quick-actions">
+              <button class="icon-button outlined" type="button" data-decrement aria-label="全麦吐司减少一袋"><i data-lucide="minus"></i></button>
+              <button class="button secondary compact" type="button" data-restock="全麦吐司">补货</button>
+            </div>
+          </article>
+          <article class="stock-row" data-stock-item="yogurt">
+            <button class="stock-main" type="button" data-go="detail">
+              <span class="product-mark yogurt">酸</span>
+              <span class="row-copy"><strong>原味酸奶</strong><small>2 个批次 · 最早剩 6 天 · 共 5 盒</small></span>
+            </button>
+            <div class="quick-actions">
+              <button class="icon-button outlined" type="button" data-decrement aria-label="原味酸奶减少一盒"><i data-lucide="minus"></i></button>
+              <button class="button secondary compact" type="button" data-restock="原味酸奶">补货</button>
+            </div>
+          </article>
+          <article class="stock-row" data-stock-item="care">
+            <button class="stock-main" type="button" data-go="detail">
+              <span class="product-mark care">护</span>
+              <span class="row-copy"><strong>保湿乳液</strong><small>1 个批次 · 日期待补 · 1 瓶</small></span>
+            </button>
+            <div class="quick-actions">
+              <button class="icon-button outlined" type="button" data-decrement aria-label="保湿乳液减少一瓶"><i data-lucide="minus"></i></button>
+              <button class="button secondary compact" type="button" data-restock="保湿乳液">补货</button>
+            </div>
+          </article>
+        </div>
+      </div>
+    </section>
+
+    <section class="screen" data-screen="settings" aria-label="设置">
+      <header class="page-header">
+        <div><p class="eyebrow">规则和本地数据</p><h1>设置</h1></div>
+      </header>
+      <div class="screen-scroll with-nav">
+        <section class="settings-group">
+          <h2>提醒</h2>
+          <button class="settings-row" type="button" data-go="reminders">
+            <span class="settings-icon blue"><i data-lucide="bell"></i></span>
+            <span><strong>提醒方式</strong><small>智能提醒 · 系统通知已允许</small></span>
+            <i data-lucide="chevron-right"></i>
+          </button>
+        </section>
+        <section class="settings-group">
+          <h2>本地数据</h2>
+          <button class="settings-row" type="button" data-go="transfer">
+            <span class="settings-icon green"><i data-lucide="send"></i></span>
+            <span><strong>快速传输</strong><small>JSON 筛选、导入和分享</small></span>
+            <i data-lucide="chevron-right"></i>
+          </button>
+          <button class="settings-row" type="button" data-go="excel">
+            <span class="settings-icon amber"><i data-lucide="sheet"></i></span>
+            <span><strong>Excel 批量管理</strong><small>预览错误后再导入</small></span>
+            <i data-lucide="chevron-right"></i>
+          </button>
+          <button class="settings-row" type="button" data-go="backup">
+            <span class="settings-icon gray"><i data-lucide="database-backup"></i></span>
+            <span><strong>备份与恢复</strong><small>已校验 2 份本机备份</small></span>
+            <i data-lucide="chevron-right"></i>
+          </button>
+        </section>
+        <section class="settings-group">
+          <h2>识别与应用</h2>
+          <button class="settings-row" type="button" data-go="recognition-settings">
+            <span class="settings-icon blue"><i data-lucide="scan-text"></i></span>
+            <span><strong>识别与调试</strong><small>离线模型可用 · 调试已关闭</small></span>
+            <i data-lucide="chevron-right"></i>
+          </button>
+          <button class="settings-row" type="button" data-snackbar="食期管家 V2 设计原型">
+            <span class="settings-icon gray"><i data-lucide="circle-help"></i></span>
+            <span><strong>版本与说明</strong><small>本地版 · 不上传库存数据</small></span>
+            <i data-lucide="chevron-right"></i>
+          </button>
+        </section>
+      </div>
+    </section>
+
+    <section class="screen task-screen" data-screen="detail" aria-label="商品详情">
+      <header class="task-header">
+        <button class="icon-button" type="button" data-back aria-label="返回"><i data-lucide="arrow-left"></i></button>
+        <div><p class="eyebrow">商品详情</p><h1>鲜牛奶</h1></div>
+        <button class="icon-button" type="button" data-snackbar="商品操作：编辑资料或删除商品" aria-label="更多操作"><i data-lucide="ellipsis"></i></button>
+      </header>
+      <div class="screen-scroll with-task-action">
+        <section class="product-overview">
+          <span class="product-mark milk large">奶</span>
+          <div><strong>冷藏食品 · 共 3 盒</strong><small>条码 6900000000012 · 默认单位：盒</small></div>
+          <button class="text-button" type="button" data-snackbar="进入商品资料编辑">编辑资料</button>
+        </section>
+        <section class="content-section">
+          <div class="section-heading"><div><p class="eyebrow">最早到期优先</p><h2>2 个批次</h2></div></div>
+          <article class="batch-row">
+            <div class="batch-heading"><strong>批次 …A29F</strong><span class="status-pill danger">今天到期</span></div>
+            <dl class="detail-grid">
+              <div><dt>生产日期</dt><dd>2026-08-29</dd></div>
+              <div><dt>最终日期</dt><dd>2026-08-31</dd></div>
+              <div><dt>剩余</dt><dd data-detail-quantity>2 / 2 盒</dd></div>
+              <div><dt>保存</dt><dd>冷藏 · 未开封</dd></div>
+            </dl>
+            <p class="batch-note">备注：早餐用，开封后尽快处理</p>
+            <div class="batch-actions">
+              <button class="button secondary compact" type="button" data-decrement><i data-lucide="minus"></i>减少 1</button>
+              <button class="button ghost compact" type="button" data-snackbar="编辑当前批次">编辑</button>
+              <button class="icon-button" type="button" data-snackbar="批次操作：用完、删除" aria-label="批次更多操作"><i data-lucide="ellipsis"></i></button>
+            </div>
+          </article>
+          <article class="batch-row">
+            <div class="batch-heading"><strong>批次 …C721</strong><span class="status-pill success">正常</span></div>
+            <dl class="detail-grid">
+              <div><dt>生产日期</dt><dd>2026-08-30</dd></div>
+              <div><dt>最终日期</dt><dd>2026-09-04</dd></div>
+              <div><dt>剩余</dt><dd>1 / 1 盒</dd></div>
+              <div><dt>保存</dt><dd>冷藏 · 未开封</dd></div>
+            </dl>
+            <div class="batch-actions">
+              <button class="button secondary compact" type="button" data-decrement><i data-lucide="minus"></i>减少 1</button>
+              <button class="button ghost compact" type="button" data-snackbar="编辑当前批次">编辑</button>
+              <button class="icon-button" type="button" data-snackbar="批次操作：用完、删除" aria-label="批次更多操作"><i data-lucide="ellipsis"></i></button>
+            </div>
+          </article>
+        </section>
+      </div>
+      <div class="task-action-bar">
+        <button class="button primary full" type="button" data-restock="鲜牛奶"><i data-lucide="package-plus"></i>补货为新批次</button>
+      </div>
+    </section>
+
+    <section class="screen task-screen" data-screen="editor" aria-label="新增或补货编辑器">
+      <header class="task-header">
+        <button class="icon-button" type="button" data-editor-back aria-label="返回"><i data-lucide="arrow-left"></i></button>
+        <div><p class="eyebrow" data-editor-eyebrow>手动可直接完成</p><h1 data-editor-title>新增物品</h1></div>
+        <button class="text-button" type="button" data-editor-cancel>取消</button>
+      </header>
+      <div class="screen-scroll with-task-action editor-scroll">
+        <div class="notice success-note" data-restock-summary hidden>
+          <i data-lucide="package-plus"></i><span><strong>补货到鲜牛奶</strong><small>商品资料复用，日期和数量按新批次填写</small></span>
+        </div>
+
+        <section class="form-section">
+          <div class="section-heading"><h2>商品</h2><span class="required-note">名称必填</span></div>
+          <label class="field">
+            <span>商品名称</span>
+            <div class="field-with-action">
+              <input id="product-name" type="text" value="" placeholder="例如：鲜牛奶" autocomplete="off">
+              <button class="icon-button inside" type="button" data-start-scan aria-label="拍包装识别名称"><i data-lucide="camera"></i></button>
+            </div>
+            <small class="field-error" data-error-for="product-name"></small>
+          </label>
+          <label class="field">
+            <span>条码 <em>选填</em></span>
+            <div class="field-with-action">
+              <input id="barcode-value" inputmode="numeric" type="text" placeholder="可手动输入或扫码">
+              <button class="icon-button inside" type="button" data-go="barcode" aria-label="扫描条码"><i data-lucide="scan-barcode"></i></button>
+            </div>
+          </label>
+        </section>
+
+        <section class="form-section">
+          <div class="section-heading">
+            <h2>日期</h2>
+            <button class="text-button" type="button" data-start-scan="date"><i data-lucide="camera"></i>拍日期</button>
+          </div>
+          <div class="segmented" role="tablist" aria-label="日期填写方式">
+            <button class="is-selected" type="button" data-date-mode="calculated">生产日期 + 保质期</button>
+            <button type="button" data-date-mode="direct">直接填最终日期</button>
+          </div>
+          <div data-date-panel="calculated">
+            <div class="two-column">
+              <label class="field"><span>生产日期</span><input id="production-date" type="date" value="2026-08-31"></label>
+              <label class="field"><span>保质期</span><span class="compound-input"><input id="shelf-life" type="number" min="1" value="7"><select id="shelf-unit" aria-label="保质期单位"><option>天</option><option>月</option><option>年</option></select></span></label>
+            </div>
+            <p class="calculation-preview">预计最终日期：<strong data-expiry-preview>2026-09-07</strong></p>
+          </div>
+          <div data-date-panel="direct" hidden>
+            <label class="field"><span>最终日期</span><input id="expiry-date" type="date"></label>
+          </div>
+          <label class="check-row">
+            <input id="date-pending" type="checkbox">
+            <span><strong>暂时不知道日期</strong><small>保存为“日期待补”，以后会继续提醒补充；不会记成永不过期</small></span>
+          </label>
+          <small class="field-error" data-error-for="date"></small>
+        </section>
+
+        <section class="form-section">
+          <div class="section-heading"><h2>数量与保存</h2><span class="required-note">数量必填</span></div>
+          <div class="two-column">
+            <label class="field"><span>数量</span><span class="compound-input"><input id="quantity" type="number" min="1" value="1"><select aria-label="数量单位"><option>件</option><option>盒</option><option>袋</option><option>瓶</option></select></span><small class="field-error" data-error-for="quantity"></small></label>
+            <label class="field"><span>保存位置</span><select><option>冷藏</option><option>常温</option><option>冷冻</option><option>其他</option></select></label>
+          </div>
+          <label class="field"><span>备注 <em>选填</em></span><textarea rows="2" placeholder="例如：开封后 3 天内用完"></textarea></label>
+        </section>
+      </div>
+      <div class="task-action-bar">
+        <button class="button primary full" type="button" data-save-item><i data-lucide="check"></i><span data-save-label>保存入库</span></button>
+      </div>
+    </section>
+
+    <section class="screen scanner-screen" data-screen="scanner" aria-label="相机辅助识别">
+      <div class="camera-preview auto-mode" role="img" aria-label="相机中的中文商品包装"></div>
+      <div class="camera-overlay"></div>
+      <header class="camera-topbar">
+        <button class="camera-icon-button" type="button" data-back aria-label="返回编辑器"><i data-lucide="arrow-left"></i></button>
+        <div><strong data-scan-heading>拍包装识别</strong><small>点一下文字可重新对焦</small></div>
+        <button class="camera-icon-button" type="button" data-snackbar="手电筒已切换" aria-label="切换手电筒"><i data-lucide="flashlight"></i></button>
+      </header>
+      <button class="detection-box name-box found" type="button" data-focus-box data-auto-scan-only><span>商品名</span></button>
+      <button class="detection-box barcode-box found" type="button" data-focus-box data-auto-scan-only><span>条码</span></button>
+      <button class="detection-box date-box" type="button" data-focus-box><span>可能的日期</span></button>
+      <div class="focus-ring" aria-hidden="true"></div>
+      <section class="camera-panel">
+        <div class="camera-status">
+          <span class="live-dot"></span>
+          <span><strong data-scan-status-title>画面清楚，正在找日期</strong><small data-scan-status-detail>已读到商品名和条码</small></span>
+        </div>
+        <div class="field-progress">
+          <span class="done" data-auto-scan-only><i data-lucide="check"></i>名称</span>
+          <span class="done" data-auto-scan-only><i data-lucide="check"></i>条码</span>
+          <span><i data-lucide="loader-circle"></i>日期</span>
+        </div>
+        <button class="button primary full" type="button" data-use-recognition>使用已识别的 2 项</button>
+        <button class="button secondary full" type="button" data-return-manual>不再识别，返回填写</button>
+      </section>
+    </section>
+
+    <section class="screen task-screen" data-screen="review" aria-label="识别核对">
+      <header class="task-header">
+        <button class="icon-button" type="button" data-back aria-label="返回相机"><i data-lucide="arrow-left"></i></button>
+        <div><p class="eyebrow">不会自动保存</p><h1>核对识别内容</h1></div>
+        <button class="icon-button" type="button" data-go="evidence" aria-label="查看识别依据"><i data-lucide="images"></i></button>
+      </header>
+      <div class="screen-scroll with-task-action">
+        <div class="notice warning-note">
+          <i data-lucide="triangle-alert"></i><span><strong>日期还没有读清楚</strong><small>可以直接改，也可以先采用其他内容后手动填写</small></span>
+        </div>
+        <section class="form-section">
+          <div class="section-heading"><h2>建议采用</h2><button class="text-button" type="button" data-go="evidence">查看 3 张依据</button></div>
+          <label class="field confidence-field">
+            <span>商品名称 <em class="confidence success">较稳定</em></span>
+            <input id="review-name" type="text" value="复方硫酸软骨素滴眼液">
+            <small>来自 2 张清晰关键帧，可直接修改少字或错字</small>
+          </label>
+          <label class="field">
+            <span>条码 <em class="confidence success">较稳定</em></span>
+            <input id="review-barcode" type="text" value="6917246211883">
+          </label>
+          <div class="missing-field">
+            <span class="settings-icon amber"><i data-lucide="calendar-x"></i></span>
+            <span><strong>日期未识别</strong><small>不会自动填成“无过期时间”</small></span>
+            <button class="button secondary compact" type="button" data-start-scan="date">再拍日期</button>
+          </div>
+        </section>
+      </div>
+      <div class="task-action-bar split-actions">
+        <button class="button secondary" type="button" data-return-manual>放弃本次识别</button>
+        <button class="button primary" type="button" data-accept-recognition>采用并继续填写</button>
+      </div>
+    </section>
+
+    <section class="screen task-screen" data-screen="evidence" aria-label="识别依据">
+      <header class="task-header">
+        <button class="icon-button" type="button" data-back aria-label="返回核对页"><i data-lucide="arrow-left"></i></button>
+        <div><p class="eyebrow">仅供核对</p><h1>识别依据</h1></div>
+      </header>
+      <div class="screen-scroll">
+        <p class="page-intro">已保留 3 张更清楚的画面。绿色框表示形成了字段，黄色框表示仍需核对。</p>
+        <div class="evidence-list">
+          <figure><img src="./assets/auto-camera.jpg" alt="商品名关键帧"><figcaption><strong>商品名</strong><span>两帧文字一致</span></figcaption></figure>
+          <figure><img src="./assets/auto-camera.jpg" alt="条码关键帧"><figcaption><strong>条码</strong><span>连续三帧一致</span></figcaption></figure>
+          <figure class="needs-check"><img src="./assets/low-contrast-date.jpg" alt="低对比度日期候选关键帧"><figcaption><strong>日期</strong><span>画面对比度低，未采用</span></figcaption></figure>
+        </div>
+      </div>
+    </section>
+
+    <section class="screen task-screen" data-screen="barcode" aria-label="扫码查找">
+      <header class="task-header">
+        <button class="icon-button" type="button" data-back aria-label="返回"><i data-lucide="arrow-left"></i></button>
+        <div><p class="eyebrow">条码 6900000000012</p><h1>找到 2 个本机商品</h1></div>
+      </header>
+      <div class="screen-scroll with-task-action">
+        <p class="page-intro">同一个条码可能属于不同商品。请选择这次要补货的档案，系统不会替你决定。</p>
+        <div class="choice-list">
+          <label class="choice-row"><input type="radio" name="barcode-product" value="鲜牛奶"><span class="product-mark milk">奶</span><span><strong>鲜牛奶</strong><small>冷藏食品 · 2 个批次 · 共 3 盒</small></span></label>
+          <label class="choice-row"><input type="radio" name="barcode-product" value="早餐奶"><span class="product-mark bread">早</span><span><strong>早餐奶</strong><small>常温饮品 · 1 个批次 · 共 1 盒</small></span></label>
+        </div>
+        <button class="button secondary full" type="button" data-start-add><i data-lucide="plus"></i>作为其他商品新增</button>
+      </div>
+      <div class="task-action-bar">
+        <button class="button primary full" type="button" data-barcode-restock disabled>选择后补货</button>
+      </div>
+    </section>
+
+    <section class="screen task-screen" data-screen="reminders" aria-label="提醒设置">
+      <header class="task-header">
+        <button class="icon-button" type="button" data-back aria-label="返回设置"><i data-lucide="arrow-left"></i></button>
+        <div><p class="eyebrow">只在相关状态变化时重算</p><h1>提醒方式</h1></div>
+      </header>
+      <div class="screen-scroll with-task-action">
+        <section class="form-section">
+          <div class="segmented" role="tablist" aria-label="提醒方式">
+            <button class="is-selected" type="button" data-reminder-mode="smart">智能提醒</button>
+            <button type="button" data-reminder-mode="fixed">固定提前天数</button>
+          </div>
+          <div class="notice success-note"><i data-lucide="sparkles"></i><span><strong>新增批次时计算一次</strong><small>类别、保存方式、开封状态或日期改变时才重新计算</small></span></div>
+          <div class="rule-list">
+            <div><span>冷藏短保食品</span><strong>提前 2 天</strong></div>
+            <div><span>常温食品</span><strong>提前 7 天</strong></div>
+            <div><span>药品与个护</span><strong>提前 30 天</strong></div>
+          </div>
+          <label class="switch-row"><span><strong>系统通知</strong><small>权限已允许</small></span><input type="checkbox" checked></label>
+          <button class="button secondary full" type="button" data-snackbar="测试提醒已发送">发送测试提醒</button>
+        </section>
+      </div>
+      <div class="task-action-bar"><button class="button primary full" type="button" data-save-reminders>保存设置</button></div>
+    </section>
+
+    <section class="screen task-screen" data-screen="transfer" aria-label="JSON 快速传输">
+      <header class="task-header">
+        <button class="icon-button" type="button" data-back aria-label="返回设置"><i data-lucide="arrow-left"></i></button>
+        <div><p class="eyebrow">适合换手机或临时同步</p><h1>快速传输</h1></div>
+      </header>
+      <div class="screen-scroll">
+        <section class="form-section">
+          <div class="section-heading"><h2>导出 JSON</h2><span>含商品、条码和独立批次</span></div>
+          <label class="field"><span>筛选依据</span><select><option>全部库存</option><option>导入时间</option><option>生产日期</option><option>最终日期</option></select></label>
+          <div class="two-column"><label class="field"><span>开始日期</span><input type="date"></label><label class="field"><span>结束日期</span><input type="date"></label></div>
+          <button class="button primary full" type="button" data-snackbar="已生成 JSON，并打开系统分享面板"><i data-lucide="share-2"></i>生成并分享</button>
+        </section>
+        <section class="form-section">
+          <div class="section-heading"><h2>导入 JSON</h2></div>
+          <p class="page-intro">相同批次 UUID 会预览为更新，不会重复新增。冲突需要你确认。</p>
+          <button class="button secondary full" type="button" data-snackbar="已打开系统文件选择器"><i data-lucide="file-up"></i>选择 JSON 文件</button>
+        </section>
+      </div>
+    </section>
+
+    <section class="screen task-screen" data-screen="excel" aria-label="Excel 批量管理">
+      <header class="task-header">
+        <button class="icon-button" type="button" data-back aria-label="返回设置"><i data-lucide="arrow-left"></i></button>
+        <div><p class="eyebrow">先预览和校验，再写入</p><h1>Excel 批量管理</h1></div>
+      </header>
+      <div class="screen-scroll">
+        <section class="form-section">
+          <button class="settings-row standalone" type="button" data-go="excel-preview">
+            <span class="settings-icon amber"><i data-lucide="file-up"></i></span>
+            <span><strong>导入 Excel</strong><small>追加或覆盖，错误行会单独列出</small></span>
+            <i data-lucide="chevron-right"></i>
+          </button>
+          <button class="settings-row standalone" type="button" data-snackbar="已打开 Excel 保存位置">
+            <span class="settings-icon green"><i data-lucide="file-down"></i></span>
+            <span><strong>导出 Excel</strong><small>使用与导入一致的字段和日期格式</small></span>
+            <i data-lucide="chevron-right"></i>
+          </button>
+          <div class="notice success-note"><i data-lucide="shield-check"></i><span><strong>覆盖前先创建校验备份</strong><small>写入或读回失败时完整回滚，当前库存不会被部分替换</small></span></div>
+        </section>
+      </div>
+    </section>
+
+    <section class="screen task-screen" data-screen="excel-preview" aria-label="Excel 导入预览">
+      <header class="task-header">
+        <button class="icon-button" type="button" data-back aria-label="返回 Excel 页面"><i data-lucide="arrow-left"></i></button>
+        <div><p class="eyebrow">inventory-2026-08-31.xlsx</p><h1>导入预览</h1></div>
+      </header>
+      <div class="screen-scroll with-task-action">
+        <section class="import-summary">
+          <div><strong>12</strong><span>可导入</span></div>
+          <div><strong class="warning-text">2</strong><span>需修正</span></div>
+          <div><strong>3</strong><span>将更新</span></div>
+        </section>
+        <section class="form-section">
+          <div class="section-heading"><h2>错误行</h2><span>修正文件后重新选择</span></div>
+          <div class="error-list">
+            <div><strong>第 6 行 · 生产日期</strong><span>2026-09-18 晚于今天，不能作为生产日期</span></div>
+            <div><strong>第 11 行 · 数量</strong><span>新批次数量必须大于 0</span></div>
+          </div>
+          <div class="section-heading"><h2>写入方式</h2></div>
+          <div class="segmented"><button class="is-selected" type="button">追加/更新</button><button type="button">覆盖全部</button></div>
+        </section>
+      </div>
+      <div class="task-action-bar split-actions">
+        <button class="button secondary" type="button" data-back>重新选择</button>
+        <button class="button primary" type="button" disabled>修正错误后导入</button>
+      </div>
+    </section>
+
+    <section class="screen task-screen" data-screen="backup" aria-label="备份与恢复">
+      <header class="task-header">
+        <button class="icon-button" type="button" data-back aria-label="返回设置"><i data-lucide="arrow-left"></i></button>
+        <div><p class="eyebrow">私有校验备份</p><h1>备份与恢复</h1></div>
+      </header>
+      <div class="screen-scroll with-task-action">
+        <button class="button secondary full" type="button" data-snackbar="已创建并校验当前库存备份"><i data-lucide="database-backup"></i>创建当前备份</button>
+        <section class="content-section">
+          <div class="section-heading"><h2>可恢复备份</h2><span>仅显示校验通过的文件</span></div>
+          <div class="choice-list">
+            <label class="choice-row"><input type="radio" name="backup" checked><span class="settings-icon green"><i data-lucide="shield-check"></i></span><span><strong>今天 09:12 · 18 种商品</strong><small>schema 3 · 126 KB · SHA-256 …9A31</small></span></label>
+            <label class="choice-row"><input type="radio" name="backup"><span class="settings-icon green"><i data-lucide="shield-check"></i></span><span><strong>8月30日 21:46 · 17 种商品</strong><small>schema 3 · 121 KB · SHA-256 …11C7</small></span></label>
+          </div>
+          <div class="notice warning-note"><i data-lucide="triangle-alert"></i><span><strong>恢复会替换当前库存</strong><small>开始前会再次备份当前数据；失败时保持当前库存不变</small></span></div>
+        </section>
+      </div>
+      <div class="task-action-bar"><button class="button primary full" type="button" data-snackbar="恢复预览已打开，尚未写入">查看并恢复所选备份</button></div>
+    </section>
+
+    <section class="screen task-screen" data-screen="recognition-settings" aria-label="识别与调试">
+      <header class="task-header">
+        <button class="icon-button" type="button" data-back aria-label="返回设置"><i data-lucide="arrow-left"></i></button>
+        <div><p class="eyebrow">普通界面不显示内部耗时</p><h1>识别与调试</h1></div>
+      </header>
+      <div class="screen-scroll">
+        <section class="form-section">
+          <div class="model-row"><span><strong>中文包装识别</strong><small>离线模型已就绪</small></span><span class="status-pill success">可用</span></div>
+          <div class="model-row"><span><strong>日期特写识别</strong><small>低对比度增强已就绪</small></span><span class="status-pill success">可用</span></div>
+          <label class="switch-row"><span><strong>调试模式</strong><small>记录对焦、画质、阶段耗时和拒绝原因</small></span><input id="debug-switch" type="checkbox"></label>
+          <label class="switch-row"><span><strong>保留关键帧</strong><small>默认关闭；开启后可在此一键删除</small></span><input type="checkbox"></label>
+          <button class="button secondary full" type="button" data-share-debug disabled><i data-lucide="share-2"></i>关闭调试后分享日志</button>
+        </section>
+      </div>
+    </section>
+
+    <nav class="main-nav" aria-label="主导航">
+      <button class="is-selected" type="button" data-nav="today"><i data-lucide="calendar-days"></i><span>今日</span></button>
+      <button type="button" data-nav="inventory"><i data-lucide="package-search"></i><span>库存</span></button>
+      <button type="button" data-nav="settings"><i data-lucide="settings"></i><span>设置</span></button>
+    </nav>
+
+    <div class="sheet-backdrop" data-sheet-backdrop hidden></div>
+    <section class="bottom-sheet" data-filter-sheet aria-label="库存筛选" hidden>
+      <div class="sheet-handle" aria-hidden="true"></div>
+      <div class="sheet-heading"><h2>筛选库存</h2><button class="icon-button" type="button" data-close-filter aria-label="关闭筛选"><i data-lucide="x"></i></button></div>
+      <div class="filter-grid" role="radiogroup">
+        <button class="is-selected" type="button" data-filter-option="全部库存">全部库存</button>
+        <button type="button" data-filter-option="今天到期">今天到期</button>
+        <button type="button" data-filter-option="7 天内">7 天内</button>
+        <button type="button" data-filter-option="已过期">已过期</button>
+        <button type="button" data-filter-option="低库存">低库存</button>
+        <button type="button" data-filter-option="已开封">已开封</button>
+        <button type="button" data-filter-option="日期待补">日期待补</button>
+        <button type="button" data-filter-option="已用完">已用完</button>
+      </div>
+      <button class="button primary full" type="button" data-apply-filter>查看筛选结果</button>
+    </section>
+
+    <div class="snackbar" role="status" aria-live="polite" hidden>
+      <span data-snackbar-text></span>
+      <button type="button" data-snackbar-action hidden>撤销</button>
+    </div>
+  </main>
+  <script src="./lucide.min.js"></script>
+  <script src="./app.js"></script>
+</body>
+</html>

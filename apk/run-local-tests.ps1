@@ -49,6 +49,17 @@ $Java = Resolve-JavaTool 'java'
 
 $MainSources = @(
   'DateRules.java',
+  'FoodValidationRules.java',
+  'InventoryRules.java',
+  'ProductProfileEditor.java',
+  'InventoryRepository.java',
+  'InventoryCommandResult.java',
+  'InventoryCommandService.java',
+  'AppNavigation.java',
+  'FoodEditorSession.java',
+  'InventorySnapshot.java',
+  'InventorySnapshotMapper.java',
+  'ScanUiPresentation.java',
   'FoodItem.java',
   'Option.java',
   'FoodData.java',
@@ -60,24 +71,38 @@ $MainSources = @(
   'DateEvidencePolicy.java',
   'DateOcrFrameVoter.java',
   'RecognitionDiagnostics.java',
+  'RecognitionEvidence.java',
+  'RecognitionKeyframePolicy.java',
   'RecognitionFrameSelector.java',
+  'RecognitionRoiBudget.java',
+  'RecognitionFieldGapPlan.java',
+  'RecognitionReplayCompletion.java',
   'CameraOcrFeedback.java',
+  'CameraFocusRecoveryPolicy.java',
+  'RecognitionWorkSession.java',
+  'LatestFrameProcessor.java',
   'DateOcrResultPayload.java',
   'RecognitionTextCleaner.java',
+  'PackagingNamePolicy.java',
   'PackagingTextAnalyzer.java',
+  'PaddleDateEvidence.java',
   'UnifiedRecognitionStabilizer.java',
+  'RecognitionFieldPromoter.java',
   'UnifiedRecognitionPayload.java',
   'BarcodeUtils.java',
   'VerifiedBarcodeCatalog.java',
   'BarcodeHistoryItem.java',
   'ProductProfileIndex.java',
+  'InventoryPresentation.java',
   'ReplenishmentDraftFactory.java',
   'ReplenishmentRecognitionMerge.java',
   'FoodExcelExporter.java',
   'FoodExcelImporter.java',
   'FoodJsonTransfer.java',
   'FoodIdGenerator.java',
-  'FoodStoreMigration.java'
+  'FoodStoreMigration.java',
+  'MigrationBackupEnvelope.java',
+  'BarcodeResolutionState.java'
 ) | ForEach-Object { Join-Path $MainSourceRoot $_ }
 
 $MissingSources = @($MainSources | Where-Object { -not (Test-Path $_) })
@@ -99,6 +124,7 @@ try {
   Write-Host 'Compiling APK local Java logic tests (Android SDK not required)...'
   $JavacArgs = @(
     '-encoding', 'UTF-8',
+    '-Xlint:-options',
     '-source', '8',
     '-target', '8',
     '-d', $Classes
@@ -107,6 +133,12 @@ try {
 
   Write-Host 'Running APK local Java logic tests...'
   Invoke-Checked $Java @('-cp', $Classes, 'com.shiqi.expirytracker.LocalLogicTest')
+  Invoke-Checked $Java @('-cp', $Classes, 'com.shiqi.expirytracker.CameraFramePipelineTest')
+  Invoke-Checked $Java @('-cp', $Classes, 'com.shiqi.expirytracker.RecognitionKeyframePolicyTest')
+  Invoke-Checked $Java @('-cp', $Classes, 'com.shiqi.expirytracker.FoodEditorSessionTest')
+  Invoke-Checked $Java @('-cp', $Classes, 'com.shiqi.expirytracker.InventorySnapshotMapperTest')
+  Invoke-Checked $Java @('-cp', $Classes, 'com.shiqi.expirytracker.BusinessPageStateTest')
+  Invoke-Checked $Java @('-cp', $Classes, 'com.shiqi.expirytracker.InventoryCommandServiceTest')
 } finally {
   if (Test-Path $TempRoot) {
     Remove-Item -LiteralPath $TempRoot -Recurse -Force

@@ -269,8 +269,8 @@ final class RecognitionFrameSelector {
 
     static List<Long> highRateVideoFrameTimes(long durationUs, boolean longVideo) {
         long safeDurationUs = Math.max(0L, durationUs);
-        int maxCandidates = longVideo ? 180 : 120;
-        long targetIntervalUs = 66667L;
+        int maxCandidates = longVideo ? 120 : 90;
+        long targetIntervalUs = 200000L;
         int idealCount = safeDurationUs == 0L
                 ? 1
                 : (int) Math.min(
@@ -294,7 +294,7 @@ final class RecognitionFrameSelector {
 
     static int highRateVideoSelectionWindow(int candidateCount, boolean longVideo) {
         int safeCount = Math.max(1, candidateCount);
-        int maxOcrFrames = longVideo ? 18 : 16;
+        int maxOcrFrames = longVideo ? 12 : 10;
         return Math.max(1, (safeCount + maxOcrFrames - 1) / maxOcrFrames);
     }
 
@@ -307,12 +307,9 @@ final class RecognitionFrameSelector {
     static List<Long> cameraScreenRecordingFrameTimes(long durationUs) {
         long safeDuration = Math.max(1L, durationUs);
         double[] ratios = new double[] {
-                0.03d, 0.09d,
-                0.16d, 0.25d,
-                0.34d, 0.44d,
-                0.52d, 0.60d,
-                0.66d, 0.71d,
-                0.75d, 0.79d,
+                0.09d, 0.16d,
+                0.34d, 0.60d,
+                0.71d, 0.79d,
                 0.84d, 0.88d
         };
         List<Long> times = new ArrayList<Long>();
@@ -339,6 +336,27 @@ final class RecognitionFrameSelector {
                 && !hasCalculatedExpiryDate;
     }
 
+    static boolean needsVideoDateRefinement(
+            boolean hasProductionDate,
+            boolean hasDirectExpiryDate,
+            boolean hasCalculatedExpiryDate,
+            boolean cameraSimulation
+    ) {
+        boolean completePair = hasProductionDate
+                && (hasDirectExpiryDate || hasCalculatedExpiryDate);
+        return needsIncompleteDateRefinement(
+                hasProductionDate,
+                hasDirectExpiryDate,
+                hasCalculatedExpiryDate
+        ) || (cameraSimulation && !completePair);
+    }
+
+    static boolean needsVideoProductRefinement(
+            boolean hasStrongProductName,
+            boolean cameraSimulation
+    ) {
+        return cameraSimulation && !hasStrongProductName;
+    }
     static double highRateVideoFrameScore(
             double visualScore,
             double sharpness,
@@ -402,6 +420,10 @@ final class RecognitionFrameSelector {
 
     List<FrameCandidate> selectedFrames() {
         return Collections.unmodifiableList(new ArrayList<FrameCandidate>(selectedFrames));
+    }
+
+    boolean isSelected(String frameId) {
+        return containsFrame(selectedFrames, frameId);
     }
 
     int size() {

@@ -10,12 +10,14 @@ final class RecognitionTextCleaner {
             "^\\s*(?:[（(]?\\d{1,3}[)）]|[（(]?\\d{1,3}[.．、:：])\\s*[\\u4e00-\\u9fffA-Za-z]"
     );
     private static final Pattern PRODUCT_NAME_LABEL = Pattern.compile(
-            "(?:(?:产\\s*品|商\\s*品|食\\s*品)\\s*(?:名\\s*称|名)|品\\s*名)"
+            "(?:(?:产\\s*品|商\\s*品|食\\s*品|物\\s*品)\\s*(?:名\\s*称|名)|品\\s*名)"
                     + "\\s*[:：]?\\s*(.{2,28})",
             Pattern.CASE_INSENSITIVE
     );
     private static final Pattern PACKAGED_DOSAGE_NAME = Pattern.compile(
-            "([\\u4e00-\\u9fff]{2,12}(?:口服液|混悬液|喷雾剂|胶囊|颗粒|滴丸|丸剂|片剂|糖浆))"
+            "([\\u4e00-\\u9fff]{2,18}(?:口服液|混悬液|喷雾剂|胶囊|颗粒|滴丸|丸剂|片剂|糖浆"
+                    + "|滴眼液|滴鼻液|眼膏|乳膏|软膏|凝胶|洗液|散剂|贴剂|栓剂"
+                    + "|注射液|溶液|酊剂|鼻喷剂|吸入剂))"
     );
 
     private RecognitionTextCleaner() {}
@@ -29,7 +31,7 @@ final class RecognitionTextCleaner {
         StringBuilder builder = new StringBuilder(raw.length());
         String[] lines = raw.split("\\r?\\n");
         for (String line : lines) {
-            String cleaned = FoodItem.cleanText(line);
+            String cleaned = stripRecognitionOverlayPrefix(FoodItem.cleanText(line));
             if (cleaned.length() == 0
                     || (!hasProductNameLabel(cleaned) && isAppUiNoiseLine(cleaned))) {
                 continue;
@@ -110,7 +112,7 @@ final class RecognitionTextCleaner {
                 bestScore = labeledScore + 180;
             }
             String candidate = intelligentProductNameCandidate(line);
-            if (!isHighConfidenceFoodProductName(candidate)) {
+            if (!PackagingNamePolicy.isPlausible(candidate)) {
                 if (isLikelyLatinBrand(candidate)) {
                     previousGood = candidate;
                 }
@@ -135,7 +137,11 @@ final class RecognitionTextCleaner {
         return best;
     }
 
-    private static String extractPackagedDosageName(String rawText) {
+    static boolean isHighConfidencePackagedProductName(String value) {
+        return PackagingNamePolicy.isStrong(value);
+    }
+
+    static String extractPackagedDosageName(String rawText) {
         String text = FoodItem.cleanText(rawText);
         Matcher matcher = PACKAGED_DOSAGE_NAME.matcher(text);
         String best = "";
@@ -234,8 +240,28 @@ final class RecognitionTextCleaner {
                 "条码已锁",
                 "日期已稳",
                 "已看到包装文字",
+                "已看到实时画面",
                 "继续保持稳定",
                 "继续识别",
+                "正在识别",
+                "保留最新帧",
+                "连续自动对焦",
+                "实时检查清晰度",
+                "更清晰画面",
+                "可能文字区",
+                "取帧",
+                "入选",
+                "丢旧",
+                "行识别",
+                "整帧",
+                "画面偏糊",
+                "已分析",
+                "识别诊断",
+                "快速文字检测",
+                "模糊跳过",
+                "无文字跳过",
+                "非更优跳过",
+                "对焦请求",
                 "正在寻找",
                 "候选已可用",
                 "可先确认",
@@ -289,6 +315,7 @@ final class RecognitionTextCleaner {
                 .replace("\\", " ");
         text = normalizeCommonPackagingOcr(text);
         text = text.replaceAll("\\s+", " ").trim();
+        text = stripRecognitionOverlayPrefix(text);
         text = text.replaceFirst(
                 "^(?:(?:产\\s*品|生\\s*产)\\s*)?批\\s*(?:号|次)\\s*[:：]?\\s*",
                 ""
@@ -297,7 +324,7 @@ final class RecognitionTextCleaner {
                 "(", "（", "约", "配料", "净含量", "净重", "规格", "营养", "生产日期", "制造日期",
                 "包装日期", "保质期", "有效期", "执行标准", "产品标准", "标准号", "厂家", "厂址", "地址",
                 "生产批号", "产品批号", "批次", "批号", "食用方法", "冲调方法", "扫码", "二维码",
-                "条形码", "产品名称", "产品类型", "产品类别"
+                "条形码", "产品名称", "产品类型", "产品类别", "用于", "适用于", "适应症", "用法"
         });
         text = text.replaceFirst(
                 "(?i)\\s*\\d+(?:\\.\\d+)?\\s*(?:mg|kg|g|ml|l|克|千克|公斤|斤|毫克|毫升|升|袋|包|盒|瓶|罐|支|枚|个)"
@@ -313,6 +340,11 @@ final class RecognitionTextCleaner {
         return text;
     }
 
+    private static String stripRecognitionOverlayPrefix(String value) {
+        return FoodItem.cleanText(value)
+                .replaceFirst("^可能[女文]?字区\\s*\\d*\\s*[-·:：]?\\s*", "")
+                .trim();
+    }
     static List<String> extractFoodNameFragments(String value) {
         String text = normalizeCommonPackagingOcr(FoodItem.cleanText(value));
         List<String> fragments = new ArrayList<String>();
@@ -335,6 +367,12 @@ final class RecognitionTextCleaner {
         return fragments;
     }
 
+    static boolean isGenericProductCategoryName(String value) {
+        String key = productNameKey(normalizeCommonPackagingOcr(value));
+        return "\u4e2d\u56fd\u9171\u83dc".equals(key)
+                || "\u4e2d\u56fd\u8c03\u5473\u54c1".equals(key)
+                || "\u4e2d\u56fd\u98df\u54c1".equals(key);
+    }
     static boolean isCanonicalFoodName(String value) {
         String text = FoodItem.cleanText(value);
         for (String fragment : extractFoodNameFragments(text)) {
@@ -373,6 +411,14 @@ final class RecognitionTextCleaner {
                 .replace("大疆老北京", "大董老北京")
                 .replace("炸著面", "炸酱面")
                 .replace("去酒鹌鹑蛋", "去壳清水鹌鹑蛋")
+                .replace("去光清水", "去壳清水")
+                .replace("去鹤鸭蛋", "去壳清水鹌鹑蛋")
+                .replace("清水鸽吗蛋", "去壳清水鹌鹑蛋")
+                .replace("镜清水鹤剪蛋", "去壳清水鹌鹑蛋")
+                .replace("鹤剪蛋", "鹌鹑蛋")
+                .replace("鸽吗蛋", "鹌鹑蛋")
+                .replace("泡果汁氣", "气泡果汁")
+                .replace("泡果汁气", "气泡果汁")
                 .replace("粿汁", "果汁")
                 .replace("課汁", "果汁")
                 .replace("裸汁", "果汁")
@@ -383,6 +429,10 @@ final class RecognitionTextCleaner {
                 .replace("倜开水", "喝开水")
                 .replace("遇开水", "喝开水")
                 .replace("渴开水", "喝开水")
+                .replace("开 水", "喝开水")
+                .replace("熟水饮", "喝开水")
+                .replace("然水饮", "喝开水")
+                .replace("热水饮", "喝开水")
                 .replace("著条", "薯条")
                 .replace("暑条", "薯条")
                 .replace("维Ｃ水", "维C水")
@@ -393,6 +443,31 @@ final class RecognitionTextCleaner {
                 .replace("发醇", "发酵")
                 .replace("發醇", "发酵")
                 .replace("發酵", "发酵");
+        text = text.replaceFirst("^(?:\u5bf9\u7126\u5b8c\u6210)+\\s*", "");
+        text = text.replaceFirst(
+                "^(?:\u8054\u7cfb\u65b9\u5f0f|\u7cfb\u65b9\u5f0f|\u8054\u7cfb\u7535\u8bdd|\u5ba2\u670d\u70ed\u7ebf|\u7535\u8bdd)"
+                        + "\\s*[:\uff1a]?\\s*[0-9()\\-\\s]*",
+                ""
+        ).trim();
+        if (text.contains("\u65b9\u4e39\u53c2\u6ef4\u4e38")
+                && !text.contains("\u590d\u65b9\u4e39\u53c2\u6ef4\u4e38")) {
+            text = text.replace(
+                    "\u65b9\u4e39\u53c2\u6ef4\u4e38",
+                    "\u590d\u65b9\u4e39\u53c2\u6ef4\u4e38"
+            );
+        }
+        if (text.contains("\u590f\u65b9\u786b\u9178\u8f6f\u9aa8\u7d20\u6ef4\u773c\u6db2")) {
+            text = text.replace(
+                    "\u590f\u65b9\u786b\u9178\u8f6f\u9aa8\u7d20\u6ef4\u773c\u6db2",
+                    "\u590d\u65b9\u786b\u9178\u8f6f\u9aa8\u7d20\u6ef4\u773c\u6db2"
+            );
+        } else if (text.contains("\u65b9\u786b\u9178\u8f6f\u9aa8\u7d20\u6ef4\u773c\u6db2")
+                && !text.contains("\u590d\u65b9\u786b\u9178\u8f6f\u9aa8\u7d20\u6ef4\u773c\u6db2")) {
+            text = text.replace(
+                    "\u65b9\u786b\u9178\u8f6f\u9aa8\u7d20\u6ef4\u773c\u6db2",
+                    "\u590d\u65b9\u786b\u9178\u8f6f\u9aa8\u7d20\u6ef4\u773c\u6db2"
+            );
+        }
         text = text.replaceAll("(?i)^[\\u4e00-\\u9fff](?=blue\\b)", "");
         return text.replaceAll("(?i)blue", "BLUE");
     }
@@ -401,6 +476,14 @@ final class RecognitionTextCleaner {
         String text = cleanProductNameLine(value);
         if (text.length() == 0) {
             return "";
+        }
+
+        if (text.contains("去壳清水") && text.contains("鹌鹑蛋")) {
+            return "去壳清水鹌鹑蛋";
+        }
+        if ("开水".equals(text)
+                || (text.contains("开水") && (text.contains("饮") || text.contains("熟水")))) {
+            return "喝开水";
         }
 
         List<String> fragments = extractFoodNameFragments(text);
@@ -613,6 +696,23 @@ final class RecognitionTextCleaner {
             return lookup;
         }
         if (isHighConfidenceFoodProductName(packaging)) {
+            return packaging;
+        }
+        return lookup;
+    }
+
+    static String preferredAuthoritativeBarcodeName(String packagingName, String lookupName) {
+        String packaging = intelligentProductNameCandidate(packagingName);
+        String lookup = intelligentProductNameCandidate(lookupName);
+        if (lookup.length() == 0) {
+            return packaging;
+        }
+        if (isHighConfidenceFoodProductName(lookup)
+                && isLookupMoreSpecificThanPackaging(packaging, lookup)) {
+            return lookup;
+        }
+        if (isHighConfidenceFoodProductName(packaging)
+                && productNamesSimilar(packaging, lookup)) {
             return packaging;
         }
         return lookup;
@@ -885,6 +985,13 @@ final class RecognitionTextCleaner {
         if (codeIndex < 0) {
             return false;
         }
+        boolean dateMarkingContext = containsAny(compact, new String[] {
+                "\u751f\u4ea7\u65e5\u671f", "\u751f\u4ea7", "\u4fdd\u8d28\u671f",
+                "\u6709\u6548\u671f", "\u9650\u7528\u65e5\u671f", "mfg", "prod", "exp"
+        });
+        if (dateMarkingContext && looksLikeDateTimeTraceabilityCode(code)) {
+            return true;
+        }
         for (String token : new String[] {
                 "药品追溯码", "药品追濟码", "药品标识码", "药品標識碼", "序列号", "序列號"
         }) {
@@ -896,6 +1003,48 @@ final class RecognitionTextCleaner {
         return false;
     }
 
+    private static boolean looksLikeDateTimeTraceabilityCode(String code) {
+        if (code == null || code.length() < 12 || code.length() > 14) {
+            return false;
+        }
+        if (isValidCompactDateAndTime(code, 0, true)) {
+            return true;
+        }
+        return isValidCompactDateAndTime(code, 0, false);
+    }
+
+    private static boolean isValidCompactDateAndTime(
+            String code,
+            int start,
+            boolean fourDigitYear
+    ) {
+        int dateLength = fourDigitYear ? 8 : 6;
+        int minimumLength = start + dateLength + 4;
+        if (code.length() < minimumLength) {
+            return false;
+        }
+        String date = fourDigitYear
+                ? code.substring(start, start + 4) + "-"
+                + code.substring(start + 4, start + 6) + "-"
+                + code.substring(start + 6, start + 8)
+                : "20" + code.substring(start, start + 2) + "-"
+                + code.substring(start + 2, start + 4) + "-"
+                + code.substring(start + 4, start + 6);
+        if (!DateRules.isValidDateString(date)) {
+            return false;
+        }
+        int clockStart = start + dateLength;
+        int hour = Integer.parseInt(code.substring(clockStart, clockStart + 2));
+        int minute = Integer.parseInt(code.substring(clockStart + 2, clockStart + 4));
+        if (hour > 23 || minute > 59) {
+            return false;
+        }
+        if (code.length() >= clockStart + 6) {
+            int second = Integer.parseInt(code.substring(clockStart + 4, clockStart + 6));
+            return second <= 59;
+        }
+        return true;
+    }
     private static boolean isLikelyExplanatorySentence(String value) {
         String text = FoodItem.cleanText(value);
         if (NUMBERED_SENTENCE_PREFIX.matcher(text).find()) {
@@ -903,14 +1052,15 @@ final class RecognitionTextCleaner {
         }
 
         String compact = productNameKey(text);
-        if (compact.length() < 10) {
-            return false;
-        }
         if (containsAny(compact, new String[] {
                 "用于", "适用于", "可用于", "有助于", "适应症", "用法用量",
-                "本品为", "除去包装", "除去包", "性状"
+                "本品为", "除去包装", "除去包", "性状",
+                "功能主治", "功效", "主治", "药理作用"
         })) {
             return true;
+        }
+        if (compact.length() < 10) {
+            return false;
         }
 
         int medicalTokenCount = 0;

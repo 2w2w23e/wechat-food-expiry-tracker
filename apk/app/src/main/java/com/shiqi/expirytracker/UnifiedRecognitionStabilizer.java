@@ -12,8 +12,6 @@ final class UnifiedRecognitionStabilizer {
     private static final int PACKAGING_NAME_LOCK_VOTES = 3;
     private static final int MAX_PACKAGING_CANDIDATES = 3;
     private static final double MIN_REPEATED_NAME_SCORE = 70d;
-    private static final double MIN_SINGLE_STRONG_NAME_SCORE = 100d;
-    private static final double MIN_SINGLE_CANONICAL_NAME_SCORE = 86d;
 
     private final int maxFrames;
     private final int dateMinVotes;
@@ -202,11 +200,25 @@ final class UnifiedRecognitionStabilizer {
     }
 
     Snapshot promotePackagingCandidateForConfirmation(String candidate) {
-        String normalized = RecognitionTextCleaner.intelligentProductNameCandidate(candidate);
+        String normalized = PackagingNamePolicy.normalize(candidate);
         if (RecognitionTextCleaner.productNameScore(normalized) > 0
-                && RecognitionTextCleaner.isHighConfidenceFoodProductName(normalized)
+                && PackagingNamePolicy.isPlausible(normalized)
                 && !RecognitionTextCleaner.isLikelyMarketingSlogan(normalized)) {
-            lockedPackagingName = normalized;
+            boolean sameProduct = RecognitionTextCleaner.productNamesSimilar(
+                    lockedPackagingName,
+                    normalized
+            );
+            boolean strongerDomainEvidence = PackagingNamePolicy.isStrong(normalized)
+                    && !PackagingNamePolicy.isStrong(lockedPackagingName);
+            boolean replacesGenericCategory = PackagingNamePolicy.isStrong(normalized)
+                    && RecognitionTextCleaner.isGenericProductCategoryName(lockedPackagingName)
+                    && !RecognitionTextCleaner.isGenericProductCategoryName(normalized);
+            if (lockedPackagingName.length() == 0
+                    || sameProduct
+                    || strongerDomainEvidence
+                    || replacesGenericCategory) {
+                lockedPackagingName = normalized;
+            }
         }
         return snapshot();
     }
@@ -217,18 +229,22 @@ final class UnifiedRecognitionStabilizer {
             return snapshot();
         }
         PackagingTextAnalyzer.Candidate leader = ranked.get(0);
-        boolean canonicalStrong = RecognitionTextCleaner.isCanonicalFoodName(leader.text)
-                && leader.score >= MIN_SINGLE_CANONICAL_NAME_SCORE;
-        boolean repeatedStrong = leader.votes >= 2
+        boolean domainStrong = PackagingNamePolicy.isStrong(leader.text);
+        boolean labeledStrong = PackagingNamePolicy.hasLabeledEvidence(leader.evidence)
+                && RecognitionTextCleaner.isHighConfidenceLabeledProductName(leader.text)
+                && leader.score >= 70d;
+        boolean canonicalStrong = domainStrong && PackagingNamePolicy.canLock(leader);
+        boolean repeatedStrong = domainStrong
+                && leader.votes >= 2
                 && leader.score >= MIN_REPEATED_NAME_SCORE;
-        boolean exceptionalSingle = leader.score >= 122d;
+        boolean exceptionalSingle = domainStrong && leader.score >= 122d;
         boolean clearLead = ranked.size() == 1
                 || leader.score >= ranked.get(1).score + 14d
                 || leader.votes >= ranked.get(1).votes + 2;
-        if ((canonicalStrong || repeatedStrong || exceptionalSingle)
+        if ((labeledStrong || canonicalStrong || repeatedStrong || exceptionalSingle)
                 && clearLead
                 && !RecognitionTextCleaner.isLikelyMarketingSlogan(leader.text)) {
-            lockedPackagingName = leader.text;
+            lockedPackagingName = PackagingNamePolicy.normalize(leader.text);
         }
         return snapshot();
     }
@@ -410,7 +426,7 @@ final class UnifiedRecognitionStabilizer {
             return;
         }
         if (singleFrameConfirmation) {
-            lockedPackagingName = ranked.get(0).text;
+            lockedPackagingName = PackagingNamePolicy.normalize(ranked.get(0).text);
             return;
         }
         if (lockedPackagingName.length() > 0) {
@@ -422,14 +438,14 @@ final class UnifiedRecognitionStabilizer {
                     && leader.votes >= PACKAGING_NAME_LOCK_VOTES
                     && (leader.votes >= lockedVotes + 2
                     || (lockedScore > 0d && leader.score >= lockedScore * 1.30d))) {
-                lockedPackagingName = leader.text;
+                lockedPackagingName = PackagingNamePolicy.normalize(leader.text);
             }
             return;
         }
         for (PackagingTextAnalyzer.Candidate candidate : ranked) {
             if (candidate.votes >= PACKAGING_NAME_LOCK_VOTES
                     && !RecognitionTextCleaner.isLikelyMarketingSlogan(candidate.text)) {
-                lockedPackagingName = candidate.text;
+                lockedPackagingName = PackagingNamePolicy.normalize(candidate.text);
                 return;
             }
         }
@@ -562,7 +578,7 @@ final class UnifiedRecognitionStabilizer {
                 RecognitionTextCleaner.extractProductNameFromOcr(unlabeledText.toString())
         );
         int score = RecognitionTextCleaner.productNameScore(packagingName);
-        if (score <= 0 || !RecognitionTextCleaner.isHighConfidenceFoodProductName(packagingName)) {
+        if (score <= 0 || !PackagingNamePolicy.isStrong(packagingName)) {
             return Collections.emptyList();
         }
         return Collections.singletonList(new PackagingTextAnalyzer.Candidate(packagingName, score + 85d));
@@ -585,7 +601,7 @@ final class UnifiedRecognitionStabilizer {
             if (lexicalScore <= 0
                     || (labeledEvidence
                     ? !RecognitionTextCleaner.isHighConfidenceLabeledProductName(text)
-                    : !RecognitionTextCleaner.isHighConfidenceFoodProductName(text))) {
+                    : !PackagingNamePolicy.isPlausible(text))) {
                 continue;
             }
             PackagingTextAnalyzer.Candidate safeCandidate = new PackagingTextAnalyzer.Candidate(
@@ -599,8 +615,8 @@ final class UnifiedRecognitionStabilizer {
                 normalized.add(safeCandidate);
             } else {
                 PackagingTextAnalyzer.Candidate existing = normalized.get(similarIndex);
-                boolean existingCanonical = RecognitionTextCleaner.isCanonicalFoodName(existing.text);
-                boolean incomingCanonical = RecognitionTextCleaner.isCanonicalFoodName(text);
+                boolean existingCanonical = PackagingNamePolicy.isCanonical(existing.text);
+                boolean incomingCanonical = PackagingNamePolicy.isCanonical(text);
                 if (existingCanonical && !incomingCanonical) {
                     continue;
                 }
@@ -633,25 +649,9 @@ final class UnifiedRecognitionStabilizer {
     }
 
     private static boolean isDisplayEligible(PackagingTextAnalyzer.Candidate candidate) {
-        if (candidate == null || candidate.text.length() == 0) {
-            return false;
-        }
-        boolean labeledEvidence = hasProductNameLabelEvidence(candidate.evidence);
-        if (labeledEvidence) {
-            return RecognitionTextCleaner.isHighConfidenceLabeledProductName(candidate.text)
-                    && candidate.score >= MIN_REPEATED_NAME_SCORE;
-        }
-        boolean foodName = RecognitionTextCleaner.isHighConfidenceFoodProductName(candidate.text);
-        if (!foodName) {
-            return false;
-        }
-        if (RecognitionTextCleaner.isCanonicalFoodName(candidate.text)) {
-            return candidate.score >= MIN_SINGLE_CANONICAL_NAME_SCORE;
-        }
-        if (candidate.votes >= 2) {
-            return candidate.score >= MIN_REPEATED_NAME_SCORE;
-        }
-        return foodName && candidate.score >= MIN_SINGLE_STRONG_NAME_SCORE;
+        boolean labeledEvidence = candidate != null
+                && hasProductNameLabelEvidence(candidate.evidence);
+        return PackagingNamePolicy.isEligible(candidate, labeledEvidence);
     }
 
     private static boolean hasProductNameLabelEvidence(List<String> evidence) {
@@ -712,8 +712,8 @@ final class UnifiedRecognitionStabilizer {
             votes++;
             weightedScore += candidate.score * recencyWeight;
             totalWeight += recencyWeight;
-            boolean currentCanonical = RecognitionTextCleaner.isCanonicalFoodName(text);
-            boolean incomingCanonical = RecognitionTextCleaner.isCanonicalFoodName(candidate.text);
+            boolean currentCanonical = PackagingNamePolicy.isCanonical(text);
+            boolean incomingCanonical = PackagingNamePolicy.isCanonical(candidate.text);
             if ((incomingCanonical && !currentCanonical)
                     || (incomingCanonical == currentCanonical
                     && (candidate.score > representativeScore

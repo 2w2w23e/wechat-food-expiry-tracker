@@ -144,6 +144,9 @@ final class FoodJsonTransfer {
             }
             List<String> rowErrors = validateBatch(object);
             FoodItem imported = FoodItem.fromJson(object);
+            if (imported.remainingQuantity <= 0d) {
+                InventoryRules.finishIfDepleted(imported, imported.updatedAt);
+            }
             String id = FoodItem.cleanText(imported.id);
             if (id.length() > 0 && !importedIds.add(id)) {
                 rowErrors.add("批次编号在文件内重复");
@@ -201,11 +204,29 @@ final class FoodJsonTransfer {
 
         double quantity = object.optDouble("quantity", 1d);
         double remaining = object.optDouble("remainingQuantity", quantity);
-        if (!finiteNonNegative(quantity)) {
+        if (!finiteNonNegative(quantity) || quantity <= 0d) {
             errors.add("总数量无效");
         }
         if (!finiteNonNegative(remaining) || remaining > quantity) {
             errors.add("剩余数量无效");
+        }
+        String productionDate = optCleanString(object, "productionDate");
+        String expiryDate = optCleanString(object, "expiryDate");
+        String productionError = FoodValidationRules.productionDateError(
+                productionDate,
+                DateRules.todayString()
+        );
+        if (productionError.length() > 0) {
+            errors.add(productionError);
+        }
+        if (DateRules.isValidDateString(expiryDate)) {
+            String expiryError = FoodValidationRules.expiryDateError(
+                    productionDate,
+                    expiryDate
+            );
+            if (expiryError.length() > 0) {
+                errors.add(expiryError);
+            }
         }
         validateTimestamp(optCleanString(object, "createdAt"), "入库时间", errors);
         validateTimestamp(optCleanString(object, "updatedAt"), "更新时间", errors);

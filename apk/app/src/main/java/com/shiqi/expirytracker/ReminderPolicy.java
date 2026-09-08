@@ -38,7 +38,7 @@ final class ReminderPolicy {
             return plan;
         }
 
-        if (food.isFinished) {
+        if (InventoryRules.isFinished(food)) {
             plan.disabledReason = "已用完：不再提醒";
             plan.cardHint = finishedHint(food);
             plan.detailAdvice = "提醒：不再提醒";
@@ -150,7 +150,8 @@ final class ReminderPolicy {
         }
 
         for (FoodItem food : foods) {
-            if (food == null || food.isFinished || !DateRules.isValidDateString(food.expiryDate)) {
+            if (food == null || InventoryRules.isFinished(food)
+                    || !DateRules.isValidDateString(food.expiryDate)) {
                 continue;
             }
 
@@ -331,7 +332,8 @@ final class ReminderPolicy {
     }
 
     static boolean ensureSmartScheduleAt(FoodItem food, String planningDate) {
-        if (food == null || !DateRules.isValidDateString(food.expiryDate)) {
+        if (food == null || InventoryRules.isFinished(food)
+                || !DateRules.isValidDateString(food.expiryDate)) {
             return clearSmartSchedule(food);
         }
 
